@@ -4,8 +4,26 @@ replace = false
 [[song]]
 file = "music/song_01.wav"
 Artist = "Your Name"
-Title = "Your Song"
+Title = "Your First Song"
 RaceIt = true
+TrickIt = true
+SurviveIt = true
+gain = 1.0
+
+[[song]]
+file = "music/song_02.wav"
+Artist = "Your Name"
+Title = "Your Second Song"
+RaceIt = true
+TrickIt = false
+SurviveIt = true
+gain = 1.0
+
+[[song]]
+file = "music/song_03.wav"
+Artist = "Your Name"
+Title = "Your Third Song"
+RaceIt = false
 TrickIt = true
 SurviveIt = true
 gain = 1.0

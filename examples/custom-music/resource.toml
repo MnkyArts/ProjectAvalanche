@@ -1,0 +1,12 @@
+[resource]
+name = "custom-music"
+version = "0.1.0"
+title = "Custom Music"
+authors = []
+description = "A starter package for adding custom music to Project Avalanche."
+api = 1
+type = "mod"
+priority = 0
+
+[add]
+"music/playlist" = "music/playlist.toml"

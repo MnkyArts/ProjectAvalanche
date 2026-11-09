@@ -22,6 +22,14 @@ game data is included in this repository or in its builds.
 **Servers, scripts and mods:** the [wiki](https://github.com/MnkyArts/ProjectAvalanche/wiki) covers hosting a server,
 writing Luau scripts and making mods, maps and gamemodes.
 
+### Custom music starter
+
+The repository includes a ready-to-install music mod at
+[`examples/custom-music`](examples/custom-music). Copy that folder into the launcher's displayed mods folder, or
+zip its contents with `resource.toml` at the archive root and install it from the launcher's **Mods** page. Replace
+`music/song_01.wav` with music you created or have permission to redistribute, then edit `music/playlist.toml` to set
+its title, artist and playlist options.
+
 ## Play on Windows
 
 1. Download the Windows build (the `ProjectAvalanche-windows-x64` artifact of a CI run, or a release) and

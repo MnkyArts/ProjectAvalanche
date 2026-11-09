@@ -1,0 +1,16 @@
+type = "playlist"
+replace = false
+
+[[song]]
+file = "music/song_01.wav"
+Artist = "Your Name"
+Title = "Your Song"
+RaceIt = true
+TrickIt = true
+SurviveIt = true
+gain = 1.0
+
+# Optional:
+# loop = [5.0, 120.0]
+# menu = true
+# drops = ["ssx:drop/example_drop"]

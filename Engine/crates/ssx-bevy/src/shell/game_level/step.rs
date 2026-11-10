@@ -99,7 +99,7 @@ pub(super) fn feed_step(
     }
     let clock = &ride.session.event.clock;
     let (ghosts, racers) = l.ghosts.step(clock.seconds, clock.ms(), &ride.world().triggers, &mut ui.loc);
-    l.feed.ghosts = ghosts;
+    l.feed.ghosts = if ride.session.bots.is_some() { Vec::new() } else { ghosts };
     if let Some(b) = bots.as_deref() {
         l.feed.ghosts.extend(b.live.billboards());
     }

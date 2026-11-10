@@ -149,10 +149,10 @@ fn refresh_fills_four_per_kind_and_purges() {
     let mut s = Store::new(1);
     s.update(&d, &c, false, 0);
     let shown: Vec<usize> = (0..KINDS).map(|k| s.offers(&d, &c, k).len()).collect();
-    assert_eq!(shown, vec![0, 4, 4, 4, 0]);
+    assert_eq!(shown, vec![4, 4, 4, 4, 0]);
     assert_eq!(s.stock[0].len(), 4);
     s.update(&d, &c, false, 1);
-    assert_eq!((s.stock[0].len(), s.stock[1].len()), (8, 4));
+    assert_eq!((s.stock[0].len(), s.stock[1].len()), (4, 4));
     let online = StoreContext { geotags_online: true, ..c.clone() };
     s.update(&d, &online, false, FIRST_SPECIAL_MS + 1);
     assert_eq!(s.stock.iter().flatten().filter(|i| i.special).count(), 1);
@@ -220,4 +220,17 @@ fn the_next_equip_id_wraps_as_a_word() {
     assert_eq!(p.next_equip_id(), 42);
     p.generated.insert(u32::MAX, GeneratedItem::default());
     assert_eq!(p.next_equip_id(), 0);
+}
+
+#[test]
+fn suits_are_offered_at_every_rider_level() {
+    let d = data();
+    let c = StoreContext { level: 3, ..ctx() };
+    let mut s = Store::new(3);
+    s.refresh(&d, &c, 0);
+    let first = s.stock[KIND_SUIT as usize].len();
+    assert_eq!(s.offers(&d, &c, KIND_SUIT as usize).len(), first);
+    assert!(first > 0);
+    s.refresh(&d, &c, 1);
+    assert_eq!(s.stock[KIND_SUIT as usize].len(), first, "a refresh keeps the suits it has");
 }

@@ -238,7 +238,7 @@ impl EnvironmentSounds {
 
     pub fn update(&mut self, sfx: &mut SfxEngine, r: &RideAudio) {
         if self.ambience.is_none() {
-            self.ambience = call(sfx, "SFX_Ambience", &[self.ambience_index]);
+            self.ambience = sfx.call_live("SFX_Ambience", &[self.ambience_index]);
         }
         let zone = if r.descent_percent > 66.0 {
             3
@@ -250,7 +250,7 @@ impl EnvironmentSounds {
         let p = [((r.speed * 20.0).min(1000.0) as i32).max(0), self.ambience_index, i32::from(r.boosting), zone];
         match self.wind {
             Some(h) => sfx.update(h, &p),
-            None => self.wind = call(sfx, "SFX_Wind", &p),
+            None => self.wind = sfx.call_live("SFX_Wind", &p),
         }
     }
 

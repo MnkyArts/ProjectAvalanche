@@ -101,6 +101,14 @@ impl Aems {
         }
     }
 
+    pub fn discard_if_empty(&mut self, handle: CsisHandle) -> bool {
+        let empty = self.csis.get(handle).and_then(Option::as_ref).is_some_and(|c| c.modules.is_empty());
+        if empty {
+            self.csis[handle] = None;
+        }
+        empty
+    }
+
     pub fn stop(&mut self, handle: CsisHandle) {
         let Some(c) = self.csis.get_mut(handle).and_then(Option::take) else { return };
         let name = self.name(c.function);

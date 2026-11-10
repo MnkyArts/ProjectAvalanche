@@ -133,7 +133,7 @@ impl HeliSounds {
         ]);
         match self.instance {
             Some(h) => sfx.update(h, &p),
-            None => self.instance = sfx.call("SFX_Helicopter", &p),
+            None => self.instance = sfx.call_live("SFX_Helicopter", &p),
         }
         self.params = p;
     }

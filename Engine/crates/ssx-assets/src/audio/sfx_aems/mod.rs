@@ -474,6 +474,16 @@ mod tests {
     }
 
     #[test]
+    fn a_call_that_creates_nothing_is_discarded() {
+        let mut a = Aems::new();
+        let h = a.call(0x1234, &[]);
+        assert!(a.csis[h].is_some());
+        assert!(a.discard_if_empty(h));
+        assert!(a.csis[h].is_none());
+        assert!(!a.discard_if_empty(h));
+    }
+
+    #[test]
     fn rng_starts_from_the_zero_state() {
         let mut a = Aems::new();
         let got: Vec<u32> = (0..4).map(|_| a.random()).collect();

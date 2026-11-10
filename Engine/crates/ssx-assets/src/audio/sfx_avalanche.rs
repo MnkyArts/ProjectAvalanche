@@ -107,9 +107,9 @@ impl AvalancheSounds {
         };
         if !self.running {
             if self.instance.is_none() {
-                self.instance = sfx.call("SFX_Avalanche", &[self.drop_warning.clamp(1, 3)]);
+                self.instance = sfx.call_live("SFX_Avalanche", &[self.drop_warning.clamp(1, 3)]);
             }
-            self.running = true;
+            self.running = self.instance.is_some();
         }
     }
 

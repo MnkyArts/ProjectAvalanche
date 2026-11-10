@@ -305,6 +305,11 @@ impl SfxEngine {
         Some(self.aems.call(id, params))
     }
 
+    pub fn call_live(&mut self, function: &str, params: &[i32]) -> Option<CsisHandle> {
+        let h = self.call(function, params)?;
+        (!self.aems.discard_if_empty(h)).then_some(h)
+    }
+
     pub fn call_key(&mut self, key: u32, params: &[i32]) -> CsisHandle {
         self.aems.call(key, params)
     }

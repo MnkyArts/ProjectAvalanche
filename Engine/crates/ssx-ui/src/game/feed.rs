@@ -48,6 +48,7 @@ pub struct HudFeed {
     combo: Vec<TrickRecord>,
     record: TrickRecord,
     finish_posted: bool,
+    course_written: bool,
     ready_loop: bool,
     race_started: bool,
     event_state: EventState,
@@ -66,13 +67,18 @@ impl HudFeed {
         HudFeed { rider: rider.to_string(), ..Default::default() }
     }
 
-    pub fn feed(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World, e: Option<&Execution>) {
-        if let Some(c) = x.event.setup.course
-            && !ui.values.written(id::START_ELEVATION)
+    fn write_course(&mut self, v: &mut UiValues, course: Option<ssx_physics::event::Course>) {
+        if let Some(c) = course
+            && !self.course_written
         {
-            ui.values.set_float(id::START_ELEVATION, c.start_y);
-            ui.values.set_float(id::END_ELEVATION, c.end_y);
+            v.set_float(id::START_ELEVATION, c.start_y);
+            v.set_float(id::END_ELEVATION, c.end_y);
+            self.course_written = true;
         }
+    }
+
+    pub fn feed(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World, e: Option<&Execution>) {
+        self.write_course(&mut ui.values, x.event.setup.course);
         ui.gear = world.survival.slots;
         if e.is_some_and(|e| e.event.looped) {
             self.ready_loop = false;
@@ -534,6 +540,19 @@ mod tests {
         let mut v = UiValues::new();
         let mut hud_ready_seen = false;
         assert!(!crate::game::fe::flow::front_end_meta_values(&mut v, &mut hud_ready_seen), "the boot's: no level");
+    }
+
+    #[test]
+    fn each_level_writes_its_own_course_elevations() {
+        use ssx_physics::event::Course;
+        let mut v = UiValues::new();
+        let mut first = HudFeed::new("elise");
+        first.write_course(&mut v, Some(Course { start_y: 1200.0, end_y: 100.0 }));
+        first.write_course(&mut v, Some(Course { start_y: 9.0, end_y: 8.0 }));
+        assert_eq!((v.float(id::START_ELEVATION), v.float(id::END_ELEVATION)), (1200.0, 100.0));
+        let mut next = HudFeed::new("elise");
+        next.write_course(&mut v, Some(Course { start_y: 700.0, end_y: -50.0 }));
+        assert_eq!((v.float(id::START_ELEVATION), v.float(id::END_ELEVATION)), (700.0, -50.0));
     }
 
     #[test]

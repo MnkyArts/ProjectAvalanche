@@ -21,7 +21,6 @@ pub struct TimePanel {
     speed_active: bool,
     descent_active: bool,
     time_active: bool,
-    elevations: Option<(f32, f32)>,
     labelled: bool,
     last_int: i32,
     last_speed: f32,
@@ -157,9 +156,7 @@ impl TimePanel {
             && self.secondary.is_some()
             && self.secondary_label.is_some();
         if self.descent_active && all {
-            let (start, end) = *self
-                .elevations
-                .get_or_insert_with(|| (env.values.float(id::START_ELEVATION), env.values.float(id::END_ELEVATION)));
+            let (start, end) = (env.values.float(id::START_ELEVATION), env.values.float(id::END_ELEVATION));
             let left = (start - end) - env.values.float(id::PLAYER_DESCENT);
             let left = if left > 0.0 { left } else { 0.0 } as i32;
             if left != self.last_int {

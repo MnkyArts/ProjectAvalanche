@@ -1,4 +1,5 @@
 use super::*;
+use crate::landing::BAIL_ON_LANDING_MAX_TICKS;
 
 #[test]
 fn janked_detector_counts_and_distance_test() {
@@ -303,20 +304,20 @@ fn prewind_builds_on_the_ground_and_decays_without_the_stick() {
 }
 
 #[test]
-fn no_jump_while_wiping_out_and_only_an_air_phase_ends_the_bail() {
+fn no_jump_while_wiping_out_and_the_bail_holds_until_its_limit() {
     let w = world(plane(2000.0, 0.0));
     let mut s = moving(&w, Vec3::new(0.0, 1.0, -1500.0), Vec3::Z, 60.0 / KMH_PER_M_PER_TICK);
     (s.landing.bail_on_landing, s.landing.tumbling, s.landing.stable) = (true, true, false);
     s.landing.pitch = 150f32.to_radians();
     s.nested_stable = false;
+    s.tricks.ticks_since_sig_held = f32::MAX;
     for i in 0..12 {
         step(&mut s, &w, &Input { jump: i < 8, ..Input::default() }, DT_TICKS);
         assert_eq!(s.state, RideState::Riding, "step {i}");
     }
-    assert!(s.landing.bail_on_landing, "no timer ends a pitch bail");
-    ride(&w, &mut s, &Input::default(), 900, |_| {});
-    let ground_speed = s.velocity.reject_from(s.ground_normal).length();
-    assert!(s.landing.bail_on_landing && !s.stopped && ground_speed < 1e-4, "{ground_speed}");
+    assert!(s.landing.bail_on_landing);
+    ride(&w, &mut s, &Input::default(), 40, |_| {});
+    assert!(s.landing.bail_on_landing && !s.stopped && s.landing.ticks < BAIL_ON_LANDING_MAX_TICKS);
     step(&mut s, &w, &Input { tuck: 1.0, ..Input::default() }, DT_TICKS);
     assert!(s.landing.bail_on_landing);
     s.traj.y += 5.0;
@@ -329,7 +330,29 @@ fn no_jump_while_wiping_out_and_only_an_air_phase_ends_the_bail() {
             break;
         }
     }
-    assert!(landed && !s.landing.bail_on_landing && !s.landing.is_bailing(), "{:?}", s.landing.quality);
+    assert!(landed, "{:?}", s.landing.quality);
+    ride(&w, &mut s, &Input::default(), 100, |_| {});
+    assert!(!s.landing.bail_on_landing && !s.landing.is_bailing(), "{:?}", s.landing.quality);
+}
+
+#[test]
+fn a_landing_bail_on_a_steep_slope_gets_up_on_the_ground() {
+    let slope = 35f32.to_radians();
+    let w = world(plane(20000.0, slope));
+    let down = Vec3::new(0.0, -slope.sin(), slope.cos());
+    let mut s = moving(&w, down * -15000.0 + Vec3::Y, down, 60.0 / KMH_PER_M_PER_TICK);
+    (s.landing.bail_on_landing, s.landing.tumbling, s.landing.stable) = (true, true, false);
+    s.landing.pitch = 150f32.to_radians();
+    s.nested_stable = false;
+    let mut airborne = false;
+    let mut got_up = false;
+    for _ in 0..900 {
+        step(&mut s, &w, &Input::default(), DT_TICKS);
+        airborne |= s.state != RideState::Riding;
+        got_up |= !s.landing.is_bailing() && !s.landing.tumbling && s.landing.pitch.abs() < 25f32.to_radians();
+    }
+    assert!(!airborne, "the slide stays on the ground");
+    assert!(got_up, "a bailed rider on a slope gets back up: pitch {}°", s.landing.pitch.to_degrees());
 }
 
 #[test]

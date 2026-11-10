@@ -15,6 +15,7 @@ pub const PITCH_BALANCE_STABLE: f32 = 0.05;
 pub const UBER_RECOVER_TRIGGER_CLEAR_TICKS: f32 = 110.0;
 pub const UBER_RECOVER_HOP_TICKS: f32 = 4.0;
 pub const UBER_CRASH_GATE_TICKS: f32 = 30.0;
+pub const BAIL_ON_LANDING_MAX_TICKS: f32 = 180.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum UberRecovery {
@@ -308,6 +309,10 @@ impl LandingState {
         dt: f32,
     ) {
         self.ticks += dt;
+        // TODO(guess): a landing bail ends after BAIL_ON_LANDING_MAX_TICKS (180, a stand-in) on the ground; without it only an air phase, an impact or level complete end one (issue #5: riders stay head-down until they reach a gap); settle: what ends `BLN_carving_state_bail_on_landing` in the game's graph or carving controller, and after how long.
+        if self.bail_on_landing && self.ticks >= BAIL_ON_LANDING_MAX_TICKS {
+            self.bail_on_landing = false;
+        }
         let input_active = stick_y.abs() > t.input_dead_zone;
         let helping_input = input_active && fsel_sign(stick_y) == fsel_sign(fwd * self.pitch);
         let bail_angle = t.bail_angle_curve.eval(wrap_pi(self.spin).abs());

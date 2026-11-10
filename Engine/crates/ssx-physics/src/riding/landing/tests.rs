@@ -147,7 +147,7 @@ fn a_backslide_ends_by_itself_unless_the_stick_holds_it() {
 }
 
 #[test]
-fn bail_springs_onto_the_back_until_a_fresh_controller() {
+fn bail_springs_onto_the_back_until_a_fresh_controller_or_the_bail_limit() {
     let (mut l, _) = land_rotating(0.0, 150.0 * DEG, 0.1, false);
     let t = balance();
     assert_eq!(l.adhesion_factor(&tuning().carving.balance_surface_adhesion_modifier_curve), 0.0);
@@ -155,12 +155,20 @@ fn bail_springs_onto_the_back_until_a_fresh_controller() {
         l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
     }
     assert!(l.bail_on_landing && (l.pitch - PI).abs() < 5.0 * DEG, "pitch {}°", l.pitch / DEG);
-    for _ in 30..600 {
+    while l.ticks + 2.0 < BAIL_ON_LANDING_MAX_TICKS {
         l.balance_update(&t, 1.0, 0.0, 0.3, true, true, false, false, false, false, false, 2.0);
     }
     assert!(l.bail_on_landing && l.tumbling && (l.pitch - PI).abs() < 1.0 * DEG, "pitch {}°", l.pitch / DEG);
-    l.fresh_controller();
-    assert!(!l.bail_on_landing && !l.is_bailing() && l.pitch == 0.0 && l.landing_score == 1.0);
+    let mut held = l;
+    held.fresh_controller();
+    assert!(!held.bail_on_landing && !held.is_bailing() && held.pitch == 0.0 && held.landing_score == 1.0);
+    assert_eq!(held.quality, LandingQuality::Bail);
+    l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
+    assert!(!l.bail_on_landing && !l.is_bailing());
+    for _ in 0..300 {
+        l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
+    }
+    assert!(!l.tumbling && l.pitch.abs() < 25.0 * DEG, "upright after the bail: {}°", l.pitch / DEG);
     assert_eq!(l.quality, LandingQuality::Bail);
 }
 

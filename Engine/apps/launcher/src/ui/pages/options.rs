@@ -31,7 +31,9 @@ impl Launcher {
             widgets::heading(ui, "Terrain");
             egui::Grid::new("terrain").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
                 widgets::field(ui, "Subdivision");
-                ui.add(egui::Slider::new(&mut s.subdivide, 0..=3).text("levels (2 = the game's)"));
+                ui.add(egui::Slider::new(&mut s.subdivide, 0..=3).text("levels (2 = the game's)")).on_hover_text(
+                    "How finely the terrain is smoothed: higher is smoother but heavier, 0 is the raw shape.",
+                );
                 ui.end_row();
                 widgets::field(ui, "Shading");
                 let combo =
@@ -40,22 +42,37 @@ impl Launcher {
                     for v in [Shading::Auto, Shading::Textured, Shading::Height, Shading::Material] {
                         ui.selectable_value(&mut s.shading, v, shading_label(v));
                     }
-                });
+                })
+                .response
+                .on_hover_text(
+                    "How the terrain surface is coloured; Height and Material are debug views, not the game's look.",
+                );
                 ui.end_row();
             });
             ui.add_space(8.0);
             widgets::heading(ui, "Rendering");
-            ui.checkbox(&mut s.vsync, "VSync");
-            ui.checkbox(&mut s.objects, "Placed objects");
-            ui.checkbox(&mut s.wireframe, "Wireframe (F)");
+            ui.checkbox(&mut s.vsync, "VSync")
+                .on_hover_text("Caps the frame rate at the display's refresh rate; off removes the cap but may tear.");
+            ui.checkbox(&mut s.objects, "Placed objects")
+                .on_hover_text("Draws the trees, rocks, rails and buildings on the track.");
+            widgets::note(ui, "Off hides them, but you still collide with them. For performance testing only.");
+            ui.checkbox(&mut s.wireframe, "Wireframe (F)")
+                .on_hover_text("Draws the triangle mesh over everything, for debugging.");
+            widgets::note(ui, "A debug overlay of the triangle mesh. Press F in the game to toggle it.");
 
             let ui = &mut columns[1];
             widgets::heading(ui, "Effects");
-            ui.checkbox(&mut s.particles, "Particles");
-            ui.checkbox(&mut s.snow_tracks, "Snow tracks");
-            ui.checkbox(&mut s.local_lights, "Local lights");
-            ui.checkbox(&mut s.game_post, "Post-processing");
-            ui.checkbox(&mut s.game_sky, "Sky");
+            ui.checkbox(&mut s.particles, "Particles")
+                .on_hover_text("Snow spray and other particle effects; off can be faster.");
+            ui.checkbox(&mut s.snow_tracks, "Snow tracks")
+                .on_hover_text("The trails riders cut into the snow; off can be faster.");
+            ui.checkbox(&mut s.local_lights, "Local lights")
+                .on_hover_text("The lights placed along the track; off can be faster.");
+            ui.checkbox(&mut s.game_post, "Post-processing")
+                .on_hover_text("The game's screen effects such as bloom and colour grading.");
+            widgets::note(ui, "Off also removes screen warnings, such as the low-oxygen blackout.");
+            ui.checkbox(&mut s.game_sky, "Sky")
+                .on_hover_text("The game's sky and clouds; off shows a flat colour instead.");
             ui.add_space(8.0);
             widgets::note(ui, "The game and the tools start with these options. They are saved as you change them.");
         });
@@ -71,20 +88,24 @@ impl Launcher {
                 for v in [Music::Auto, Music::DeadlyDescent, Music::Licensed, Music::Off] {
                     ui.selectable_value(&mut s.music, v, music_label(v));
                 }
-            });
+            })
+            .response
+            .on_hover_text("Which soundtrack plays in the menus and on the mountain.");
             ui.end_row();
             widgets::field(ui, "Volume");
-            ui.add_enabled(s.music != Music::Off, egui::Slider::new(&mut s.music_volume, 0.0..=1.0).fixed_decimals(2));
+            ui.add_enabled(s.music != Music::Off, egui::Slider::new(&mut s.music_volume, 0.0..=1.0).fixed_decimals(2))
+                .on_hover_text("Music loudness, 1.00 is full volume.");
             ui.end_row();
         });
         ui.add_space(8.0);
         widgets::heading(ui, "Sound effects");
         egui::Grid::new("sfx").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
             widgets::field(ui, "Effects");
-            ui.checkbox(&mut s.sfx, "On");
+            ui.checkbox(&mut s.sfx, "On").on_hover_text("Board, rider and menu sounds.");
             ui.end_row();
             widgets::field(ui, "Volume");
-            ui.add_enabled(s.sfx, egui::Slider::new(&mut s.sfx_volume, 0.0..=1.0).fixed_decimals(2));
+            ui.add_enabled(s.sfx, egui::Slider::new(&mut s.sfx_volume, 0.0..=1.0).fixed_decimals(2))
+                .on_hover_text("Sound effect loudness, 1.00 is full volume.");
             ui.end_row();
         });
     }

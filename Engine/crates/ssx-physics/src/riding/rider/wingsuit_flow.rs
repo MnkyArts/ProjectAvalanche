@@ -86,9 +86,6 @@ fn aerial_slave_part(s: &mut RiderState, w: &World, input: &Input, side: &mut Ol
 }
 
 fn old_part(s: &mut RiderState, w: &World, input: &Input, node: &mut OldNode, depth: usize, j0: Quat, dt: f32) -> Part {
-    if depth >= MAX_ACTIVE_NODES {
-        return ZERO;
-    }
     let new = match &mut node.side {
         OldSide::Wingsuit(c) => wingsuit_part(s, w, input, c, j0, dt),
         OldSide::Ballistic => ballistic_part(s, w, j0, false, dt),
@@ -109,6 +106,12 @@ fn blend_with(
     dt: f32,
 ) -> Part {
     let Some(b) = blend.as_mut() else { return new };
+    if depth + 1 >= MAX_ACTIVE_NODES {
+        // TODO(guess): past MaxActiveNodes the oldest node drops out of the blend (as the NIS fades truncate) instead of adding zero motion, which stopped a rider who closed the wingsuit mid-deploy (#26); settle: the anim graph's handling of a blend that overflows MaxActiveNodes.
+        crate::guess_hit!();
+        *blend = None;
+        return new;
+    }
     match b.advance(dt) {
         None => {
             *blend = None;

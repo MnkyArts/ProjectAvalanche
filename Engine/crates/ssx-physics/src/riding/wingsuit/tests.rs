@@ -268,3 +268,42 @@ fn the_wingsuit_needs_the_item() {
     assert_eq!(deploys(&no_suit, Some(true)), (true, true), "the tutorial's enable");
     assert_eq!(deploys(&GearStats::default_gear(), Some(false)), (false, false), "the tutorial's disable");
 }
+
+fn open_and_close(hold_ticks: usize) -> (Vec<f32>, f32) {
+    use crate::death::GameFlowFlags;
+    use crate::rider::RideState;
+    let w = crate::testutil::world(crate::testutil::plane(3000.0, 0.3));
+    let started = GameFlowFlags { race_proper_started: true, ..GameFlowFlags::default() };
+    let v = 80.0 / crate::KMH_PER_M_PER_TICK;
+    let mut s = airborne(&w);
+    (s.velocity, s.traj_velocity) = (Vec3::Z * v, Vec3::Z * v);
+    let mut fall = s.clone();
+    let mut speeds = Vec::new();
+    for k in 0..hold_ticks + 61 {
+        step_ws(&mut s, &w, (1..=hold_ticks).contains(&k), started);
+        step_ws(&mut fall, &w, false, started);
+        speeds.push(s.traj_velocity.with_y(0.0).length());
+        if k == hold_ticks {
+            assert!(s.state.is_wingsuit(), "{:?}", s.state);
+        }
+    }
+    assert!(s.state == RideState::Airborne && s.wingsuit.blend.is_none(), "{:?}", s.state);
+    assert_eq!(fall.state, RideState::Airborne);
+    (speeds, fall.traj_velocity.with_y(0.0).length())
+}
+
+#[test]
+fn closing_the_wingsuit_right_after_opening_keeps_the_speed() {
+    for hold in [1, 3, 8] {
+        let (speeds, fall) = open_and_close(hold);
+        let min = speeds.iter().copied().fold(f32::MAX, f32::min);
+        assert!(min > 0.8 * fall, "hold {hold}: {min} vs {fall} m/tick without the wingsuit ({speeds:?})");
+    }
+}
+
+#[test]
+fn closing_the_wingsuit_after_a_flight_keeps_the_speed() {
+    let (speeds, fall) = open_and_close(45);
+    let min = speeds.iter().copied().fold(f32::MAX, f32::min);
+    assert!(min > 0.8 * fall, "{min} vs {fall} m/tick without the wingsuit");
+}

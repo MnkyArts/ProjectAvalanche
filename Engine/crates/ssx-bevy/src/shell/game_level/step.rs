@@ -99,7 +99,12 @@ pub(super) fn feed_step(
     }
     let clock = &ride.session.event.clock;
     let (ghosts, racers) = l.ghosts.step(clock.seconds, clock.ms(), &ride.world().triggers, &mut ui.loc);
-    l.feed.ghosts = ghosts;
+    l.feed.ghosts =
+        if ssx_physics::event::shows_explore_ghosts(ride.session.event.setup.event_type, ride.session.bots.is_some()) {
+            ghosts
+        } else {
+            Vec::new()
+        };
     if let Some(b) = bots.as_deref() {
         l.feed.ghosts.extend(b.live.billboards());
     }

@@ -439,7 +439,14 @@ impl RideDriver {
             &self.world.triggers,
             &mut ui.loc,
         );
-        self.feed.ghosts = ghosts;
+        self.feed.ghosts = if ssx_physics::event::shows_explore_ghosts(
+            self.session.event.setup.event_type,
+            self.session.bots.is_some(),
+        ) {
+            ghosts
+        } else {
+            Vec::new()
+        };
         self.feed.ghost_racers = racers;
         self.feed.feed(ui, &self.rider, &self.session, &self.world, Some(&e));
         let events = self.session.tutorial.as_mut().map_or_else(Vec::new, |t| t.take_events());

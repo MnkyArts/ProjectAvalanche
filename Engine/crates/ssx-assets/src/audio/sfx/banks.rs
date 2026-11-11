@@ -210,6 +210,18 @@ pub fn audio_assets(big_root: &Path, asset_type: &str) -> Result<Vec<(String, St
         .collect())
 }
 
+// TODO(guess): "avalanche" is killed with the level's banks though the game's SfxAvalancheBank stays loaded (its index in slot 0 is overwritten by the ambience bank's, 0x83093C88 / 0x83095278), so its stopped loop would hold the slot until a later tick; settle: when the game calls the avalanche again after a restart (0x830F29D0, owner +0xB8).
+pub const RESIDENT_BANKS: &[&str] = &[
+    "board_ice",
+    "board_packed",
+    "board_powder",
+    "board_rock",
+    "grind_sweetner",
+    "ant_tags",
+    "foley_common",
+    "fe_sfx",
+];
+
 pub fn riding_banks(
     big_root: &Path,
     info: &TrackAudioInfo,

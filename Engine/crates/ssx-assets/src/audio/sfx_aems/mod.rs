@@ -473,14 +473,75 @@ mod tests {
         assert_eq!(sine(1024), 0);
     }
 
+    struct NoVoices;
+
+    impl VoiceHost for NoVoices {
+        fn start(&mut self, _: usize, _: &SampleEntry, _: &[(u8, i32)], _: Option<&Choice>) -> Option<u32> {
+            None
+        }
+        fn set_param(&mut self, _: u32, _: u8, _: i32) {}
+        fn destroy(&mut self, _: u32) {}
+        fn pause(&mut self, _: u32) {}
+        fn resume(&mut self, _: u32) {}
+        fn status(&mut self, _: u32) -> Option<(i32, i32)> {
+            None
+        }
+    }
+
+    fn one_module_bank(function: u32) -> Bank {
+        let module = ssx_formats::abk::Module {
+            offset: 0,
+            id: 1,
+            max_instances: 1,
+            num_globals: 0,
+            num_events: 0,
+            num_players: 0,
+            has_stop: 0,
+            has_params: 0,
+            num_extra_slots: 0,
+            script_offset: 0,
+            data_offset: 0,
+            data_size: INSTANCE_HEADER + 12,
+            end_state: INSTANCE_HEADER,
+            slots: Vec::new(),
+            program: Vec::new(),
+        };
+        let abk = AbkFile {
+            unk_04: [0; 6],
+            file_size: 0,
+            s10a_size: 0,
+            ast_word: 0,
+            s10a_offset: 0,
+            section_a_offset: 0,
+            section_b_offset: 0,
+            section_c_offset: 0,
+            modules: vec![module],
+            sample_tables: Vec::new(),
+            s10a: ssx_formats::abk::S10a { unk_04: 0, sounds: Vec::new() },
+            section_a: Vec::new(),
+            section_b: Vec::new(),
+            names: Vec::new(),
+            names_end: 0,
+        };
+        let links = vec![ModuleLinks { function: Some(function), ..Default::default() }];
+        Bank { name: "wind".into(), abk, data: Arc::new(vec![0; (INSTANCE_HEADER + 12) as usize]), ast: None, links }
+    }
+
     #[test]
-    fn a_call_that_creates_nothing_is_discarded() {
+    fn a_bank_kill_frees_the_slots_a_stopped_loop_holds() {
         let mut a = Aems::new();
-        let h = a.call(0x1234, &[]);
-        assert!(a.csis[h].is_some());
-        assert!(a.discard_if_empty(h));
-        assert!(a.csis[h].is_none());
-        assert!(!a.discard_if_empty(h));
+        a.banks.push(one_module_bank(0x1234));
+        let modules = |a: &Aems, h: CsisHandle| a.csis[h].as_ref().map_or(0, |c| c.modules.len());
+        let first = a.call(0x1234, &[]);
+        assert_eq!(modules(&a, first), 1);
+        a.stop(first);
+        let again = a.call(0x1234, &[]);
+        assert_eq!(modules(&a, again), 0);
+        a.kill_bank(0, &mut NoVoices);
+        assert_eq!(a.live_instances(), 0);
+        let after = a.call(0x1234, &[]);
+        assert_eq!(modules(&a, after), 1);
+        assert_eq!(a.live_instances(), 1);
     }
 
     #[test]

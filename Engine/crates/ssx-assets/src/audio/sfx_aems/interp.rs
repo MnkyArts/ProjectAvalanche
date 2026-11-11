@@ -12,21 +12,53 @@ impl Aems {
             if self.run(&mut inst, host) {
                 self.instances[k] = Some(inst);
             } else {
-                self.order.retain(|&x| x != k);
-                if let Some(n) = self.live.get_mut(&(inst.bank, inst.module)) {
-                    *n = n.saturating_sub(1);
-                }
-                if let Some(c) = self.csis.get_mut(inst.csis).and_then(Option::as_mut) {
-                    c.modules.retain(|&x| x != k);
-                }
-                if self.verbose {
-                    let text = format!("  {} module {} instance {k} ended", self.banks[inst.bank].name, inst.module);
-                    self.logf(text);
-                }
+                self.release(k, &inst);
             }
         }
         self.now_ms += f64::from(self.tick_ms);
         self.ticks += 1;
+    }
+
+    fn destroy_players(&self, bank: usize, module: usize, s: &[u8], host: &mut dyn VoiceHost) {
+        let m = &self.banks[bank].abk.modules[module];
+        for &slot in &m.slots[..m.num_players as usize] {
+            let v = rd(s, (slot - INSTANCE_HEADER) as usize + 8);
+            if v != 0 {
+                host.destroy(v as u32);
+            }
+        }
+    }
+
+    fn release(&mut self, k: usize, inst: &Instance) {
+        self.order.retain(|&x| x != k);
+        if let Some(n) = self.live.get_mut(&(inst.bank, inst.module)) {
+            *n = n.saturating_sub(1);
+        }
+        if let Some(c) = self.csis.get_mut(inst.csis).and_then(Option::as_mut) {
+            c.modules.retain(|&x| x != k);
+        }
+        if self.verbose {
+            let text = format!("  {} module {} instance {k} ended", self.banks[inst.bank].name, inst.module);
+            self.logf(text);
+        }
+    }
+
+    pub fn kill_bank(&mut self, bank: usize, host: &mut dyn VoiceHost) {
+        let keys: Vec<usize> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|&k| self.instances[k].as_ref().is_some_and(|i| i.bank == bank))
+            .collect();
+        if !keys.is_empty() {
+            let text = format!("kill {}: {} instance(s)", self.banks[bank].name, keys.len());
+            self.logf(text);
+        }
+        for k in keys {
+            let Some(inst) = self.instances[k].take() else { continue };
+            self.destroy_players(inst.bank, inst.module, &inst.state, host);
+            self.release(k, &inst);
+        }
     }
 
     fn run(&mut self, inst: &mut Instance, host: &mut dyn VoiceHost) -> bool {
@@ -85,13 +117,7 @@ impl Aems {
             }
             Op::End => {
                 if r(s, 0xC) != 0 {
-                    let m = &self.banks[inst.bank].abk.modules[inst.module];
-                    for &slot in &m.slots[..m.num_players as usize] {
-                        let v = rd(s, (slot - INSTANCE_HEADER) as usize + 8);
-                        if v != 0 {
-                            host.destroy(v as u32);
-                        }
-                    }
+                    self.destroy_players(inst.bank, inst.module, s, host);
                     *alive = false;
                 }
                 0

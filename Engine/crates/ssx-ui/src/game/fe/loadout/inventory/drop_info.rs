@@ -47,6 +47,20 @@ impl DropInfo {
             .fold(0, |m, g| m | 1 << g)
     }
 
+    pub fn main_gear(&self) -> Option<i64> {
+        let (mut top, mut main) = (0, 0);
+        for (i, &r) in self.required.iter().enumerate().filter(|&(_, &r)| r != 7) {
+            let w = self.weights.get(i).copied().unwrap_or(0);
+            if top < w {
+                (top, main) = (w, r);
+            }
+        }
+        if top <= 0 {
+            return None;
+        }
+        requirement_gear(main).and_then(|(g, _)| g)
+    }
+
     pub fn forced_kinds(&self) -> [bool; KINDS] {
         std::array::from_fn(|k| self.forced(k as i64).is_some())
     }

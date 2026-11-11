@@ -246,6 +246,11 @@ impl Inventory {
                 self.inventory_list.push(e);
             }
             self.store_list.sort_by(by_value);
+            if kind == 2
+                && let Some(slot) = drop.and_then(DropInfo::main_gear)
+            {
+                self.offer_main_gear(db, profile, loc, drop, ctx, slot);
+            }
             self.store_list.truncate(4);
             let equipped = self.equipped[kind as usize].clone();
             for it in &mut self.inventory_list {
@@ -256,6 +261,29 @@ impl Inventory {
         }
         self.survival = self.survival_score(db, profile, drop);
         self.inventory_size = Self::inventory_size(db, profile);
+    }
+
+    fn offer_main_gear(
+        &mut self,
+        db: &CareerDb,
+        profile: &Profile,
+        loc: &mut Localization,
+        drop: Option<&DropInfo>,
+        ctx: &StoreContext,
+        slot: i64,
+    ) {
+        if let Some(i) = self.store_list.iter().position(|u| u.slot == slot) {
+            let it = self.store_list.remove(i);
+            self.store_list.insert(0, it);
+            return;
+        }
+        let level = if ctx.level < self.level_limit { ctx.level } else { self.level_limit };
+        let req = Request { level, slot, ..Request::NORMAL };
+        let Some(id) = self.store.generate(&self.data, ctx, 2, &req, self.now_ms) else { return };
+        if let Some(rec) = self.record(db, profile, loc, id, 1) {
+            let item = self.ui_item(db, profile, loc, drop, &rec);
+            self.store_list.insert(0, item);
+        }
     }
 
     pub fn seen(&mut self, kind: i64, entry: (u32, u8)) {

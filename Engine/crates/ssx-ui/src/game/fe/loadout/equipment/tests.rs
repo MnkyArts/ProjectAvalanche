@@ -209,3 +209,64 @@ fn a_looked_at_item_is_no_longer_new_in_both_lists() {
     inv.seen(i64::MAX, (0x301, 0));
     assert!(inv.inventory_list[0].has(flag::NEW), "no kind: nothing cleared");
 }
+
+fn gear_template(key: u32, slot: i64) -> ssx_assets::career::data::StoreTemplate {
+    ssx_assets::career::data::StoreTemplate {
+        key,
+        title: String::new(),
+        slot,
+        kind: 2,
+        stats: vec![5 + 3 * (slot - 1)],
+        price_scale: 1.0,
+        charlock_chance: 0,
+        bonus_chance: 0,
+        min_level: 0,
+        max_level: 100,
+        min_rarity: 0,
+        max_rarity: 5,
+        fixed_points: -1,
+        bonus_stats: Vec::new(),
+        descriptions: Vec::new(),
+        members: Vec::new(),
+    }
+}
+
+#[test]
+fn the_gear_store_offers_the_drops_main_gear_even_when_worn() {
+    use ssx_assets::career::store::{Store, StoreContext, StoreData};
+    let db = CareerDb::default();
+    let profile = Profile::default();
+    let mut loc = Localization::empty(Language::English);
+    let mut group = gear_template(100, -1);
+    group.members = vec![1, 3];
+    let mut data = StoreData {
+        templates: [(1, gear_template(1, 1)), (3, gear_template(3, 3)), (100, group)].into(),
+        ..Default::default()
+    };
+    data.tables.groups = vec![0, 0, 100, 0, 0];
+    let mut inv = Inventory::new(&db);
+    (inv.data, inv.store, inv.worn_gear) = (data, Store::new(7), 1 << 1);
+    let drop = DropInfo { required: vec![0, 7], weights: vec![80, 10], ..Default::default() };
+    assert_eq!(drop.main_gear(), Some(1), "requirement 0 is the wingsuit, slot 1");
+    let ctx = StoreContext { rider: 9, gear_types: 1 << 3, ..inv.store_context(&db, &profile, Some(&drop)) };
+    assert_eq!(ctx.required_gear, 1 << 1);
+    inv.store.refresh(&inv.data.clone(), &ctx, 0);
+    assert!(inv.store.stock[2].iter().all(|o| o.slot == 3), "the worn wingsuit's slot is never drawn");
+    inv.build_lists(&db, &profile, &mut loc, Some(&drop), &ctx, 2);
+    assert_eq!(inv.store_list.len(), 4);
+    assert_eq!(inv.store_list[0].slot, 1, "0x82493AB8 adds one of the main requirement's gear in front");
+    assert!(inv.store_list[1..].iter().all(|u| u.slot == 3));
+    let generated = inv.store.stock[2].len();
+    inv.worn_gear = 0;
+    inv.build_lists(&db, &profile, &mut loc, Some(&drop), &ctx, 2);
+    assert_eq!(
+        (inv.store_list[0].slot, inv.store.stock[2].len()),
+        (1, generated),
+        "an offer of it is moved to the front"
+    );
+    let none = DropInfo { required: vec![7], weights: vec![10], ..Default::default() };
+    assert_eq!(none.main_gear(), None, "requirement 7 is no gear");
+    assert_eq!(DropInfo { required: vec![0], weights: vec![0], ..Default::default() }.main_gear(), None, "no weight");
+    assert_eq!(DropInfo { required: vec![0, 5], weights: vec![60, 20], ..Default::default() }.main_gear(), Some(1));
+    assert_eq!(DropInfo { required: vec![6, 4], weights: vec![30, 60], ..Default::default() }.main_gear(), Some(3));
+}

@@ -1,5 +1,5 @@
 use ssx_assets::career::store::purchase::Catalog;
-use ssx_assets::career::store::{Store, StoreContext, StoreData, StoreItem};
+use ssx_assets::career::store::{Request, Store, StoreContext, StoreData, StoreItem};
 use ssx_assets::career::{CareerDb, Profile};
 use ssx_formats::attrib::fnv1;
 

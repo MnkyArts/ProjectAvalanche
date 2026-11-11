@@ -18,7 +18,7 @@ use bevy::prelude::{
 };
 use bevy::render::render_resource::PrimitiveTopology;
 use ssx_assets::subdiv::{GAME_LEVELS, SubdLevel};
-use ssx_assets::terrain::{TriMesh, cage_trimesh, is_hidden_face, load_track};
+use ssx_assets::terrain::{TriMesh, cage_trimesh, is_hidden_face, load_track_files};
 use ssx_assets::terrain_vertex;
 use ssx_formats::subd::SubdMesh;
 
@@ -147,9 +147,16 @@ struct PendingTerrain {
     shading: Option<Shading>,
 }
 
-pub fn load(dir: &Path, subdivide: u32) -> Result<LoadedTrack> {
+pub fn track_name(dir: &Path) -> String {
+    std::fs::canonicalize(dir)
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| dir.display().to_string())
+}
+
+pub fn load(dir: &Path, subdivide: u32, drop_files: Option<&[String]>) -> Result<LoadedTrack> {
     let start = Instant::now();
-    let files = load_track(dir)?;
+    let files = load_track_files(dir, drop_files)?;
     if files.is_empty() {
         bail!("no *_mesh_subd.subd files in {}", dir.display());
     }
@@ -224,10 +231,7 @@ pub fn load(dir: &Path, subdivide: u32) -> Result<LoadedTrack> {
         .reduce(Bounds::union)
         .with_context(|| format!("the terrain in {} has no vertices", dir.display()))?;
 
-    let name = std::fs::canonicalize(dir)
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| dir.display().to_string());
+    let name = track_name(dir);
     let stats = TrackStats {
         name,
         files: files.len(),

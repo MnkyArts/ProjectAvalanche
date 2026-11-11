@@ -195,6 +195,17 @@ pub struct FrontEnd {
     pub log: Vec<String>,
 }
 
+pub fn screen_sound(from: u32, to: u32) -> Option<i32> {
+    match (from, to) {
+        (_, screens::id::EQUIPMENT) => Some(2),
+        (
+            screens::id::EXPLORE_RANGE | screens::id::CAMPAIGN_RANGE | screens::id::GLOBAL_RANGE,
+            screens::id::MAIN_MENU,
+        ) => Some(4),
+        _ => None,
+    }
+}
+
 impl FrontEnd {
     pub fn reload_riders(&mut self, big_root: &Path) -> Result<()> {
         let career = CareerDb::load(big_root)?;
@@ -352,6 +363,9 @@ impl FrontEnd {
             let text = env.loc.text(key);
             env.values.set_str(0x33, text);
         }
+        if let Some(id) = screen_sound(self.screen, screen) {
+            self.play_sound(id);
+        }
         self.screen = screen;
         globe::scene_screen(self, env);
         env.nav_events.push(event.to_string());
@@ -414,5 +428,20 @@ impl FrontEnd {
                 self.movie_finished(env);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_changes_play_their_sounds() {
+        assert_eq!(screen_sound(screens::id::MAIN_MENU, screens::id::EQUIPMENT), Some(2));
+        for from in [screens::id::EXPLORE_RANGE, screens::id::CAMPAIGN_RANGE, screens::id::GLOBAL_RANGE] {
+            assert_eq!(screen_sound(from, screens::id::MAIN_MENU), Some(4));
+        }
+        assert_eq!(screen_sound(0x10, screens::id::MAIN_MENU), None);
+        assert_eq!(screen_sound(screens::id::MAIN_MENU, screens::id::EXPLORE_RANGE), None);
     }
 }

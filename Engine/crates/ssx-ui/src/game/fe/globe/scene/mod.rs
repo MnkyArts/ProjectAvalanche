@@ -162,6 +162,7 @@ pub struct GlobeScene {
     pub light: crate::game::fe::globe::look::LightFade,
     pub postfx: crate::game::fe::globe::look::PostFxLayer,
     pub fades: Vec<(i32, f32, f32)>,
+    pub sounds: Vec<i32>,
     pub fade_posted: bool,
     pub clouds: crate::game::fe::globe::clouds::CloudTransition,
 }
@@ -220,6 +221,7 @@ impl GlobeScene {
             light: Default::default(),
             postfx: Default::default(),
             fades: Vec::new(),
+            sounds: Vec::new(),
             fade_posted: false,
             clouds: Default::default(),
         };

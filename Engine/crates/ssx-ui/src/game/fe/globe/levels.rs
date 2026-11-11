@@ -119,6 +119,7 @@ impl GlobeScene {
         self.dispatches = self.dispatches.wrapping_add(1);
         self.state = msg;
         self.state_node = node;
+        self.sounds.extend_from_slice(state_sounds(msg));
         self.controller_message(msg, node);
         match msg {
             3 => self.state = 4,
@@ -429,12 +430,36 @@ impl Nearest {
     }
 }
 
+pub fn state_sounds(state: u32) -> &'static [i32] {
+    match state {
+        5 => &[0x3E],
+        7 => &[0x3F],
+        0xC => &[0x45, 0x39],
+        0xD => &[0x3A],
+        0xE => &[4, 0x3B],
+        0x10 => &[0x47, 0x3C],
+        0x12 => &[4, 0x38],
+        0x14 => &[0x49],
+        _ => &[],
+    }
+}
+
+pub fn highlight_sound(state: i32) -> Option<i32> {
+    match state {
+        1 => Some(0x44),
+        2 => Some(0x46),
+        3 => Some(0x48),
+        _ => None,
+    }
+}
+
 impl GlobeScene {
     pub fn update(&mut self, dt: f32, screen: u32, input: bool, flow: &dyn GlobeFlow) -> SceneEvents {
         self.time += dt;
         self.light.step(dt);
         self.postfx.step(dt);
         self.fades.clear();
+        self.sounds.clear();
         self.clouds.update(dt);
         let mut ev = SceneEvents::default();
         self.entity_update();
@@ -452,6 +477,10 @@ impl GlobeScene {
                 ran = true;
             } else if range_screen || matches!(self.state, 10 | 0xF) {
                 ev.range = self.camera_range(dt, input, flow);
+                if ev.range.is_some() {
+                    // TODO(guess): the range spin posts highlight state 1; 0x82511A90 maps 1 to RS_menu_highlight but its caller is unresolved; settle: find the xref that passes 1
+                    ev.audio = Some(1);
+                }
                 ev.list_type = Some(1);
                 ran = true;
             } else if matches!(screen, 0xD | 0x43 | 0x10) {
@@ -623,5 +652,37 @@ pub fn screen_of_level(level: u32) -> u32 {
         4 => 0x43,
         5 => 0x44,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn globe_states_play_their_sounds() {
+        let mut scene = GlobeScene::new(Default::default());
+        for (state, ids) in [
+            (5, &[0x3E][..]),
+            (7, &[0x3F]),
+            (0xC, &[0x45, 0x39]),
+            (0xD, &[0x3A]),
+            (0xE, &[4, 0x3B]),
+            (0x10, &[0x47, 0x3C]),
+            (0x12, &[4, 0x38]),
+            (0x14, &[0x49]),
+            (9, &[]),
+        ] {
+            scene.state = 0;
+            scene.sounds.clear();
+            scene.queue.push_back((state, 0));
+            scene.dispatch();
+            assert_eq!(scene.sounds, ids, "state {state:#x}");
+        }
+    }
+
+    #[test]
+    fn highlight_states_map_to_sounds() {
+        assert_eq!([1, 2, 3, 0, 4].map(highlight_sound), [Some(0x44), Some(0x46), Some(0x48), None, None]);
     }
 }

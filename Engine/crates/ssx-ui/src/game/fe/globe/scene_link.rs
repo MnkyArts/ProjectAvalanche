@@ -128,6 +128,9 @@ pub fn scene_update(fe: &mut FrontEnd, env: &mut FeEnv, dt: f64) {
     for (kind, seconds, delay) in std::mem::take(&mut scene.fades) {
         fe.fade_message(kind, seconds, delay);
     }
+    for id in std::mem::take(&mut scene.sounds) {
+        fe.play_sound(id);
+    }
     let dispatched = scene.dispatches != dispatches;
     let visible = scene.level.is_some() && (scene.visible() || scene.level.is_some_and(|l| l >= 4));
     fe.globe_scene = Some(scene);
@@ -141,8 +144,8 @@ pub fn scene_update(fe: &mut FrontEnd, env: &mut FeEnv, dt: f64) {
     if let Some(r) = ev.recommendation {
         env.values.set_bool(0xC6, r);
     }
-    if let Some(a) = ev.audio {
-        fe.note(format!("globe: the game manager's audio state {a} (0x82511A90)"));
+    if let Some(id) = ev.audio.and_then(super::levels::highlight_sound) {
+        fe.play_sound(id);
     }
     if let Some(r) = ev.range {
         fe.note(format!("globe: the stick selects range {r:#x}"));

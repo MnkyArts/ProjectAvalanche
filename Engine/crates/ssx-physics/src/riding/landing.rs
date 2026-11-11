@@ -15,7 +15,7 @@ pub const PITCH_BALANCE_STABLE: f32 = 0.05;
 pub const UBER_RECOVER_TRIGGER_CLEAR_TICKS: f32 = 110.0;
 pub const UBER_RECOVER_HOP_TICKS: f32 = 4.0;
 pub const UBER_CRASH_GATE_TICKS: f32 = 30.0;
-pub const BAIL_ON_LANDING_MAX_TICKS: f32 = 180.0;
+pub const BAIL_ON_LANDING_MAX_TICKS: f32 = 90.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum UberRecovery {
@@ -295,7 +295,7 @@ impl LandingState {
             return;
         }
         self.landing_bail_ticks += dt;
-        // TODO(guess): a landing bail (not an avalanche tumble) ends BAIL_ON_LANDING_MAX_TICKS (180, a stand-in) after it starts; without it only an air phase, an impact or level complete end one (issue #5: riders stay head-down until they reach a gap). In the game `BailOnLanding` is a graph variable (carve_riding's field, BLN_carving_state_bail_on_landing) that Ssx::CarvingController reads at the top of its update (0x82CC3A58) and writes back at the end (0x82CD413C); its own writers are touchdown 0x82CCF6D4, level complete 0x82CC7A88, the avalanche 0x82CC7B40/0x82CC7BF8 and construction 0x82CC2EB8, and anim_all.cba has no graph writer (state_riding_bail's entry and state_bail_cycle's exits only read it); settle: what else writes the variable false on the ground, and after how long.
+        // TODO(guess): a landing bail (not an avalanche tumble) ends BAIL_ON_LANDING_MAX_TICKS (90, a stand-in) after it starts; without it only an air phase, an impact or level complete end one (issue #5: riders stay head-down until they reach a gap). In the game `BailOnLanding` is a graph variable (carve_riding's field, BLN_carving_state_bail_on_landing) that Ssx::CarvingController reads at the top of its update (0x82CC3A58) and writes back at the end (0x82CD413C); its own writers are touchdown 0x82CCF6D4, level complete 0x82CC7A88, the avalanche 0x82CC7B40/0x82CC7BF8 and construction 0x82CC2EB8, and anim_all.cba has no graph writer (state_riding_bail's entry and state_bail_cycle's exits only read it); settle: what else writes the variable false on the ground, and after how long.
         if self.landing_bail_ticks >= BAIL_ON_LANDING_MAX_TICKS {
             (self.bail_on_landing, self.landing_bail_ticks) = (false, 0.0);
         }

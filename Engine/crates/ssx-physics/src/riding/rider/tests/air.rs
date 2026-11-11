@@ -316,7 +316,7 @@ fn no_jump_while_wiping_out_and_the_bail_holds_until_its_limit() {
         assert_eq!(s.state, RideState::Riding, "step {i}");
     }
     assert!(s.landing.bail_on_landing);
-    ride(&w, &mut s, &Input::default(), 40, |_| {});
+    ride(&w, &mut s, &Input::default(), 25, |_| {});
     assert!(s.landing.bail_on_landing && !s.stopped && s.landing.landing_bail_ticks < BAIL_ON_LANDING_MAX_TICKS);
     step(&mut s, &w, &Input { tuck: 1.0, ..Input::default() }, DT_TICKS);
     assert!(s.landing.bail_on_landing);

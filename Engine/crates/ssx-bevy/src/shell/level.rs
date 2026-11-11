@@ -204,7 +204,11 @@ impl LevelData {
         let riding = ride.is_some();
         let root = big_root.as_deref();
         let heli = helicopter::load_level(root, Some(&name), ride.as_ref().and_then(ride::RideLoad::heli_intro));
-        let ghosts = if ride.as_ref().is_some_and(|r| r.ride().session.bots.is_some()) {
+        let ghosts = if ride.as_ref().is_some_and(|r| {
+            let session = &r.ride().session;
+            session.bots.is_some()
+                || !session.event.setup.event_type.is_some_and(ssx_physics::event::EventType::has_explore_ghosts)
+        }) {
             None
         } else {
             ghosts::load_level(root, &name, drop_key, riding)

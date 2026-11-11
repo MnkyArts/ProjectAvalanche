@@ -67,6 +67,10 @@ impl EventType {
     pub fn ranks_ascending(self) -> bool {
         self.is_race()
     }
+
+    pub fn has_explore_ghosts(self) -> bool {
+        matches!(self, EventType::RaceGhosts | EventType::TrickGhosts)
+    }
 }
 
 pub const CLASS_UI_DROP: u32 = fnv1(b"ui_drop");
@@ -243,5 +247,12 @@ mod tests {
         let words: Vec<&str> = (0..9).map(|v| EventType::from_raw(v).expect("a type").kind_word()).collect();
         assert_eq!(words, ["trick", "trick", "trick", "survive", "survive", "race", "race", "race", "freeride"]);
         assert_eq!(EventType::from_raw(9), None);
+    }
+
+    #[test]
+    fn only_ghost_events_race_explore_ghosts() {
+        let ghosts: Vec<u32> =
+            (0..9).filter(|&v| EventType::from_raw(v).expect("a type").has_explore_ghosts()).collect();
+        assert_eq!(ghosts, [EventType::TrickGhosts as u32, EventType::RaceGhosts as u32]);
     }
 }

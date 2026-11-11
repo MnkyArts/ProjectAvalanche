@@ -127,6 +127,7 @@ pub struct LandingState {
     pub auto_recover_backslide: bool,
     pub landed_switch: bool,
     pub ticks: f32,
+    pub landing_bail_ticks: f32,
     pub uber_recovery: UberRecovery,
     pub quality: LandingQuality,
     pub touchdown_pitch: f32,
@@ -288,6 +289,18 @@ impl LandingState {
 }
 
 impl LandingState {
+    pub fn landing_bail_limit(&mut self, avalanche_tumble: bool, dt: f32) {
+        if !self.bail_on_landing || avalanche_tumble {
+            self.landing_bail_ticks = 0.0;
+            return;
+        }
+        self.landing_bail_ticks += dt;
+        // TODO(guess): a landing bail (not an avalanche tumble) ends BAIL_ON_LANDING_MAX_TICKS (180, a stand-in) after it starts; without it only an air phase, an impact or level complete end one (issue #5: riders stay head-down until they reach a gap). In the game `BailOnLanding` is a graph variable (carve_riding's field, BLN_carving_state_bail_on_landing) that Ssx::CarvingController reads at the top of its update (0x82CC3A58) and writes back at the end (0x82CD413C); its own writers are touchdown 0x82CCF6D4, level complete 0x82CC7A88, the avalanche 0x82CC7B40/0x82CC7BF8 and construction 0x82CC2EB8, and anim_all.cba has no graph writer (state_riding_bail's entry and state_bail_cycle's exits only read it); settle: what else writes the variable false on the ground, and after how long.
+        if self.landing_bail_ticks >= BAIL_ON_LANDING_MAX_TICKS {
+            (self.bail_on_landing, self.landing_bail_ticks) = (false, 0.0);
+        }
+    }
+
     pub fn recovery_input(&self, t: &BalanceTuning, fwd: f32, stick_y: f32) -> bool {
         stick_y.abs() > t.input_dead_zone && fsel_sign(stick_y) == fsel_sign(fwd * self.pitch)
     }
@@ -309,10 +322,6 @@ impl LandingState {
         dt: f32,
     ) {
         self.ticks += dt;
-        // TODO(guess): a landing bail ends after BAIL_ON_LANDING_MAX_TICKS (180, a stand-in) on the ground; without it only an air phase, an impact or level complete end one (issue #5: riders stay head-down until they reach a gap); settle: what ends `BLN_carving_state_bail_on_landing` in the game's graph or carving controller, and after how long.
-        if self.bail_on_landing && self.ticks >= BAIL_ON_LANDING_MAX_TICKS {
-            self.bail_on_landing = false;
-        }
         let input_active = stick_y.abs() > t.input_dead_zone;
         let helping_input = input_active && fsel_sign(stick_y) == fsel_sign(fwd * self.pitch);
         let bail_angle = t.bail_angle_curve.eval(wrap_pi(self.spin).abs());

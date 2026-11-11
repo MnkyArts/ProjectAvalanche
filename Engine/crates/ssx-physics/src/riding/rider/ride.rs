@@ -271,6 +271,7 @@ pub(super) fn ride(s: &mut RiderState, w: &World, input: &Input, flags: (bool, b
     rock_riding_update(s, w, rock_effects, dt);
     let recovery = s.landing.recovery_input(&t.balance, s.kin.fwd, stick.y);
     s.survival.carving_damage += s.avalanche.balance(at, &mut s.landing.bail_on_landing, level_complete, recovery);
+    s.landing.landing_bail_limit(s.avalanche.bailed_because_of_avalanche, dt);
     s.landing.balance_update(
         &t.balance,
         s.kin.fwd,

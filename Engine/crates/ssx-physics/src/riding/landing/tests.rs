@@ -147,6 +147,21 @@ fn a_backslide_ends_by_itself_unless_the_stick_holds_it() {
 }
 
 #[test]
+fn the_bail_limit_counts_from_the_bail_and_spares_avalanche_tumbles() {
+    let mut l = LandingState { ticks: 10.0 * BAIL_ON_LANDING_MAX_TICKS, bail_on_landing: true, ..Default::default() };
+    l.landing_bail_limit(false, 2.0);
+    assert!(l.bail_on_landing && l.landing_bail_ticks == 2.0);
+    let mut tumble = LandingState { bail_on_landing: true, ..Default::default() };
+    for _ in 0..1000 {
+        tumble.landing_bail_limit(true, 2.0);
+    }
+    assert!(tumble.bail_on_landing && tumble.landing_bail_ticks == 0.0);
+    l.bail_on_landing = false;
+    l.landing_bail_limit(false, 2.0);
+    assert_eq!(l.landing_bail_ticks, 0.0);
+}
+
+#[test]
 fn bail_springs_onto_the_back_until_a_fresh_controller_or_the_bail_limit() {
     let (mut l, _) = land_rotating(0.0, 150.0 * DEG, 0.1, false);
     let t = balance();
@@ -155,7 +170,8 @@ fn bail_springs_onto_the_back_until_a_fresh_controller_or_the_bail_limit() {
         l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
     }
     assert!(l.bail_on_landing && (l.pitch - PI).abs() < 5.0 * DEG, "pitch {}°", l.pitch / DEG);
-    while l.ticks + 2.0 < BAIL_ON_LANDING_MAX_TICKS {
+    while l.landing_bail_ticks + 2.0 < BAIL_ON_LANDING_MAX_TICKS {
+        l.landing_bail_limit(false, 2.0);
         l.balance_update(&t, 1.0, 0.0, 0.3, true, true, false, false, false, false, false, 2.0);
     }
     assert!(l.bail_on_landing && l.tumbling && (l.pitch - PI).abs() < 1.0 * DEG, "pitch {}°", l.pitch / DEG);
@@ -163,6 +179,7 @@ fn bail_springs_onto_the_back_until_a_fresh_controller_or_the_bail_limit() {
     held.fresh_controller();
     assert!(!held.bail_on_landing && !held.is_bailing() && held.pitch == 0.0 && held.landing_score == 1.0);
     assert_eq!(held.quality, LandingQuality::Bail);
+    l.landing_bail_limit(false, 2.0);
     l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
     assert!(!l.bail_on_landing && !l.is_bailing());
     for _ in 0..300 {

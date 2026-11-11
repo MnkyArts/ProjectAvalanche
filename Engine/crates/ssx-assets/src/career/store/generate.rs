@@ -220,6 +220,7 @@ impl Store {
         }
         let id = item.id;
         self.stock[kind].push(item);
+        self.offered[kind].push(id);
         Some(id)
     }
 

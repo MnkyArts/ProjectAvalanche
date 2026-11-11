@@ -116,16 +116,14 @@ impl Player {
         if inst.created_tick == self.tick {
             return;
         }
-        // TODO(guess): `noInvisibleAdvance` skips an invisible sprite's subtree (the documented GFx extension); settle: where Scaleform's player tests the flag.
-        if self.no_invisible_advance && !inst.visible {
-            return;
-        }
+        // TODO(guess): `noInvisibleAdvance` freezes only the invisible sprite itself (timeline + onEnterFrame), its children keep advancing on their own `_visible`: RiderCell hides `mcBuffer` and its ImageLoader's `onEnterFrame = WaitOnUnloading` must still run on the disc; settle: whether the hidden sprite's own onEnterFrame fires.
+        let frozen = self.no_invisible_advance && !inst.visible;
         let Some(s) = inst.sprite() else { return };
         let (count, cur, playing) = (s.timeline.frame_count(), s.current_frame, s.playing);
-        if inst.scripted && self.script_events {
+        if inst.scripted && self.script_events && !frozen {
             self.actions.push(QueuedAction::EnterFrame { instance: id });
         }
-        if playing && count > 1 {
+        if playing && count > 1 && !frozen {
             if cur >= count {
                 self.run_goto(lib, id, 1);
             } else {

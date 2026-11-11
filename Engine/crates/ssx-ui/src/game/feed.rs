@@ -428,28 +428,65 @@ impl HudFeed {
     }
 
     fn split_callout(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
-        let Some(course) = x.event.setup.course else { return };
-        let racers = self.racers(ui, x, world);
-        let Some((low, y)) =
-            racers.iter().filter_map(|r| r.y.map(|y| (r, y))).fold(None::<(&RaceEntrant, f32)>, |a, (r, y)| match a {
-                Some((b, by)) if by <= y => Some((b, by)),
-                _ => Some((r, y)),
-            })
-        else {
-            return;
+        let event_type = x.event.setup.event_type;
+        let kind = event_type.map_or(2, super::leaderboard::value_kind);
+        let split = if kind == 1 {
+            let rivals = self.trick_rivals(&mut ui.loc, event_type);
+            trick_split(s.score.score, &rivals)
+        } else {
+            let Some(course) = x.event.setup.course else { return };
+            let racers = self.racers(ui, x, world);
+            racers
+                .iter()
+                .filter_map(|r| r.y.map(|y| (r, y)))
+                .fold(None::<(&RaceEntrant, f32)>, |a, (r, y)| match a {
+                    Some((b, by)) if by <= y => Some((b, by)),
+                    _ => Some((r, y)),
+                })
+                .map(|(low, y)| race_split(x.event.clock.ms() as f32, course.start_y, s.position.y, y, &low.name))
         };
-        let (me, start) = (s.position.y, course.start_y);
-        let clock = x.event.clock.ms() as f32;
-        let ahead = y > me;
-        let gap = if ahead { clock / (start - me) * (y - me) } else { clock / (start - y) * (me - y) };
-        let kind = x.event.setup.event_type.map_or(2, super::leaderboard::value_kind);
-        let gap = super::leaderboard::value_text(&mut ui.loc, kind, gap as u32 as i32, true);
-        let key = if ahead { "TXT_SPLITS_YOU_ARE_AHEAD" } else { "TXT_SPLITS_YOU_ARE_BEHIND" };
-        let body = ui.loc.format(key, &[&gap, &low.name]);
-        let callout = SplitsCallout { ahead, show_time: false, kind: 2, body, ..Default::default() };
+        let Some(split) = split else { return };
+        let callout = split_callout_value(&mut ui.loc, kind, &split);
         ui.values.set(id::SPLITS_CALLOUT, UiValue::Splits(callout));
         ui.values.set_bool(id::SPLITS_CALLOUT_ENABLED, true);
     }
+
+    fn trick_rivals(&self, loc: &mut Localization, event_type: Option<EventType>) -> Vec<(String, i32)> {
+        if event_type == Some(EventType::TrickBots) {
+            return self.trick.shown().to_vec();
+        }
+        self.explore.rivals.iter().map(|(n, v)| (super::leaderboard::ghost_name(loc, n), *v as i32)).collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Split {
+    ahead: bool,
+    gap: f32,
+    rival: String,
+}
+
+fn race_split(clock: f32, start: f32, me: f32, y: f32, rival: &str) -> Split {
+    let ahead = y > me;
+    let gap = if ahead { clock / (start - me) * (y - me) } else { clock / (start - y) * (me - y) };
+    Split { ahead, gap, rival: rival.to_string() }
+}
+
+fn trick_split(points: f32, rivals: &[(String, i32)]) -> Option<Split> {
+    // TODO(guess): a trick event's callout compares the player's score with the best-scoring rival's leaderboard value (the trick standings' shown value for bots, the board's score for ghosts), mirroring the race's lowest racer on the course: behind it by its lead, or ahead of it by the player's; the port's split callout measured a time gap from the course height for every event type, which read as points here; settle: the original's split callout handler for value kind 1 events.
+    let (name, best) = rivals.iter().fold(None::<(&str, i32)>, |a, (n, v)| match a {
+        Some((b, bv)) if bv >= *v => Some((b, bv)),
+        _ => Some((n, *v)),
+    })?;
+    let (me, best) = (f64::from(points as i64 as i32), f64::from(best));
+    Some(Split { ahead: me > best, gap: (me - best).abs() as f32, rival: name.to_string() })
+}
+
+fn split_callout_value(loc: &mut Localization, kind: u8, split: &Split) -> SplitsCallout {
+    let gap = super::leaderboard::value_text(loc, kind, split.gap as u32 as i32, true);
+    let key = if split.ahead { "TXT_SPLITS_YOU_ARE_AHEAD" } else { "TXT_SPLITS_YOU_ARE_BEHIND" };
+    let body = loc.format(key, &[&gap, &split.rival]);
+    SplitsCallout { ahead: split.ahead, show_time: false, kind: 2, body, ..Default::default() }
 }
 
 const NO_PROMPT_DROPS: [u32; 3] = [0x28F6_34F8, 0xC145_699A, 0xB0F3_51A2];
@@ -556,5 +593,26 @@ mod tests {
         f.race_started = true;
         f.project_into(&mut v, &mut loc, Some([0.0, 0.0, 10.0]), None);
         assert_eq!((v.float(id::WINGSUIT_TIMER_POS_X), v.float(id::WINGSUIT_TIMER_POS_Y)), (715.0, 360.0));
+    }
+
+    #[test]
+    fn a_trick_events_split_callout_reports_the_score_gap_and_a_race_the_time() {
+        let mut loc = Localization::empty(crate::game::loc::Language::English);
+        loc.add_port_string("TXT_SPLITS_YOU_ARE_BEHIND", "%1s behind %2s").unwrap();
+        loc.add_port_string("TXT_SPLITS_YOU_ARE_AHEAD", "%1s ahead of %2s").unwrap();
+        let trick = crate::game::leaderboard::value_kind(EventType::TrickBots);
+        let rivals = [("Zoe".to_string(), 2_400_000), ("Mac".to_string(), 500_000)];
+        let behind = trick_split(1_000_000.0, &rivals).unwrap();
+        assert_eq!(split_callout_value(&mut loc, trick, &behind).body, "1,400,000 behind Zoe");
+        let ahead = trick_split(3_000_000.0, &rivals).unwrap();
+        let c = split_callout_value(&mut loc, trick, &ahead);
+        assert!(c.ahead);
+        assert_eq!(c.body, "600,000 ahead of Zoe");
+        assert_eq!(trick_split(1_000_000.0, &[]), None);
+        let race = crate::game::leaderboard::value_kind(EventType::RaceBots);
+        let split = race_split(60_000.0, 1000.0, 600.0, 400.0, "Zoe");
+        let time = crate::game::leaderboard::value_text(&mut loc, race, 20_000, true);
+        assert!(time.starts_with("00:20.00"));
+        assert_eq!(split_callout_value(&mut loc, race, &split).body, format!("{time} behind Zoe"));
     }
 }

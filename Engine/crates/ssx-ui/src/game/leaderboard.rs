@@ -204,12 +204,18 @@ pub struct TrickBot {
 pub struct TrickStandings {
     seen: Vec<u32>,
     best: Vec<u32>,
+    shown: Vec<(String, i32)>,
 }
 
 impl TrickStandings {
     pub fn reset(&mut self, bots: usize) {
         self.seen = vec![0; bots];
         self.best = vec![0; bots];
+        self.shown.clear();
+    }
+
+    pub fn shown(&self) -> &[(String, i32)] {
+        &self.shown
     }
 
     fn value(&mut self, k: usize, bot: &TrickBot, progress: f32, world_tour: bool) -> i32 {
@@ -258,8 +264,10 @@ impl TrickStandings {
             name: player.name.clone(),
             picture: player.picture.clone(),
         }];
+        self.shown.clear();
         for (k, b) in bots.iter().enumerate() {
             let value = self.value(k, b, progress, world_tour);
+            self.shown.push((b.name.clone(), value));
             list.push(Entry { kind: 3, value, name: b.name.clone(), picture: b.picture.clone() });
         }
         sort_entries(&mut list, value_kind(event_type) == 0, true);

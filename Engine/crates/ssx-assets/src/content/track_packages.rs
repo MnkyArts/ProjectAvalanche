@@ -324,7 +324,7 @@ pub(super) fn decide(content: &GameContent, big_root: &Path, track: &str, genera
         counted: BTreeSet::new(),
         meshes: OnceLock::new(),
     };
-    let objects = match load_track_objects(big_root, track) {
+    let objects = match load_track_objects(big_root, track, None) {
         Ok(o) => o,
         Err(e) => {
             content.notice(format!("content: {track}: its objects for the package decision: {e:#}"));

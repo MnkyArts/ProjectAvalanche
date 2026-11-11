@@ -141,16 +141,6 @@ impl LevelData {
                 }
             },
         };
-        let objects = match (&big_root, spec.objects) {
-            (_, false) => None,
-            (Some(root), true) => {
-                objects::load(root, &name).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
-            }
-            (None, true) => {
-                warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
-                None
-            }
-        };
         let lighting = match big_root.as_ref().map(|root| lighting::load(root, &name, &spec.drop)) {
             Some(Ok(l)) => Some(l),
             Some(Err(e)) if spec.drop_explicit => return Err(e),
@@ -161,6 +151,16 @@ impl LevelData {
             None => None,
         };
         let drop_key = lighting.as_ref().map(|l| l.drop_key);
+        let objects = match (&big_root, spec.objects) {
+            (_, false) => None,
+            (Some(root), true) => {
+                objects::load(root, &name, drop_key).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
+            }
+            (None, true) => {
+                warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
+                None
+            }
+        };
         let drop_files = drop_terrain_files(big_root.as_deref(), &spec.track_dir, &name, drop_key)?;
         let track = terrain::load(&spec.track_dir, spec.subdivide, drop_files.as_deref())?;
         let camera = camera::CameraStart {

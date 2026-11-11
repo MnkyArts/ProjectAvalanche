@@ -42,7 +42,7 @@ pub(super) fn check(c: &mut Checked, m: &Manifest, dir: &Path, big: &Path, app_d
     content.swap_dev_package(None, source, all);
     let mut measured = 0;
     for track in tracks(big) {
-        let Ok(objs) = load_track_objects(big, &track) else { continue };
+        let Ok(objs) = load_track_objects(big, &track, None) else { continue };
         let packages = content.track_packages(&track);
         let reaches_mesh = !meshes.is_empty()
             && objs

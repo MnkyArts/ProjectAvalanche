@@ -137,13 +137,14 @@ pub(super) fn write_explore_drop(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
         v.set_int(0x6E, bronze.value as i32);
     }
     let mut rows = Vec::new();
+    let mut ghosts = Vec::new();
     let ascending = matches!(e.event_type, 5..=7);
     for (i, g) in board.into_iter().enumerate() {
         let value = g.value;
         let score = if ascending { loc.race_time(value) } else { loc.int(i64::from(value)) };
         let rider = fe.career.riders.iter().find(|r| r.key == g.character);
         let name = rider.map(|r| crate::game::leaderboard::ghost_name(loc, &r.title)).unwrap_or_default();
-        rows.push(crate::game::values::LeaderboardRow {
+        let row = crate::game::values::LeaderboardRow {
             value: value as i32,
             name,
             icon: rider.map(|r| r.icon.clone()).unwrap_or_default(),
@@ -153,12 +154,21 @@ pub(super) fn write_explore_drop(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
             medal: 2 - i as i32,
             rank: i as i32 + 1,
             ..Default::default()
-        });
+        };
+        ghosts.push(ghost_row(&row, rider));
+        rows.push(row);
     }
-    v.set(0x7B, crate::game::values::UiValue::Rows(rows.clone()));
+    v.set(0x7B, crate::game::values::UiValue::Rows(ghosts));
     v.set(0x7A, crate::game::values::UiValue::Rows(rows));
     super::panel::write_cost(fe, env, drop);
     write_rival_panel(fe, env, drop);
+}
+
+fn ghost_row(
+    row: &crate::game::values::LeaderboardRow,
+    rider: Option<&ssx_assets::career::Rider>,
+) -> crate::game::values::LeaderboardRow {
+    crate::game::values::LeaderboardRow { icon: rider.map(|r| r.round_icon.clone()).unwrap_or_default(), ..row.clone() }
 }
 
 pub fn drop_node_selected(fe: &mut FrontEnd, env: &mut FeEnv, drop: u32) {
@@ -260,4 +270,35 @@ pub(super) fn write_rival_panel(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
     env.values.set_str(0x85, name);
     env.values.set_int(0x91, value as i32);
     env.values.set(RIVAL_PANEL, UiValue::Rival(Box::new(panel)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::values::LeaderboardRow;
+
+    #[test]
+    fn a_medal_target_shows_the_riders_round_icon() {
+        let rider = ssx_assets::career::Rider {
+            key: 0xF78F_F173,
+            name: "zoe".into(),
+            title: String::new(),
+            display_name: String::new(),
+            cost: 0,
+            locked: false,
+            default: false,
+            unk_940b9b22: 0,
+            stat_bonuses: Vec::new(),
+            portrait: String::new(),
+            description: String::new(),
+            round_icon: "assets/gamertagIcons/zoe_round.dds".into(),
+            icon: "assets/gamertagIcons/zoe.dds".into(),
+            content: None,
+        };
+        let row = LeaderboardRow { icon: rider.icon.clone(), score: "02:40.00".into(), rank: 1, ..Default::default() };
+        let ghost = ghost_row(&row, Some(&rider));
+        assert_eq!(ghost.icon, "assets/gamertagIcons/zoe_round.dds");
+        assert_eq!(LeaderboardRow { icon: row.icon.clone(), ..ghost }, row);
+        assert_eq!(ghost_row(&row, None).icon, "");
+    }
 }

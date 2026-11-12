@@ -259,8 +259,10 @@ fn advance_catches_up_at_most_two_frames() {
     assert_eq!(p.frames(root), Some((6, 8)));
 }
 
+/// `Sprite::SetVisible` 0x8268CEA0 copies the flag to the children (0x8268C160) while the parent is visible; the play
+/// list (0x82644CF8) advances each listed clip on its own, so a child set visible again runs while its parent holds.
 #[test]
-fn no_invisible_advance_freezes_the_hidden_clip_but_not_its_children() {
+fn no_invisible_advance_freezes_the_hidden_clip_but_not_a_child_shown_again() {
     let mut lib = empty_lib();
     let m = movie(&mut lib, vec![vec![]]);
     let mut p = Player::new();
@@ -272,7 +274,11 @@ fn no_invisible_advance_freezes_the_hidden_clip_but_not_its_children() {
     for id in [buffer, loader] {
         p.get_mut(id).unwrap().scripted = true;
     }
-    p.get_mut(buffer).unwrap().visible = false;
+    p.set_visible(buffer, false);
+    assert!(!p.get(buffer).unwrap().visible);
+    assert!(!p.get(loader).unwrap().visible, "hiding the buffer copied its flag to the loader");
+    p.set_visible(loader, true);
+    assert!(p.get(loader).unwrap().visible, "the loader's own _visible clears its flag again");
     p.advance_frame(&lib);
     p.take_actions();
     p.advance_frame(&lib);

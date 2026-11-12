@@ -116,7 +116,11 @@ impl Player {
         if inst.created_tick == self.tick {
             return;
         }
-        // TODO(guess): `noInvisibleAdvance` freezes only the invisible sprite itself (timeline + onEnterFrame), its children keep advancing on their own `_visible`: RiderCell hides `mcBuffer` and its ImageLoader's `onEnterFrame = WaitOnUnloading` must still run on the disc; settle: whether the hidden sprite's own onEnterFrame fires.
+        // A hidden sprite is dropped from the play list (`Sprite::SetVisible` 0x8268CEA0 clears its bit 0x80000
+        // through 0x8268C000; `GFxMovieImpl::AdvanceFrame` 0x82644CF8 only calls the advance slot +0xFC on the
+        // clips in it), so its own timeline and enter-frame events stop. Its children keep their own flags and are
+        // listed on their own (`frontend.md` §10.2); hiding this sprite copied its flag to them through 0x8268C160
+        // unless they set `_visible` again.
         let frozen = self.no_invisible_advance && !inst.visible;
         let Some(s) = inst.sprite() else { return };
         let (count, cur, playing) = (s.timeline.frame_count(), s.current_frame, s.playing);

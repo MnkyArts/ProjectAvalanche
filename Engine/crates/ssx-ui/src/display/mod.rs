@@ -304,6 +304,10 @@ pub struct Player {
     pub unresolved: Vec<(MovieId, u16)>,
     instance_names: u32,
     pub script_events: bool,
+    /// Scaleform's `_global.noInvisibleAdvance` (the FE sets it, 0x82594A68): a sprite whose own `_visible` is false
+    /// is not advanced and gets no enter-frame events (`Sprite::SetVisible` 0x8268CEA0 drops it from the play list,
+    /// 0x82644CF8). Its children are listed on their own and advance unless the hide copied the flag onto them
+    /// (0x8268C160; [`Player::set_visible`]).
     pub no_invisible_advance: bool,
     live: usize,
     pub peak_instances: usize,

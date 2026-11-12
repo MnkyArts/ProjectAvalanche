@@ -195,6 +195,9 @@ pub struct FrontEnd {
     pub log: Vec<String>,
 }
 
+/// The FE manager's screen-change sounds (0x825111F0(from, to)): `menu_select` (2) into the equipment (0x30), and
+/// `menu_back` (4) to the main menu from the range screens 0xC / 0x42 / 0xF. To 0x33 it clears the manager's +0x38
+/// and plays nothing.
 pub fn screen_sound(from: u32, to: u32) -> Option<i32> {
     match (from, to) {
         (_, screens::id::EQUIPMENT) => Some(2),

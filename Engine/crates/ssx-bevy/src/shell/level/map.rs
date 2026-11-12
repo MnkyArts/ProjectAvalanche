@@ -44,7 +44,7 @@ pub(super) fn load(spec: &LevelSpec, id: &ContentId) -> Result<LevelData> {
     let name = base_track.clone().unwrap_or_else(|| id.path().to_string());
     let (track, materials) = match &base_track {
         Some(t) => {
-            let mut track = terrain::load(&big_root.join(TRACKS).join(t), spec.subdivide)?;
+            let mut track = terrain::load(&big_root.join(TRACKS).join(t), spec.subdivide, None)?;
             let materials = map_terrain.add_to(&mut track);
             (track, materials)
         }

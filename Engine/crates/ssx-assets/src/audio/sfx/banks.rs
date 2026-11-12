@@ -210,6 +210,17 @@ pub fn audio_assets(big_root: &Path, asset_type: &str) -> Result<Vec<(String, St
         .collect())
 }
 
+pub const RESIDENT_BANKS: &[&str] = &[
+    "board_ice",
+    "board_packed",
+    "board_powder",
+    "board_rock",
+    "grind_sweetner",
+    "ant_tags",
+    "foley_common",
+    "fe_sfx",
+];
+
 pub fn riding_banks(
     big_root: &Path,
     info: &TrackAudioInfo,

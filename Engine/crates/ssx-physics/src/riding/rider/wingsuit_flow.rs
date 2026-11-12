@@ -87,6 +87,7 @@ fn aerial_slave_part(s: &mut RiderState, w: &World, input: &Input, side: &mut Ol
 
 fn old_part(s: &mut RiderState, w: &World, input: &Input, node: &mut OldNode, depth: usize, j0: Quat, dt: f32) -> Part {
     if depth >= MAX_ACTIVE_NODES {
+        node.blend = None;
         return ZERO;
     }
     let new = match &mut node.side {
@@ -136,7 +137,7 @@ fn node_part(s: &mut RiderState, w: &World, input: &Input, before: RideState, j0
         }
     };
     let mut blend = s.wingsuit.blend.take();
-    let p = blend_with(s, w, input, &mut blend, new, 1, j0, dt);
+    let p = blend_with(s, w, input, &mut blend, new, 0, j0, dt);
     s.wingsuit.blend = blend;
     p
 }

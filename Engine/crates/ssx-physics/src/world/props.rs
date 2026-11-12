@@ -28,8 +28,8 @@ struct PropCollision {
     audio: Option<AudioName>,
 }
 
-pub fn add_track_props(world: &mut CollisionWorld, big_root: &Path, track: &str) -> Result<()> {
-    let objects = load_track_objects(big_root, track)?;
+pub fn add_track_props(world: &mut CollisionWorld, big_root: &Path, track: &str, drop_key: Option<u32>) -> Result<()> {
+    let objects = load_track_objects(big_root, track, drop_key)?;
     let content = GameContent::of(big_root);
     let packages = content.track_packages(track);
     if packages.world_triangles.is_some() {

@@ -425,14 +425,19 @@ impl HeliAnimator {
     }
 
     pub fn pose(&self, base: &HeliPose, nis_active: bool) -> HeliPose {
+        self.pose_at(base, nis_active, 0.0)
+    }
+
+    pub fn pose_at(&self, base: &HeliPose, nis_active: bool, lag: f32) -> HeliPose {
+        let time = self.pilot_time - lag;
         let mut out = base.clone();
         let mut pilot = self.default_pose.clone();
         if nis_active {
             if let Some(p) = &self.pilot {
-                pilot = p.pose(&self.default_pose, self.pilot_time);
+                pilot = p.pose(&self.default_pose, time);
             }
             if let Some(o) = &self.objects {
-                let t = self.pilot_time.rem_euclid(o.num_ticks.max(1.0));
+                let t = time.rem_euclid(o.num_ticks.max(1.0));
                 let mut layer = pilot.clone();
                 layer.write_clip(o, t, |_| true);
                 pilot.blend_from(&layer, |j, c| self.objects_mask.weight_of(j, c));
@@ -442,11 +447,15 @@ impl HeliAnimator {
         }
         out.blend_from(&pilot, |j, c| self.pilot_mask.weight_of(j, c));
         for r in self.rotors.iter().filter(|r| self.blades_mask.weight_of(&r.joint, 'q') > 0.0) {
-            let (s, c) = (0.5 * r.angle).sin_cos();
+            let (s, c) = (0.5 * rotor_angle(r.angle, r.rpm, lag)).sin_cos();
             out.q.insert(r.joint.clone(), [r.axis[0] * s, r.axis[1] * s, r.axis[2] * s, c]);
         }
         out
     }
+}
+
+fn rotor_angle(angle: f32, rpm: f32, lag: f32) -> f32 {
+    angle - rpm * lag
 }
 
 fn twist_angle(q: [f32; 4], axis: [f32; 3]) -> f32 {
@@ -576,5 +585,13 @@ mod tests {
         assert_eq!(b.q["Root"], id);
         let f = b.q["Floor"];
         assert!((f[1].abs() - 1.0).abs() < 1e-6 && f[3].abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_rotor_angle_follows_the_render_lag() {
+        let (angle, rpm) = (0.838, -0.419);
+        assert_eq!(rotor_angle(angle, rpm, 0.0), angle);
+        assert!((rotor_angle(angle, rpm, 1.0) - 1.257).abs() < 1e-6);
+        assert!((rotor_angle(angle, rpm, 2.0) - 1.676).abs() < 1e-6);
     }
 }

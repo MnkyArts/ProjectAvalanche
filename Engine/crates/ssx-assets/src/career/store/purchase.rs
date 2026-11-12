@@ -104,6 +104,9 @@ impl Profile {
             self.add_gear_type(item.slot);
         }
         store.stock[kind].retain(|i| i.id != id);
+        if let Some(o) = store.offered[kind].iter_mut().find(|o| **o == id) {
+            *o = equip_id;
+        }
         store.last_bought = Some((id, equip_id));
         store.generate(data, ctx, kind, &Request::NORMAL, now_ms);
         Ok(equip_id)

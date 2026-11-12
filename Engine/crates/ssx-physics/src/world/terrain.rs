@@ -130,13 +130,7 @@ pub fn add_track_terrain(world: &mut CollisionWorld, dir: &Path) -> Result<()> {
 }
 
 pub fn add_track_terrain_files(world: &mut CollisionWorld, dir: &Path, files: Option<&[String]>) -> Result<()> {
-    let mut pieces = ssx_assets::terrain::load_track(dir)?;
-    if let Some(files) = files {
-        let name = |p: &ssx_assets::terrain::TerrainPiece| {
-            p.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-        };
-        pieces.retain(|p| files.iter().any(|f| f.eq_ignore_ascii_case(&name(p))));
-    }
+    let pieces = ssx_assets::terrain::load_track_files(dir, files)?;
     let parts: Result<Vec<CollisionWorld>> = std::thread::scope(|s| {
         let handles: Vec<_> = pieces
             .iter()

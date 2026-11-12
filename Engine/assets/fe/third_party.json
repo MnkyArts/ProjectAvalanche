@@ -4833,7 +4833,7 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "asset-viewer 0.3.2",
+   "package": "asset-viewer 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
@@ -4841,19 +4841,19 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "avalanche-game 0.3.2",
+   "package": "avalanche-game 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-launcher 0.3.2",
+   "package": "avalanche-launcher 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-master 0.3.2",
+   "package": "avalanche-master 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-server 0.3.2",
+   "package": "avalanche-server 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
@@ -5869,79 +5869,79 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "ssx-assets 0.3.2",
+   "package": "ssx-assets 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-bevy 0.3.2",
+   "package": "ssx-bevy 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-content 0.3.2",
+   "package": "ssx-content 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-core 0.3.2",
+   "package": "ssx-core 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-files 0.3.2",
+   "package": "ssx-files 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-formats 0.3.2",
+   "package": "ssx-formats 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-gameplay 0.3.2",
+   "package": "ssx-gameplay 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-lua 0.3.2",
+   "package": "ssx-lua 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-movie 0.3.2",
+   "package": "ssx-movie 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net 0.3.2",
+   "package": "ssx-net 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-join 0.3.2",
+   "package": "ssx-net-join 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-lan 0.3.2",
+   "package": "ssx-net-lan 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-ops 0.3.2",
+   "package": "ssx-net-ops 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-portmap 0.3.2",
+   "package": "ssx-net-portmap 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-proto 0.3.2",
+   "package": "ssx-net-proto 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-physics 0.3.2",
+   "package": "ssx-physics 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-rules 0.3.2",
+   "package": "ssx-rules 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-script 0.3.2",
+   "package": "ssx-script 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-ui 0.3.2",
+   "package": "ssx-ui 0.3.3-dev",
    "reason": "a package of this workspace"
   },
   {

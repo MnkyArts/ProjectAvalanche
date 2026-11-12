@@ -408,6 +408,7 @@ fn drive_sfx(
         sfx.env.shutdown(engine);
         sfx.avalanche.shutdown(engine);
         sfx.heli.shutdown(engine);
+        engine.kill_level_banks();
         sfx.track = InputTrack::default();
         sfx.speech.respawn(engine);
         sfx.held = None;

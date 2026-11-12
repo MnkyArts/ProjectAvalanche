@@ -14,7 +14,7 @@ pub mod trick;
 
 use super::clip::Clip;
 use super::loc::Localization;
-use super::values::{UiValues, id};
+use super::values::{UiValue, UiValues, id};
 use crate::avm1::Ctx;
 use crate::avm1::value::Value;
 
@@ -435,6 +435,7 @@ pub fn set_hud_shown(values: &mut UiValues, show: bool, nis_active: bool, drop_k
 // TODO(guess): the game's first score-manager update of a level comes before the nav's `showHUD`; settle: the order of the level's first frame and `go_to_hud` (0x8259BCF8 on, `FENotificationRestartGameplay` 0x5A5A5C39).
 pub fn level_start(values: &mut UiValues) {
     values.set_bool(id::NIS_IS_ACTIVE, true);
+    values.set(id::LEADERBOARD, UiValue::Rows(Vec::new()));
 }
 
 pub fn show_drop_elements(values: &mut UiValues, drop_key: u32) {
@@ -505,6 +506,24 @@ mod tests {
         assert!(v.bool(id::TIME_ACTIVE) && v.bool(id::SPEED_ACTIVE) && v.bool(id::DESCENT_ACTIVE));
         set_hud_shown(&mut v, false, false, 0x1234_5678);
         assert!(!v.bool(id::TIME_ACTIVE) && !v.bool(id::IS_ENABLED));
+    }
+
+    #[test]
+    fn a_new_level_drops_the_last_events_leaderboard() {
+        use crate::game::leaderboard::{RaceEntrant, TrickBot, TrickStandings};
+        use crate::game::loc::{Language, Localization};
+        use ssx_physics::event::EventType;
+        let mut v = UiValues::new();
+        let mut loc = Localization::empty(Language::English);
+        let player = RaceEntrant { name: "elise".into(), ..Default::default() };
+        let griff = TrickBot { name: "griff".into(), live: 1_210_877.0, recorded: 1_210_877, ..Default::default() };
+        let mut trick = TrickStandings::default();
+        trick.update(&mut v, &mut loc, EventType::TrickBots, &player, 19_667_448.0, 1.0, true, &[griff]);
+        assert_eq!(v.rows(id::LEADERBOARD).len(), 2);
+        level_start(&mut v);
+        show_drop_elements(&mut v, 0x1234_5678);
+        assert!(v.bool(id::DYNAMIC_LEADERBOARD_ENABLED));
+        assert!(v.rows(id::LEADERBOARD).is_empty(), "the trick event's standings stay off the next drop");
     }
 
     #[test]

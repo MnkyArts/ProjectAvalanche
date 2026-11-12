@@ -8,9 +8,10 @@ use tar::EntryType;
 use super::install::is_program;
 use super::install::{FONTS, allowed_files, folder_of, path_of};
 
-const MAX_FILE: u64 = 256 * 1024 * 1024;
-const MAX_UNPACKED: u64 = 512 * 1024 * 1024;
-const MAX_STREAM: u64 = MAX_UNPACKED + 64 * 1024 * 1024;
+const MIB: u64 = 1024 * 1024;
+const MAX_FILE: u64 = 1024 * MIB;
+const MAX_UNPACKED: u64 = 2048 * MIB;
+const MAX_STREAM: u64 = MAX_UNPACKED + 64 * MIB;
 
 pub fn extract(archive: &Path, dir: &Path) -> Result<Vec<String>, String> {
     let file = std::fs::File::open(archive).map_err(|e| format!("cannot read the update archive: {e}"))?;
@@ -30,10 +31,7 @@ pub fn extract(archive: &Path, dir: &Path) -> Result<Vec<String>, String> {
             continue;
         };
         let size = entry.header().size().map_err(|e| format!("an entry of the update archive has no size: {e}"))?;
-        total = total.saturating_add(size);
-        if size > MAX_FILE || total > MAX_UNPACKED {
-            return Err(format!("the update archive unpacks to more than {} MiB", MAX_UNPACKED / (1024 * 1024)));
-        }
+        total = within_limits(&name, size, total)?;
         if !allowed_files().contains(&name.as_str()) {
             continue;
         }
@@ -65,6 +63,21 @@ pub fn extract(archive: &Path, dir: &Path) -> Result<Vec<String>, String> {
         written.push(name);
     }
     Ok(written)
+}
+
+fn within_limits(name: &str, size: u64, total: u64) -> Result<u64, String> {
+    if size > MAX_FILE {
+        return Err(format!(
+            "{name} in the update archive is {} MiB, more than the {} MiB a file may be",
+            size.div_ceil(MIB),
+            MAX_FILE / MIB
+        ));
+    }
+    let total = total.saturating_add(size);
+    if total > MAX_UNPACKED {
+        return Err(format!("the update archive unpacks to more than {} MiB", MAX_UNPACKED / MIB));
+    }
+    Ok(total)
 }
 
 fn entry_name(path: &Path) -> Result<Option<String>, String> {
@@ -130,6 +143,16 @@ mod tests {
         builder.get_mut().extend_from_slice(data);
         let pad = (512 - data.len() % 512) % 512;
         builder.get_mut().extend_from_slice(&vec![0u8; pad]);
+    }
+
+    fn sized(builder: &mut tar::Builder<&mut Vec<u8>>, name: &str, size: u64) {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(name).unwrap();
+        header.set_size(size);
+        header.set_mode(0o644);
+        header.set_entry_type(EntryType::Regular);
+        header.set_cksum();
+        builder.get_mut().extend_from_slice(header.as_bytes());
     }
 
     #[test]
@@ -203,6 +226,35 @@ mod tests {
         std::fs::create_dir(&out).unwrap();
         assert!(extract(&path, &out).is_err());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_past_the_old_limit_fits() {
+        let size = 266 * MIB;
+        assert_eq!(within_limits("avalanche-game", size, 0), Ok(size));
+        assert_eq!(within_limits("README.txt", 4096, 385 * MIB), Ok(385 * MIB + 4096));
+        assert_eq!(within_limits("avalanche-game", MAX_FILE, MAX_UNPACKED - MAX_FILE), Ok(MAX_UNPACKED));
+    }
+
+    #[test]
+    fn a_file_over_the_limit_is_refused_by_name() {
+        let root = temp_dir("big-file");
+        let path = archive(&root, |b| sized(b, "ProjectAvalanche/avalanche-game", MAX_FILE + 1));
+        let out = root.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let error = extract(&path, &out).unwrap_err();
+        assert_eq!(error, "avalanche-game in the update archive is 1025 MiB, more than the 1024 MiB a file may be");
+        assert!(!out.join("avalanche-game").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_archive_over_the_total_is_refused() {
+        let total = within_limits("avalanche-game", MAX_FILE, 0).unwrap();
+        let total = within_limits("project-avalanche", MAX_FILE, total).unwrap();
+        let error = within_limits("README.txt", 1, total).unwrap_err();
+        assert_eq!(error, "the update archive unpacks to more than 2048 MiB");
+        assert_eq!(within_limits("README.txt", 1, u64::MAX).unwrap_err(), error);
     }
 
     #[test]

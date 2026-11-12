@@ -305,6 +305,14 @@ impl SfxEngine {
         Some(self.aems.call(id, params))
     }
 
+    pub fn kill_level_banks(&mut self) {
+        for b in 0..self.aems.banks.len() {
+            if !RESIDENT_BANKS.contains(&self.aems.banks[b].name.as_str()) {
+                self.aems.kill_bank(b, &mut self.mixer);
+            }
+        }
+    }
+
     pub fn call_key(&mut self, key: u32, params: &[i32]) -> CsisHandle {
         self.aems.call(key, params)
     }

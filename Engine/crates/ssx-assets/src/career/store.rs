@@ -195,6 +195,7 @@ impl Request {
 #[derive(Clone, Debug)]
 pub struct Store {
     pub stock: [Vec<StoreItem>; KINDS],
+    pub offered: [Vec<u32>; KINDS],
     pub next_id: u32,
     pub special_due_ms: i64,
     pub last_bought: Option<(u32, u32)>,
@@ -213,6 +214,7 @@ impl Store {
     fn with(rng: StoreRandom) -> Self {
         Store {
             stock: Default::default(),
+            offered: Default::default(),
             next_id: FIRST_STOCK_ID,
             special_due_ms: FIRST_SPECIAL_MS,
             last_bought: None,
@@ -226,6 +228,7 @@ impl Store {
 
     // TODO(guess): an expired item with the flag +0x33 also leaves its +0x4C in a 25-entry list at +0x6C (no reader traced); settle: the readers of the store's +0x6C…+0x70.
     pub fn purge(&mut self, force: bool, now_ms: i64) {
+        self.offered = Default::default();
         self.next_id = FIRST_STOCK_ID;
         for list in &mut self.stock {
             list.retain(|i| i.expires_ms > now_ms && !(force && !i.special));
@@ -238,9 +241,10 @@ impl Store {
 
     pub fn offers(&self, data: &StoreData, ctx: &StoreContext, kind: usize) -> Vec<StoreItem> {
         let mut out = Vec::new();
-        for item in self.stock.get(kind).into_iter().flatten() {
+        for &id in self.offered.get(kind).into_iter().flatten() {
+            let Some(item) = self.find(kind, id) else { continue };
             let mut it = item.clone();
-            if it.level == ctx.level && fits_rider(data, &mut it, ctx.rider) {
+            if fits_rider(data, &mut it, ctx.rider) {
                 out.push(it);
             }
         }
@@ -259,6 +263,7 @@ impl Store {
             let mut shown = 0;
             for item in &mut self.stock[k] {
                 if item.level == ctx.level && fits_rider(data, item, ctx.rider) {
+                    self.offered[k].push(item.id);
                     shown += 1;
                 }
             }

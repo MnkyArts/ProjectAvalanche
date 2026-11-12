@@ -2,14 +2,18 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
     tags: ["v*"]
   pull_request:
+    branches: [main, "release/**"]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # keep runs on main from cancelling each other; every other ref cancels its stale run
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # the jobs read the code (the release job asks for more itself)
 permissions:
@@ -25,10 +29,71 @@ defaults:
     working-directory: Engine
 
 jobs:
+  changes:
+    name: Changed files
+    # The fast PR check only needs to run when code changed. A job skipped by `if` reports success, so the
+    # required `CI` check still reports; a workflow skipped by `paths` would not. On push the
+    # cheap output is "true": those refs must be checked, the full matrix is gated separately.
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # a PR reports whether it changed code; every other ref is checked in full (the full matrix is gated
+      # separately, so a snapshot's docs-only change still builds the downloads)
+      code: ${{ steps.filter.outputs.code || 'true' }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+      - if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/pull_request_template.md'
+              - '!.github/CODEOWNERS'
+              - '!.github/release.yml'
+
+  # The one required check. It runs even when its jobs were skipped, and fails if any of them failed or
+  # was cancelled: the fast `check` gates a PR and the merge queue, the full matrix only a snapshot or a manual run.
+  ci-ok:
+    name: CI
+    if: always() && github.ref_type != 'tag'
+    needs: [changes, check, windows, windows-server, windows-package, windows-tests, linux, server-headless]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All required jobs passed or were skipped
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Done
+        run: echo "every required job passed or was skipped"
+
   check:
     name: fmt, clippy, tests (Linux)
-    if: github.ref_type != 'tag'
+    needs: changes
+    # The fast gate: every PR that changes code, the merge queue, snapshot pushes and manual runs. The full
+    # Windows/Linux matrix is below and only runs on a deliberate `Snapshot …` push or a manual dispatch — never
+    # on a PR or a merge-queue run.
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'merge_group' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.draft == false &&
+        needs.changes.outputs.code == 'true'))
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: System libraries for Bevy
@@ -45,12 +110,16 @@ jobs:
           workspaces: Engine
           # kept when the run fails too, so the next run builds on it
           cache-on-failure: true
+          # PRs and queue runs restore the release cache but never write it
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # the movie decoder's sandbox probe and the targets that start it (feature `sandbox-probe`), which the workspace's
       # targets above leave out
       - run: cargo clippy -p ssx-movie --all-targets --features sandbox-probe -- -D warnings
-      - run: cargo test --workspace
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace
+      - run: cargo test --workspace --doc
       - name: Bundled controller mappings (gilrs)
         run: cargo test --manifest-path vendor/gilrs-0.11.2/Cargo.toml --lib --locked
       # the movie decoder's sandbox on Linux (crates/ssx-movie/tests/sandbox.rs): its program read from outside while
@@ -65,8 +134,12 @@ jobs:
   # check runs when what it reads was built, whatever an earlier check said, so one run shows every failure.
   windows:
     name: Windows build (launcher + game)
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       # rav1d's assembly (the mod movies' AV1 decoder, decision M-D9) is assembled by NASM
@@ -204,8 +277,12 @@ jobs:
 
   windows-server:
     name: Windows dedicated server
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -288,9 +365,13 @@ jobs:
   # launcher's HOST starts it), each built once; it runs when both have passed.
   windows-package:
     name: Windows package (game + its server)
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     needs: [windows, windows-server]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: .
@@ -319,8 +400,12 @@ jobs:
 
   windows-tests:
     name: Windows tests (movie decoder's sandbox, crash-safe writes)
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       # rav1d's assembly (the mod movies' AV1 decoder, decision M-D9) is assembled by NASM
@@ -383,8 +468,12 @@ jobs:
 
   linux:
     name: Linux build (launcher + game)
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: System libraries for Bevy
@@ -516,8 +605,12 @@ jobs:
 
   server-headless:
     name: Server without desktop packages (Linux)
-    if: github.ref_type != 'tag'
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # a bare Ubuntu: no ALSA, udev, Wayland, xkbcommon, GTK or X11 development packages (the check job installs them)
     container: ubuntu:24.04
     steps:
@@ -558,33 +651,44 @@ jobs:
             echo "the check did not run as expected (exit $code)"; exit 1
           fi
 
-  # A tag builds nothing: it releases the packages its commit's run on main built and checked, the same files (the
-  # building jobs above skip a tag). Push main, wait until its run is green, then push the tag on that commit.
+  # A tag builds nothing: it releases the downloads its snapshot commit's run built and checked, the same
+  # files (the building jobs above skip a tag). Tag the `Snapshot …` commit (on the release branch); its push
+  # run ran the full matrix, and the artifacts are downloaded from it.
   release:
     name: Release (tags only)
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       actions: read
     steps:
-      - name: The commit's green run on main
-        id: main_run
+      - name: The snapshot commit's full run
+        id: snapshot_run
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # the commit the tag names (an annotated tag's object is not the commit)
           commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF" --jq .sha)
+          subject=$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit" --jq .commit.message | head -1)
+          case "$subject" in
+            "Snapshot "*) ;;
+            *)
+              echo "$GITHUB_REF_NAME names $commit, whose subject is not \"Snapshot …\": tag a snapshot commit"
+              exit 1
+              ;;
+          esac
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
-          query="head_sha=$commit&branch=main&event=push&status=success&per_page=1"
+          # no branch filter: the snapshot's full run is on the release branch (or main after the release merge)
+          query="head_sha=$commit&event=push&status=success&per_page=1"
           run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?$query" --jq '.workflow_runs[0].id // empty')
           if [ -z "$run" ]; then
-            echo "$GITHUB_REF_NAME names $commit, which has no successful push run on main: push main, wait for its run"
-            echo "to pass, then tag that commit"
+            echo "$GITHUB_REF_NAME names $commit, which has no successful push run (the snapshot's full matrix):"
+            echo "let the snapshot's run on the release branch finish green, then tag that commit"
             exit 1
           fi
-          echo "$GITHUB_REF_NAME names $commit: releasing the packages of its run on main, $run"
+          echo "$GITHUB_REF_NAME names $commit: releasing the packages of its full run, $run"
           echo "($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run)"
           echo "run=$run" >> "$GITHUB_OUTPUT"
       # the downloads (each in dist/<name>/), not the game's job's programs for "Windows package"
@@ -592,7 +696,7 @@ jobs:
         with:
           path: dist
           pattern: ProjectAvalanche-*
-          run-id: ${{ steps.main_run.outputs.run }}
+          run-id: ${{ steps.snapshot_run.outputs.run }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           digest-mismatch: error

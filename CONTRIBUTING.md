@@ -32,7 +32,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The CI runs the same checks and builds the Windows and Linux downloads; a pull request needs them green.
+The CI's **fast check** runs these on Linux (with `cargo nextest`) and the movie decoder's sandbox. The full
+Windows + Linux build, the dedicated server and the downloads run in the merge queue, once per merge; add the
+`full-ci` label to a pull request to run that full matrix on the pull request itself. Draft pull requests run no
+CI until they are marked ready for review.
 
 ## Code conventions
 
@@ -52,13 +55,16 @@ The CI runs the same checks and builds the Windows and Linux downloads; a pull r
 
 ## Pull requests
 
+- Target the `release/<version>` branch (the next version), not `main`: `main` stays the last release.
 - One topic per pull request; link the issue or name the marker it settles.
 - Describe what you changed, how you verified it (the checks, and what you saw in the game) and what is left open.
 - Pull requests are squash-merged; the title becomes the commit's subject, so make it a short sentence.
 
 **How changes land.** The code here is published as snapshots of the project's working tree. A merged pull request
 is carried into that tree by the maintainers, so it stays in every later snapshot; the snapshot commits that follow
-contain it again together with the other changes of the time.
+contain it again together with the other changes of the time. The `release/<version>` branch receives the snapshots
+and the merged pull requests; at release it is merged into `main` and tagged. The full matrix runs on the merge
+queue and on every snapshot.
 
 ## License
 

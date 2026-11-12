@@ -1,11 +1,12 @@
 pub mod geotags;
 pub mod tombstones;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ssx_formats::attrib::{FieldData, Value};
+use ssx_rules::locators;
 
 use crate::vault_db::{Db, Material, fnv1, refs, single, single_text, with_track_db};
 
@@ -54,6 +55,61 @@ pub use ssx_content::object::AudioName;
 pub struct TrackObjects {
     pub objects: Vec<GameObject>,
     pub instances: Vec<(usize, Vec<Placement>)>,
+    pub selection: Option<SceneSelection>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneSelection {
+    pub drop_key: u32,
+    pub total: usize,
+    pub kept_track: usize,
+    pub kept_drop: usize,
+    pub skipped: Vec<u32>,
+}
+
+impl SceneSelection {
+    pub fn kept(&self) -> usize {
+        self.total - self.skipped.len()
+    }
+
+    pub fn summary(&self) -> String {
+        const SHOWN: usize = 12;
+        let mut list: Vec<String> = self.skipped.iter().take(SHOWN).map(|k| format!("{k:#010x}")).collect();
+        if self.skipped.len() > SHOWN {
+            list.push(format!("… {} more", self.skipped.len() - SHOWN));
+        }
+        let list = if list.is_empty() { "none".to_string() } else { list.join(", ") };
+        format!(
+            "objects: drop {:#010x} keeps {} of {} scene instances ({} track + {} drop); skipped: {list}",
+            self.drop_key,
+            self.kept(),
+            self.total,
+            self.kept_track,
+            self.kept_drop
+        )
+    }
+}
+
+pub fn select_scene_instances(
+    drop_key: u32,
+    all: &[u32],
+    track: Result<Vec<u32>>,
+    drop: Result<Vec<u32>>,
+) -> Result<(BTreeSet<u32>, SceneSelection)> {
+    let track: BTreeSet<u32> = track.context("the track's scene instances")?.into_iter().collect();
+    let drop: BTreeSet<u32> = drop.context("the drop's scene instances")?.into_iter().collect();
+    let keep: BTreeSet<u32> = track.union(&drop).copied().collect();
+    let mut selection = SceneSelection { drop_key, total: all.len(), ..Default::default() };
+    for &key in all {
+        if track.contains(&key) {
+            selection.kept_track += 1;
+        } else if drop.contains(&key) {
+            selection.kept_drop += 1;
+        } else {
+            selection.skipped.push(key);
+        }
+    }
+    Ok((keep, selection))
 }
 
 impl TrackObjects {
@@ -71,11 +127,30 @@ pub fn asset_file(big_root: &Path, rel: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-pub fn load_track_objects(big_root: &Path, track: &str) -> Result<TrackObjects> {
+pub fn load_track_objects(big_root: &Path, track: &str, drop_key: Option<u32>) -> Result<TrackObjects> {
     with_track_db(big_root, track, |db| {
         let mut out = TrackObjects::default();
         let mut by_key: HashMap<u32, usize> = HashMap::new();
-        for (key, _) in db.collections_of(0, CLASS_SCENE_INSTANCE).collect::<Vec<_>>() {
+        let all: Vec<u32> = db.collections_of(0, CLASS_SCENE_INSTANCE).map(|(key, _)| key).collect();
+        let keep = match drop_key {
+            Some(drop_key) => {
+                let keys =
+                    |list: Result<Vec<(u32, u32)>>| list.map(|list| list.into_iter().map(|(_, key)| key).collect());
+                let (keep, selection) = select_scene_instances(
+                    drop_key,
+                    &all,
+                    keys(locators::track_scene_instances(db, track)),
+                    keys(locators::drop_scene_instances(db, drop_key)),
+                )?;
+                out.selection = Some(selection);
+                Some(keep)
+            }
+            None => None,
+        };
+        for key in all {
+            if keep.as_ref().is_some_and(|keep| !keep.contains(&key)) {
+                continue;
+            }
             let fields = db.fields(CLASS_SCENE_INSTANCE, key)?;
             let reference = |k: u32| fields.iter().find(|f| f.key == k).and_then(|f| refs(&f.data).first().copied());
             let (Some(data), Some(obj)) = (reference(FIELD_INSTANCE_DATA), reference(FIELD_GAMEOBJECT)) else {
@@ -219,4 +294,61 @@ pub fn load_track_midground(big_root: &Path, track: &str) -> Result<Option<Track
             object: game_object(db, object.class, object.collection)?,
         }))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL: [u32; 7] = [1, 2, 3, 10, 20, 30, 40];
+
+    #[test]
+    fn keeps_the_track_and_the_drop_instances_only() {
+        let (keep, sel) = select_scene_instances(0xfaba_6d1b, &ALL, Ok(vec![1, 2, 3]), Ok(vec![10, 99])).unwrap();
+        assert_eq!(keep, BTreeSet::from([1, 2, 3, 10, 99]));
+        assert_eq!((sel.total, sel.kept(), sel.kept_track, sel.kept_drop), (7, 4, 3, 1));
+        assert_eq!(sel.skipped, vec![20, 30, 40]);
+        assert_eq!(
+            sel.summary(),
+            "objects: drop 0xfaba6d1b keeps 4 of 7 scene instances (3 track + 1 drop); skipped: 0x00000014, 0x0000001e, 0x00000028"
+        );
+    }
+
+    #[test]
+    fn an_instance_listed_by_both_counts_once_as_track() {
+        let (keep, sel) = select_scene_instances(5, &ALL, Ok(vec![1, 10]), Ok(vec![10, 20])).unwrap();
+        assert_eq!(keep, BTreeSet::from([1, 10, 20]));
+        assert_eq!((sel.kept_track, sel.kept_drop, sel.skipped.len()), (2, 1, 4));
+    }
+
+    #[test]
+    fn an_empty_drop_list_keeps_the_tracks() {
+        let (keep, sel) = select_scene_instances(5, &ALL, Ok(vec![1, 2]), Ok(Vec::new())).unwrap();
+        assert_eq!(keep, BTreeSet::from([1, 2]));
+        assert_eq!(sel.kept(), 2);
+    }
+
+    #[test]
+    fn two_empty_lists_load_no_instance() {
+        let (keep, sel) = select_scene_instances(5, &ALL, Ok(Vec::new()), Ok(Vec::new())).unwrap();
+        assert!(keep.is_empty());
+        assert_eq!(sel.kept(), 0);
+        assert_eq!(sel.skipped.len(), 7);
+    }
+
+    #[test]
+    fn an_unresolved_list_is_an_error() {
+        let e = select_scene_instances(5, &ALL, Err(anyhow::anyhow!("no ge_track")), Ok(vec![10])).unwrap_err();
+        assert!(format!("{e:#}").contains("no ge_track"));
+        let e = select_scene_instances(5, &ALL, Ok(vec![1]), Err(anyhow::anyhow!("no drop"))).unwrap_err();
+        assert!(format!("{e:#}").contains("no drop"));
+    }
+
+    #[test]
+    fn many_skipped_instances_are_capped_in_the_summary() {
+        let all: Vec<u32> = (0..40).collect();
+        let (_, sel) = select_scene_instances(5, &all, Ok(vec![0]), Ok(Vec::new())).unwrap();
+        assert_eq!(sel.skipped.len(), 39);
+        assert!(sel.summary().ends_with("… 27 more"));
+    }
 }

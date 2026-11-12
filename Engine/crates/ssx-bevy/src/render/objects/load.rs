@@ -70,12 +70,12 @@ impl ObjectLod {
 
 #[derive(Clone)]
 pub enum ObjectsSource {
-    Track(String),
+    Track { track: String, drop: Option<u32> },
     Map { base: Option<String>, map: Found<Map>, terrain: Usage },
 }
 
-pub fn load(big_root: &Path, track: &str) -> Result<LoadedObjects> {
-    load_from(big_root, &ObjectsSource::Track(track.to_string()))
+pub fn load(big_root: &Path, track: &str, drop: Option<u32>) -> Result<LoadedObjects> {
+    load_from(big_root, &ObjectsSource::Track { track: track.to_string(), drop })
 }
 
 pub fn load_from(big_root: &Path, source: &ObjectsSource) -> Result<LoadedObjects> {
@@ -84,14 +84,17 @@ pub fn load_from(big_root: &Path, source: &ObjectsSource) -> Result<LoadedObject
     let mut stats = ObjectStats::default();
     let mut gather = Gather::default();
     let (mut parts, mut thresholds_of, mut placements) = (Vec::new(), Vec::new(), Vec::new());
-    let track = match source {
-        ObjectsSource::Track(t) => Some(t.as_str()),
-        ObjectsSource::Map { base, .. } => base.as_deref(),
+    let (track, drop) = match source {
+        ObjectsSource::Track { track, drop } => (Some(track.as_str()), *drop),
+        ObjectsSource::Map { base, .. } => (base.as_deref(), None),
     };
     let mut disc = None;
     if let Some(track) = track {
-        let vault = load_track_objects(big_root, track)
+        let vault = load_track_objects(big_root, track, drop)
             .with_context(|| format!("loading the objects of {track} from {}", big_root.display()))?;
+        if let Some(selection) = &vault.selection {
+            info!("{}", selection.summary());
+        }
         stats.objects = vault.objects.len();
         let packages = content.track_packages(track);
         if packages.world_triangles.is_some() {

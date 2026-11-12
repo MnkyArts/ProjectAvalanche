@@ -9,6 +9,7 @@ game: the drop, the menu, the steps. -->
 
 ## Checklist
 
+- [ ] This pull request targets the `release/<version>` branch, not `main`
 - [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`
       pass
 - [ ] Guesses that remain carry a `TODO(guess):` marker that says what is guessed, what is known and what would

@@ -145,7 +145,8 @@ fn build_world(
     let mut collision = CollisionWorld::default();
     terrain::add_track_terrain_files(&mut collision, track_dir, files)?;
     if with_props {
-        props::add_track_props(&mut collision, big_root, track)?;
+        let drop_key = drop.and_then(|d| starts.get(d)).map(|s| s.drop_key);
+        props::add_track_props(&mut collision, big_root, track, drop_key)?;
     }
     add(&mut collision)?;
     collision.finish();

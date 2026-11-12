@@ -308,6 +308,9 @@ impl LandingState {
         dt: f32,
     ) {
         self.ticks += dt;
+        if level_complete {
+            self.bail_on_landing = false;
+        }
         let input_active = stick_y.abs() > t.input_dead_zone;
         let helping_input = input_active && fsel_sign(stick_y) == fsel_sign(fwd * self.pitch);
         let bail_angle = t.bail_angle_curve.eval(wrap_pi(self.spin).abs());

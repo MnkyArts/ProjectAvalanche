@@ -122,12 +122,7 @@ impl LevelData {
             return map::load(spec, id);
         }
         let start = Instant::now();
-        let track = terrain::load(&spec.track_dir, spec.subdivide)?;
-        let camera = camera::CameraStart {
-            pose: camera::initial_pose(&track, spec.camera, spec.look_at, spec.aspect),
-            bounds: track.bounds,
-        };
-        let name = track.stats.name.clone();
+        let name = terrain::track_name(&spec.track_dir);
         let big_root = spec.big_root.clone().or_else(|| crate::render::terrain::look::find_big_root(&spec.track_dir));
         if let Some(root) = &big_root {
             crate::render::fx_states::init(root);
@@ -146,16 +141,6 @@ impl LevelData {
                 }
             },
         };
-        let objects = match (&big_root, spec.objects) {
-            (_, false) => None,
-            (Some(root), true) => {
-                objects::load(root, &name).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
-            }
-            (None, true) => {
-                warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
-                None
-            }
-        };
         let lighting = match big_root.as_ref().map(|root| lighting::load(root, &name, &spec.drop)) {
             Some(Ok(l)) => Some(l),
             Some(Err(e)) if spec.drop_explicit => return Err(e),
@@ -166,6 +151,22 @@ impl LevelData {
             None => None,
         };
         let drop_key = lighting.as_ref().map(|l| l.drop_key);
+        let objects = match (&big_root, spec.objects) {
+            (_, false) => None,
+            (Some(root), true) => {
+                objects::load(root, &name, drop_key).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
+            }
+            (None, true) => {
+                warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
+                None
+            }
+        };
+        let drop_files = drop_terrain_files(big_root.as_deref(), &spec.track_dir, &name, drop_key)?;
+        let track = terrain::load(&spec.track_dir, spec.subdivide, drop_files.as_deref())?;
+        let camera = camera::CameraStart {
+            pose: camera::initial_pose(&track, spec.camera, spec.look_at, spec.aspect),
+            bounds: track.bounds,
+        };
         let mut status = Vec::new();
         let sky = match (&lighting, &big_root) {
             (Some(l), Some(root)) => sky::load(l, root),
@@ -294,6 +295,27 @@ impl LevelData {
         }
         Ok(())
     }
+}
+
+fn drop_terrain_files(
+    big_root: Option<&Path>,
+    track_dir: &Path,
+    track: &str,
+    drop_key: Option<u32>,
+) -> Result<Option<Vec<String>>> {
+    let (Some(root), Some(key)) = (big_root, drop_key) else { return Ok(None) };
+    let starts = ssx_physics::spawn::load_drop_starts(root, track)
+        .with_context(|| format!("{track}: the drops' start locators"))?;
+    let Some(start) = starts.into_iter().find(|s| s.drop_key == key) else {
+        anyhow::bail!("{track}: drop {key:#010x} has no start locator");
+    };
+    let all = ssx_assets::terrain::track_file_names(track_dir)?;
+    let drawn: Vec<String> = ssx_assets::terrain::select_drop_files(&all, Some(&start.terrain_files))
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    info!("terrain: drop {key:#010x} draws {} of {} files {drawn:?}", drawn.len(), all.len());
+    Ok(Some(drawn))
 }
 
 fn load_ride(

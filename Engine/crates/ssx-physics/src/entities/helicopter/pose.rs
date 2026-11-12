@@ -78,7 +78,8 @@ impl Helicopter {
     pub fn gameplay_pose(&self, lag: f32) -> HeliPose {
         let mut side = self.node_side(self.node, self.ctrl.as_ref(), lag);
         if let Some((ctrl, node, elapsed)) = &self.blend {
-            side = self.node_side(*node, ctrl.as_ref(), lag).blend_valid(&side, self.blend_weight(*elapsed));
+            let w = self.blend_weight((elapsed - lag).max(0.0));
+            side = self.node_side(*node, ctrl.as_ref(), lag).blend_valid(&side, w);
         }
         let mut pose = HeliPose::defaults(&self.assets.nis.heli);
         pose.q.extend(side.q);

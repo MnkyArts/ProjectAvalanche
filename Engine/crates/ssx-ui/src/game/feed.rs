@@ -1,4 +1,4 @@
-use ssx_physics::event::{EventState, EventType};
+use ssx_physics::event::{Course, EventState, EventType};
 use ssx_physics::rider::{RiderState, World};
 
 const USER_GAMERTAG: u16 = 0x22B;
@@ -59,6 +59,7 @@ pub struct HudFeed {
     pub rider_titles: std::collections::BTreeMap<u32, String>,
     pub trick: TrickStandings,
     pub session: Option<super::session_board::SessionHud>,
+    heights: CourseHeights,
 }
 
 impl HudFeed {
@@ -67,12 +68,7 @@ impl HudFeed {
     }
 
     pub fn feed(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World, e: Option<&Execution>) {
-        if let Some(c) = x.event.setup.course
-            && !ui.values.written(id::START_ELEVATION)
-        {
-            ui.values.set_float(id::START_ELEVATION, c.start_y);
-            ui.values.set_float(id::END_ELEVATION, c.end_y);
-        }
+        self.write_course_heights(ui, x.event.setup.course);
         ui.gear = world.survival.slots;
         if e.is_some_and(|e| e.event.looped) {
             self.ready_loop = false;
@@ -116,10 +112,12 @@ impl HudFeed {
         }
         let running = x.event.state == EventState::Running;
         self.messages(ui, s, x, world);
-        if let Some((k, _ms)) = e.and_then(|e| e.event.split)
-            && k >= 1
-        {
-            self.split_callout(ui, s, x, world);
+        if let Some((k, _ms)) = e.and_then(|e| e.event.split) {
+            match split_callout_kind(x.event.setup.event_type, k) {
+                SplitCallout::Race => self.split_callout(ui, s, x, world),
+                SplitCallout::Survive => self.survive_callout(ui, s, x),
+                SplitCallout::None => {}
+            }
         }
         if running {
             self.feed_hud(ui, s, x, world);
@@ -427,6 +425,10 @@ impl HudFeed {
         }
     }
 
+    fn write_course_heights(&mut self, ui: &mut GameUi, course: Option<Course>) {
+        self.heights.write(&mut ui.values, course);
+    }
+
     fn split_callout(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
         let Some(course) = x.event.setup.course else { return };
         let racers = self.racers(ui, x, world);
@@ -438,10 +440,7 @@ impl HudFeed {
         else {
             return;
         };
-        let (me, start) = (s.position.y, course.start_y);
-        let clock = x.event.clock.ms() as f32;
-        let ahead = y > me;
-        let gap = if ahead { clock / (start - me) * (y - me) } else { clock / (start - y) * (me - y) };
+        let (ahead, gap) = split_gap(x.event.clock.ms() as f32, course.start_y, s.position.y, y);
         let kind = x.event.setup.event_type.map_or(2, super::leaderboard::value_kind);
         let gap = super::leaderboard::value_text(&mut ui.loc, kind, gap as u32 as i32, true);
         let key = if ahead { "TXT_SPLITS_YOU_ARE_AHEAD" } else { "TXT_SPLITS_YOU_ARE_BEHIND" };
@@ -450,6 +449,58 @@ impl HudFeed {
         ui.values.set(id::SPLITS_CALLOUT, UiValue::Splits(callout));
         ui.values.set_bool(id::SPLITS_CALLOUT_ENABLED, true);
     }
+
+    fn survive_callout(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session) {
+        let Some(course) = x.event.setup.course else { return };
+        let Some(left) = survive_left(s.position.y, course.end_y) else { return };
+        let text = ui.loc.distance_long(f64::from(left));
+        let body = ui.loc.format("TXT_SPLITS_DISTANCE_REMAINING", &[&text]);
+        let callout = SplitsCallout { ahead: true, show_time: false, kind: 2, body, ..Default::default() };
+        ui.values.set(id::SPLITS_CALLOUT, UiValue::Splits(callout));
+        ui.values.set_bool(id::SPLITS_CALLOUT_ENABLED, true);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CourseHeights {
+    written: bool,
+}
+
+impl CourseHeights {
+    fn write(&mut self, v: &mut UiValues, course: Option<Course>) -> bool {
+        if self.written {
+            return false;
+        }
+        self.written = true;
+        let (start, end) = course.map_or((0.0, 0.0), |c| (c.start_y, c.end_y));
+        v.set_float(id::START_ELEVATION, start);
+        v.set_float(id::END_ELEVATION, end);
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SplitCallout {
+    None,
+    Race,
+    Survive,
+}
+
+fn split_callout_kind(event_type: Option<EventType>, split: i32) -> SplitCallout {
+    match event_type {
+        Some(EventType::RaceGhosts | EventType::RaceBots) if split >= 1 => SplitCallout::Race,
+        Some(EventType::SurviveToBottom | EventType::SurviveToDeath) => SplitCallout::Survive,
+        _ => SplitCallout::None,
+    }
+}
+
+fn split_gap(clock_ms: f32, start: f32, me: f32, low: f32) -> (bool, f32) {
+    if low > me { (true, clock_ms / (start - me) * (low - me)) } else { (false, clock_ms / (start - low) * (me - low)) }
+}
+
+fn survive_left(y: f32, end: f32) -> Option<f32> {
+    let left = y - end;
+    (left > 0.0).then_some(left)
 }
 
 const NO_PROMPT_DROPS: [u32; 3] = [0x28F6_34F8, 0xC145_699A, 0xB0F3_51A2];
@@ -534,6 +585,58 @@ mod tests {
         let mut v = UiValues::new();
         let mut hud_ready_seen = false;
         assert!(!crate::game::fe::flow::front_end_meta_values(&mut v, &mut hud_ready_seen), "the boot's: no level");
+    }
+
+    #[test]
+    fn the_split_callout_follows_the_event_type() {
+        use SplitCallout::*;
+        for (t, split, want) in [
+            (Some(EventType::RaceGhosts), 0, None),
+            (Some(EventType::RaceGhosts), 1, Race),
+            (Some(EventType::RaceGhosts), 8, Race),
+            (Some(EventType::RaceBots), 1, Race),
+            (Some(EventType::RaceClock), 1, None),
+            (Some(EventType::SurviveToBottom), 0, Survive),
+            (Some(EventType::SurviveToDeath), 8, Survive),
+            (Some(EventType::TrickScore), 1, None),
+            (Some(EventType::TrickBots), 1, None),
+            (Some(EventType::TrickGhosts), 1, None),
+            (Some(EventType::FreeRide), 1, None),
+            (Option::<EventType>::None, 1, None),
+        ] {
+            assert_eq!(split_callout_kind(t, split), want, "{t:?} split {split}");
+        }
+    }
+
+    #[test]
+    fn the_split_gap_is_the_clock_scaled_by_the_heights() {
+        let (ahead, gap) = split_gap(60_000.0, 1_000.0, 400.0, 300.0);
+        assert!(!ahead && (gap - 8_571.428).abs() < 0.01);
+        let (ahead, gap) = split_gap(60_000.0, 1_000.0, 300.0, 400.0);
+        assert!(ahead && (gap - 8_571.428).abs() < 0.01);
+        assert_eq!(split_gap(60_000.0, 1_000.0, 400.0, 400.0), (false, 0.0));
+    }
+
+    #[test]
+    fn the_survive_callout_is_the_height_above_the_end() {
+        assert_eq!(survive_left(-519.6, -1_280.0), Some(760.4), "760.4 m above the end");
+        assert_eq!(survive_left(-1_280.0, -1_280.0), None, "at the end");
+        assert_eq!(survive_left(-1_300.0, -1_280.0), None, "below the end");
+    }
+
+    #[test]
+    fn a_levels_course_heights_replace_the_previous_levels() {
+        let mut v = UiValues::new();
+        let mut h = CourseHeights::default();
+        assert!(h.write(&mut v, Some(Course { start_y: 1_794.0, end_y: -1_070.0 })));
+        assert_eq!((v.float(id::START_ELEVATION), v.float(id::END_ELEVATION)), (1_794.0, -1_070.0));
+        assert!(!h.write(&mut v, Some(Course { start_y: 0.0, end_y: -1.0 })), "once per level");
+        let mut h = CourseHeights::default();
+        assert!(h.write(&mut v, Some(Course { start_y: 308.7, end_y: -1_280.0 })));
+        assert_eq!((v.float(id::START_ELEVATION), v.float(id::END_ELEVATION)), (308.7, -1_280.0));
+        let mut h = CourseHeights::default();
+        assert!(h.write(&mut v, None));
+        assert_eq!((v.float(id::START_ELEVATION), v.float(id::END_ELEVATION)), (0.0, 0.0));
     }
 
     #[test]

@@ -264,3 +264,12 @@ fn a_fall_onto_a_slope_snaps_the_board_onto_the_slope_travel() {
     assert!(slip_after(a) < 10.0 * DEG, "slip after the snap {}°", slip_after(a) / DEG);
     assert!(slip_after(board(FRAC_PI_2, 0.0)) > 60.0 * DEG);
 }
+
+#[test]
+fn level_complete_clears_a_landing_bail() {
+    let (mut l, _) = land(0.0, 150.0 * DEG, false);
+    let t = balance();
+    assert!(l.bail_on_landing);
+    l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, true, false, 2.0);
+    assert!(!l.bail_on_landing && !l.is_bailing());
+}

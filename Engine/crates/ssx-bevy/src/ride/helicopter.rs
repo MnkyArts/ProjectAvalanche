@@ -436,7 +436,7 @@ fn pose_records(
             }
             if let (Some(last), ssx_physics::helicopter::HeliPhase::Gameplay { ticks, .. }) = (&h.handover, state.phase)
             {
-                let w = 1.0 - ssx_assets::anim_eval::curve_weight(ticks / 20.0, 1);
+                let w = 1.0 - ssx_assets::anim_eval::curve_weight((ticks - lag_ticks).max(0.0) / 20.0, 1);
                 let mut blended = last.clone();
                 blended.blend_from(&base, |_, _| w);
                 base = blended;
@@ -447,7 +447,7 @@ fn pose_records(
             (a.0.slerp(b.0, f), a.1.lerp(b.1, f))
         }
     };
-    let pose = h.animator.pose(&base, state.nis_active());
+    let pose = h.animator.pose_at(&base, state.nis_active(), lag_ticks);
     let (fq, fp) = frame;
     let nodes = h.model.node_pose(&pose, (fq.to_array(), fp.to_array()));
     world_records(&h.model.rig, &nodes, Vec3::ZERO)

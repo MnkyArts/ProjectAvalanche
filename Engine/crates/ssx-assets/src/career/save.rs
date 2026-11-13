@@ -512,8 +512,8 @@ fn read_generated(g: &dyn Fn(&str) -> Result<u32>) -> Result<GeneratedItem> {
         ],
         ..Default::default()
     };
-    for i in 0..6 {
-        item.stats[i] = (signed7(g(&format!("STATTYPE{}", i + 1))?), g(&format!("STAT{}", i + 1))? as u8);
+    for (i, stat) in item.stats.iter_mut().enumerate() {
+        *stat = (signed7(g(&format!("STATTYPE{}", i + 1))?), g(&format!("STAT{}", i + 1))? as u8);
     }
     Ok(item)
 }

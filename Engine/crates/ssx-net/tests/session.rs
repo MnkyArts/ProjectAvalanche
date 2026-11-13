@@ -241,8 +241,8 @@ fn channels_under_200ms_30ms_jitter_5_percent_loss() {
     ticks.dedup();
     assert_eq!(ticks.len(), received.len(), "no sample twice");
     assert!(notices.len() < ssx_net::client::KEPT_LINES);
-    for c in 0..2 {
-        let said: Vec<String> = peers.clients[c]
+    for (c, client) in peers.clients.iter().enumerate().take(2) {
+        let said: Vec<String> = client
             .world()
             .resource::<ssx_net::ChatInbox>()
             .lines

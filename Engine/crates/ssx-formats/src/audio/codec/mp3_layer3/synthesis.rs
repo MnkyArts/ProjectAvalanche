@@ -226,8 +226,8 @@ fn tables() -> &'static Tables {
                 _ => long_sin(i),
             } as f32;
         }
-        for i in 0..12 {
-            t.win_short[i] = short_sin(i) as f32;
+        for (i, w) in t.win_short.iter_mut().enumerate() {
+            *w = short_sin(i) as f32;
         }
         for (k, row) in t.dct32.iter_mut().enumerate() {
             for (m, v) in row.iter_mut().enumerate() {

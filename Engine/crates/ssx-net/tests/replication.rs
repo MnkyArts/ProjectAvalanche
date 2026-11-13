@@ -72,8 +72,8 @@ fn three_riders() -> (Peers, [Entity; 3], Rooms3) {
     for (link, ids) in links.iter().zip(member) {
         peers.server.world_mut().entity_mut(*link).insert(Rooms::from(ids.into_iter()));
     }
-    for c in 0..3 {
-        peers.clients[c].world_mut().init_resource::<ClientReplicationStats>();
+    for client in peers.clients.iter_mut().take(3) {
+        client.world_mut().init_resource::<ClientReplicationStats>();
     }
     (peers, links, rooms)
 }

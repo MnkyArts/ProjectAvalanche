@@ -423,8 +423,8 @@ fn an_honest_run_through_a_long_server_stall_is_not_flagged() {
     for (check, outcome) in Check::ALL.iter().zip(stats.validation) {
         assert_eq!(outcome.found, 0, "{check:?}: {outcome:?}");
     }
-    for c in 0..2 {
-        assert_eq!(peers.clients[c].world().resource::<ServerSaid>().invalidated, None, "rider {c}");
+    for (c, client) in peers.clients.iter().enumerate().take(2) {
+        assert_eq!(client.world().resource::<ServerSaid>().invalidated, None, "rider {c}");
     }
 }
 

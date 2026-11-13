@@ -71,8 +71,7 @@ impl RealFft {
 
     fn complex(&self, z: &mut [f32], inverse: bool) {
         let n = self.n;
-        for i in 0..n {
-            let j = self.rev[i];
+        for (i, &j) in self.rev.iter().enumerate().take(n) {
             if i < j {
                 z.swap(2 * i, 2 * j);
                 z.swap(2 * i + 1, 2 * j + 1);

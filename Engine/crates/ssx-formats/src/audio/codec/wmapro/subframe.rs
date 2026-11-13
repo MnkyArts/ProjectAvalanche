@@ -183,9 +183,9 @@ impl StreamDecoder {
                     stats.sf_sets[0] += 1;
                     ch.sf_step = r.bits(2) as i32 + 1;
                     let mut v = 45 / ch.sf_step;
-                    for b in 0..nb {
+                    for sf in ch.saved_sf[cur].iter_mut().take(nb) {
                         v += i32::from(codes.scale.read(r)) - 60;
-                        ch.saved_sf[cur][b] = v;
+                        *sf = v;
                     }
                 } else {
                     stats.sf_sets[1] += 1;
@@ -327,9 +327,9 @@ impl StreamDecoder {
                 let (lo, hi) = self.ch.split_at_mut(1);
                 let (x, y) = if a == 0 { (&mut lo[0], &mut hi[0]) } else { (&mut hi[0], &mut lo[0]) };
                 debug_assert!(a != b);
-                for k in 0..nb {
+                for (k, &transform) in g.transform_band.iter().enumerate().take(nb) {
                     for i in band(k) {
-                        if g.transform_band[k] {
+                        if transform {
                             let (m, s) = (x.coeffs[i], y.coeffs[i]);
                             x.coeffs[i] = m - s;
                             y.coeffs[i] = m + s;

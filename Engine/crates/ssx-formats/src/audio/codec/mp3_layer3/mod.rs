@@ -145,17 +145,17 @@ impl ScaleFactors {
         let mut sf = ScaleFactors::default();
         if g.is_short() {
             let first_short = if g.mixed_block {
-                for b in 0..8 {
-                    sf.long[b] = r.bits(slen1) as u8;
+                for v in sf.long.iter_mut().take(8) {
+                    *v = r.bits(slen1) as u8;
                 }
                 3
             } else {
                 0
             };
-            for b in first_short..12 {
+            for (b, windows) in sf.short.iter_mut().enumerate().take(12).skip(first_short) {
                 let n = if b < 6 { slen1 } else { slen2 };
-                for w in 0..3 {
-                    sf.short[b][w] = r.bits(n) as u8;
+                for v in windows {
+                    *v = r.bits(n) as u8;
                 }
             }
         } else {

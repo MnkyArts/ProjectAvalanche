@@ -8,8 +8,8 @@ impl Inventory {
         let mut sums: Vec<(i64, i64)> = wanted.iter().map(|&s| (s, 0)).collect();
         sums.sort();
         sums.dedup();
-        for kind in 0..4 {
-            for &(k, s) in &self.equipped[kind] {
+        for equipped in self.equipped.iter().take(4) {
+            for &(k, s) in equipped {
                 let stats: Vec<(i64, u8)> = match s {
                     0 => db
                         .items

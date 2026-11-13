@@ -117,13 +117,13 @@ impl ColorTransform {
         let mut cx = ColorTransform::default();
         let channels = if alpha { 4 } else { 3 };
         if has_mult {
-            for c in 0..channels {
-                cx.mult[c] = r.sb(n)? as i16;
+            for m in cx.mult.iter_mut().take(channels) {
+                *m = r.sb(n)? as i16;
             }
         }
         if has_add {
-            for c in 0..channels {
-                cx.add[c] = r.sb(n)? as i16;
+            for a in cx.add.iter_mut().take(channels) {
+                *a = r.sb(n)? as i16;
             }
         }
         r.align();

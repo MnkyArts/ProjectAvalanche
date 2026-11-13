@@ -97,7 +97,9 @@ jobs:
         github.event.pull_request.draft == false &&
         needs.changes.outputs.code == 'true'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Warm cache: ~24 min (2026-11-12: clippy 1.6 min, tests 19 min). A cold cache (a new toolchain: the cache key holds
+    # rustc's version) took 6.7 min for clippy and was still building the tests when 30 min ran out (2026-11-13).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: System libraries for Bevy

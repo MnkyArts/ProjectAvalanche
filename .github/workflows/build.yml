@@ -134,8 +134,15 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace
       - run: cargo test --workspace --doc
+      # gilrs's and gilrs-core's own tests (vendor/PATCHES.md, "Tests of the patched crates"): the bundled database,
+      # SDL's lookup order, the automatic mapping. gilrs is built against the vendored gilrs-core, as the workspace's
+      # [patch] builds it; its published Cargo.lock names the registry's gilrs-core, so that one entry is resolved
+      # again (no --locked) and every other dependency keeps its locked version.
       - name: Bundled controller mappings (gilrs)
-        run: cargo test --manifest-path vendor/gilrs-0.11.2/Cargo.toml --lib --locked
+        run: |
+          cargo test --manifest-path vendor/gilrs-core-0.6.8/Cargo.toml --lib --locked
+          cargo test --manifest-path vendor/gilrs-0.11.2/Cargo.toml --lib \
+            --config "patch.crates-io.gilrs-core.path=\"$PWD/vendor/gilrs-core-0.6.8\""
       # the movie decoder's sandbox on Linux (crates/ssx-movie/tests/sandbox.rs): its program read from outside while
       # it decodes the test card; each attempt of the probe stopped by the seccomp filter or its limits
       - name: The movie decoder's sandbox (Linux)

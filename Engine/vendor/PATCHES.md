@@ -513,7 +513,9 @@ script `vendor_tests.sh` beside it), each from its folder, standalone target: gi
 `cargo test --lib --locked`: **1 passed**; gilrs `cargo test --lib --config
 'patch.crates-io.gilrs-core.path="<Engine>/vendor/gilrs-core-0.6.8"'` (its published lock names the registry
 gilrs-core; the script restores both published `Cargo.lock` files after the run): **26 passed, 0 failed**,
-warning-free. New: T23's nine tests on synthetic capability sets (the xpad layout as SDL writes it, with its triggers
+warning-free. The release repository's Linux check runs the same two commands (its step "Bundled controller
+mappings (gilrs)"); until 2026-11-13 it still ran gilrs with `--locked` and without the patch, which builds it against
+the registry's gilrs-core and fails on T23 (the v0.4.0 snapshot run 43473803067). New: T23's nine tests on synthetic capability sets (the xpad layout as SDL writes it, with its triggers
 on the trigger buttons; no `BTN_GAMEPAD`; no `ABS_RX`/`ABS_RY`; only `BTN_TL2`/`BTN_TR2`; hats 2 as triggers, digital
 and analog; hat 1 as the shoulders; Sony's face buttons, xpad's d-pad buttons and the Xbox paddles; the hat guess and
 `HandleHat`; the name), T22's three (the lookup order, the priorities, the GUID reading) and T24's whole-database read

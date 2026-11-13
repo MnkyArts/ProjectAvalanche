@@ -30,7 +30,7 @@ pub enum Category {
     PlayerName,
 }
 
-const BASE_CATEGORIES: [(Category, &str); 7] = [
+const BASE_CATEGORIES: [(Category, &str); 8] = [
     (Category::Game(1), "TXT_GAMEPLAY_SETTINGS"),
     (Category::Game(2), "TXT_AUDIO_SETTINGS"),
     (Category::Game(3), "TXT_VIDEO_CALIBRATION"),
@@ -38,6 +38,7 @@ const BASE_CATEGORIES: [(Category, &str); 7] = [
     (Category::Port(Page::Effects), "TXT_AVA_OPTIONS_EFFECTS"),
     (Category::Port(Page::Sound), "TXT_AVA_OPTIONS_SOUND"),
     (Category::Port(Page::Movies), "TXT_AVA_OPTIONS_MOVIES"),
+    (Category::Port(Page::Menus), "TXT_AVA_OPTIONS_MENUS"),
 ];
 
 #[cfg(not(feature = "net"))]
@@ -64,6 +65,7 @@ pub struct Options {
     pub originals: PortSettings,
     pub page: Option<Page>,
     pub changed: bool,
+    pub last: Option<usize>,
 }
 
 pub fn open(fe: &mut FrontEnd, env: &mut FeEnv) {
@@ -125,6 +127,7 @@ pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str, param: &ActionPa
                 fe.note(format!("options: no category {k}"));
                 return;
             };
+            fe.ava.options.last = Some(k as usize);
             match cat {
                 Category::Game(c) => {
                     env.values.set_int(settings::CATEGORY, c);
@@ -238,6 +241,10 @@ pub(super) fn save(fe: &mut FrontEnd, env: &mut FeEnv, broken_popup: &str) {
         fe.range_movies = fe.ava.options.settings.range_movies;
         fe.note(format!("options: range movies {} from now on", fe.range_movies));
     }
+    if fe.ava.options.settings.menu_focus != fe.ava.options.kept.menu_focus {
+        fe.menu_focus = fe.ava.options.settings.menu_focus;
+        fe.note(format!("options: menu focus {} from now on", fe.menu_focus));
+    }
     let o = &mut fe.ava.options;
     if o.settings.window != o.kept.window
         && let Some(w) = o.settings.window.clone()
@@ -319,7 +326,14 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, loc: &mut Localization, dp: &str) -> O
             }
             Some(Value::Object(cx.new_array(out)))
         }
-        DP_MENU_INDEX => Some(Value::Number(0.0)),
+        // TODO(guess): a port choice — the port's menu follows the game's menus' option "Menus" (the first row, or the row last picked); settle: none (the original has no such menu).
+        DP_MENU_INDEX => {
+            let row = match fe.menu_focus {
+                ssx_assets::port_options::MenuFocus::FirstItem => None,
+                ssx_assets::port_options::MenuFocus::LastItem => o.last.filter(|&k| k < CATEGORIES.len()),
+            };
+            Some(Value::Number(row.unwrap_or(0) as f64))
+        }
         DP_INIT => {
             let v = Value::Object(cx.new_object());
             let _ = cx.set_member(&v, "doneButtonLabel", Value::str(&loc.text("TXT_SETTINGS_SAVE")));
@@ -331,6 +345,7 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, loc: &mut Localization, dp: &str) -> O
             let note = match o.page {
                 Some(Page::Display) => "TXT_AVA_OPTIONS_DISPLAY_NOTE",
                 Some(Page::Movies) => "TXT_AVA_OPTIONS_MOVIES_NOTE",
+                Some(Page::Menus) => "TXT_AVA_OPTIONS_MENUS_NOTE",
                 #[cfg(feature = "net")]
                 Some(Page::Multiplayer) => "TXT_AVA_OPTIONS_NEXT_JOIN",
                 _ => "TXT_AVA_OPTIONS_NEXT_START",

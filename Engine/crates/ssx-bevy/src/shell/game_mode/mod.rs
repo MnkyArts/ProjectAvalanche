@@ -61,6 +61,7 @@ pub struct GameArgs {
     pub lang: String,
     pub range_movies: ssx_assets::port_options::RangeMovies,
     pub boot_movie: ssx_assets::port_options::BootMovie,
+    pub menu_focus: ssx_assets::port_options::MenuFocus,
     pub window: WindowSpec,
     pub script: String,
     pub movie_cap: Option<f64>,
@@ -365,6 +366,7 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
     fe.ava.options.file = Some(ssx_assets::setup::app_dir().join("settings.json"));
     ssx_ui::game::fe::ava::options::reload(&mut fe);
     fe.range_movies = a.range_movies;
+    fe.menu_focus = a.menu_focus;
     #[cfg(feature = "net")]
     {
         fe.ava.browser.app_dir = Some(ssx_assets::setup::app_dir());
@@ -379,6 +381,12 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
     }
     if a.range_movies != ssx_assets::port_options::RangeMovies::default() {
         notes.push(format!("options: range movies {} (port option; the game plays them every time)", a.range_movies));
+    }
+    if a.menu_focus != ssx_assets::port_options::MenuFocus::default() {
+        notes.push(format!(
+            "options: menu focus {} (port option; the game opens its menus on the first item)",
+            a.menu_focus
+        ));
     }
     fe.saveload.load_error = save.damaged.then_some(ssx_ui::game::fe::saveload::LoadError::Corrupt);
     game.fe = Some(fe);

@@ -8,17 +8,18 @@ pub const PLAYERS: &str = "A_AvaPausePlayers";
 pub const LEAVE: &str = "A_AvaPauseLeave";
 pub const LEAVE_POPUP: &str = "ava_leave_server";
 
+pub const ITEMS: [(&str, &str); 4] = [
+    ("TXT_PAUSE_MENU_HEADING", "Resume"),
+    ("TXT_AVA_PAUSE_PLAYERS", PLAYERS),
+    ("TXT_PAUSE_MENU_SETTINGS", "A_GameSettings"),
+    ("TXT_AVA_PAUSE_LEAVE", LEAVE),
+];
+
 pub fn build(cx: &mut Ctx, loc: &mut Localization) -> Value {
-    let items = [
-        (loc.text("TXT_PAUSE_MENU_HEADING"), "Resume"),
-        (loc.text("TXT_AVA_PAUSE_PLAYERS"), PLAYERS),
-        (loc.text("TXT_PAUSE_MENU_SETTINGS"), "A_GameSettings"),
-        (loc.text("TXT_AVA_PAUSE_LEAVE"), LEAVE),
-    ];
     let mut out = Vec::new();
-    for (text, advance) in items {
+    for (key, advance) in ITEMS {
         let o = Value::Object(cx.new_object());
-        let _ = cx.set_member(&o, "strItem", Value::str(&text));
+        let _ = cx.set_member(&o, "strItem", Value::str(&loc.text(key)));
         let _ = cx.set_member(&o, "bEnabled", Value::Bool(true));
         let _ = cx.set_member(&o, "bFocusable", Value::Bool(false));
         let _ = cx.set_member(&o, "eventAdvance", Value::str(advance));
@@ -33,11 +34,13 @@ pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str) {
     }
     match action {
         PLAYERS => {
+            fe.pause.last = Some(PLAYERS);
             fe.pause.players = true;
             fe.note("pause menu: the Players screen");
             env.nav_events.push(super::players::OPEN.into());
         }
         LEAVE => {
+            fe.pause.last = Some(LEAVE);
             env.values.set_bool(POPUP_IS_ACTIVE, true);
             let name = crate::game::fe::ava::bounded(
                 &fe.ava.session.server,

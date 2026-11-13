@@ -1,3 +1,5 @@
+use ssx_assets::port_options::MenuFocus;
+
 use crate::avm1::Ctx;
 use crate::avm1::value::Value;
 use crate::game::fe::menu::{self, MenuItem};
@@ -16,6 +18,7 @@ pub struct Hub {
     pub active: bool,
     pub items: Vec<MenuItem>,
     pub index: i32,
+    pub last: Option<&'static str>,
 }
 
 pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
@@ -44,7 +47,14 @@ pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
         item(loc, "TXT_AVA_HUB_CREDITS", true, "A_AvaCredits"),
         item(loc, "TXT_AVA_HUB_EXIT", true, "A_AvaExit"),
     ];
-    fe.ava.hub.index = 0;
+    // TODO(guess): a port choice — the port's menu follows the game's menus' option; settle: none (the original has no such menu).
+    let last = match fe.menu_focus {
+        MenuFocus::FirstItem => None,
+        MenuFocus::LastItem => {
+            fe.ava.hub.last.and_then(|a| fe.ava.hub.items.iter().position(|it| it.advance == a && it.enabled))
+        }
+    };
+    fe.ava.hub.index = last.and_then(|i| i32::try_from(i).ok()).unwrap_or(0);
     fe.ava.hub.active = true;
     fe.publish.extend([DP_MENU.into(), DP_INDEX.into()]);
     env.nav_events.push("backgroundcontainer_disable".into());
@@ -55,6 +65,9 @@ pub fn deactivate(fe: &mut FrontEnd) {
 }
 
 pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str, param: f64) {
+    if let Some(it) = fe.ava.hub.items.iter().find(|it| it.advance == action) {
+        fe.ava.hub.last = Some(it.advance);
+    }
     match action {
         "A_AvaSingleplayer" => env.nav_events.push("go_to_menu".into()),
         #[cfg(feature = "net")]

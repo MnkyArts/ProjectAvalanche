@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
-use ssx_assets::port_options::{BootMovie, RangeMovies};
+use ssx_assets::port_options::{BootMovie, MenuFocus, RangeMovies};
 use ssx_assets::settings_file::{self, UpdateError};
 
 const MERGE_LEVELS: u32 = 2;
@@ -67,6 +67,8 @@ pub struct Settings {
     pub range_movies: RangeMovies,
     #[serde(deserialize_with = "boot_movie_in", serialize_with = "boot_movie_out")]
     pub boot_movie: BootMovie,
+    #[serde(deserialize_with = "menu_focus_in", serialize_with = "menu_focus_out")]
+    pub menu_focus: MenuFocus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_name: Option<String>,
     #[serde(rename = "masters", deserialize_with = "crate::masters::present", skip_serializing)]
@@ -110,6 +112,15 @@ fn boot_movie_out<S: serde::Serializer>(b: &BootMovie, out: S) -> Result<S::Ok, 
     out.serialize_str(b.name())
 }
 
+fn menu_focus_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<MenuFocus, D::Error> {
+    let name = String::deserialize(d)?;
+    MenuFocus::from_name(&name).ok_or_else(|| serde::de::Error::custom("not a menu focus choice"))
+}
+
+fn menu_focus_out<S: serde::Serializer>(m: &MenuFocus, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(m.name())
+}
+
 fn host_is_default(h: &crate::host::HostSettings) -> bool {
     *h == crate::host::HostSettings::default()
 }
@@ -147,6 +158,7 @@ impl Default for Settings {
             boost_meter: 0.0,
             range_movies: RangeMovies::EveryTime,
             boot_movie: BootMovie::EveryStart,
+            menu_focus: MenuFocus::FirstItem,
             player_name: None,
             old_masters: false,
             resources: None,
@@ -312,6 +324,21 @@ mod tests {
             let s = Settings::from_object(&m);
             assert_eq!((s.boot_movie, s.vsync), (BootMovie::EveryStart, false), "{bad}: the rest read");
             assert!(s.notes.len() == 1 && s.notes[0].contains("boot_movie"), "{bad}: {:?}", s.notes);
+        }
+    }
+
+    #[test]
+    fn the_menu_focus_choice_is_kept_by_its_name() {
+        let s: Settings = serde_json::from_str(r#"{"menu_focus": "LastItem"}"#).unwrap();
+        assert_eq!(s.menu_focus, MenuFocus::LastItem);
+        assert!(serde_json::to_string(&s).unwrap().contains(r#""menu_focus":"LastItem""#));
+        assert_eq!(Settings::default().menu_focus, MenuFocus::FirstItem, "the game's by default");
+        for bad in [r#""last-item""#, r#""Remember""#, "true", "1", "null", r#"["LastItem"]"#] {
+            let m: Map<String, Json> = serde_json::from_str(&format!(r#"{{"menu_focus": {bad}, "vsync": false}}"#))
+                .unwrap_or_else(|e| panic!("{bad}: {e}"));
+            let s = Settings::from_object(&m);
+            assert_eq!((s.menu_focus, s.vsync), (MenuFocus::FirstItem, false), "{bad}: the rest read");
+            assert!(s.notes.len() == 1 && s.notes[0].contains("menu_focus"), "{bad}: {:?}", s.notes);
         }
     }
 

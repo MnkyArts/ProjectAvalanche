@@ -1,3 +1,5 @@
+use ssx_assets::port_options::MenuFocus;
+
 use crate::avm1::Ctx;
 use crate::avm1::value::Value;
 use crate::game::fe::{FeEnv, FrontEnd, screens};
@@ -97,6 +99,7 @@ pub struct Pause {
     pub settings: bool,
     pub restart_enabled: bool,
     pub players: bool,
+    pub last: Option<&'static str>,
 }
 
 pub fn restart_allowed(fe: &FrontEnd, values: &crate::game::values::UiValues) -> bool {
@@ -123,6 +126,7 @@ pub fn pause_menu(fe: &mut FrontEnd, env: &mut FeEnv) {
         return;
     }
     fe.game_pause.set(reason::START, true);
+    fe.pause.last = None;
     fe.note("pause: 0xC3F77F89 {1} (pause reason 5), 0xC3CF3A7C {1} → view event Pause → hud provider");
     fe.go_to_screen(env, screens::id::PAUSE);
 }
@@ -196,6 +200,7 @@ pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str) {
             env.values.set_bool(PAUSE_IS_IN_PAUSE_MENU, false);
         }
         "A_GameRestartStage" => {
+            fe.pause.last = Some("RestartStage");
             if env.values.bool(RESTART_NEVER_SHOW_AGAIN) {
                 fe.pause.restart = true;
                 save_and_leave(fe, env);
@@ -205,15 +210,18 @@ pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str) {
             }
         }
         "A_GameQuitStage" => {
+            fe.pause.last = Some("QuitStage");
             env.values.set_bool(POPUP_IS_ACTIVE, true);
             env.nav_events.push("go_to_quit_popup".into());
         }
         "A_GameSettings" => {
+            fe.pause.last = Some("A_GameSettings");
             env.values.set_bool(SETTINGS_IS_IN_PAUSE_MENU, true);
             fe.pause.settings = true;
             env.nav_events.push("go_to_settings_menu".into());
         }
         "A_GameShowObjective" => {
+            fe.pause.last = Some("ShowObjective");
             env.values.set_bool(POPUP_IS_ACTIVE, true);
             env.nav_events.push("go_to_show_objective".into());
         }
@@ -264,32 +272,51 @@ pub fn do_restart(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.game_pause.reset();
 }
 
+fn items(fe: &FrontEnd) -> Vec<(&'static str, bool, &'static str)> {
+    let drop = fe.current_drop;
+    let full = drop != FIRST_TUTORIAL;
+    let objective = fe.career.event(drop).is_some_and(|e| !e.hud_title.is_empty());
+    let mut items = vec![("TXT_PAUSE_MENU_HEADING", true, "Resume")];
+    if full {
+        let key = if fe.pause.restart_enabled { "TXT_PAUSE_MENU_RESTART" } else { "TXT_PAUSE_MENU_RESTART_DISABLED" };
+        items.push((key, fe.pause.restart_enabled, "RestartStage"));
+    }
+    items.push(("TXT_PAUSE_MENU_SETTINGS", true, "A_GameSettings"));
+    if objective {
+        items.push(("TXT_CAM_OBJECTIVE_TITLE", true, "ShowObjective"));
+    }
+    if full {
+        items.push(("TXT_PAUSE_MENU_QUIT", true, "QuitStage"));
+    }
+    items
+}
+
+fn menu_index(fe: &FrontEnd) -> usize {
+    match fe.menu_focus {
+        MenuFocus::FirstItem => 0,
+        // TODO(guess): a port choice — the option "Menus: the last item picked" focuses the item last picked since the pause began (Settings, the objective, a restart or quit that was not confirmed; a network session's Players and Leave) while it is enabled; settle: none (the game's pause menu always opens on Resume (+0x84 = 0 from 0x825D3070)).
+        MenuFocus::LastItem => fe.pause.last.and_then(|last| last_picked(fe, last)).unwrap_or(0),
+    }
+}
+
+fn last_picked(fe: &FrontEnd, last: &str) -> Option<usize> {
+    #[cfg(feature = "net")]
+    if fe.network_session {
+        return crate::game::fe::ava::session::pause::ITEMS.iter().position(|(_, advance)| *advance == last);
+    }
+    items(fe).iter().position(|&(_, enabled, advance)| advance == last && enabled)
+}
+
 pub fn build(fe: &FrontEnd, cx: &mut Ctx, loc: &mut crate::game::loc::Localization, dp: &str) -> Option<Value> {
     match dp {
-        "dp_pause_menu_index" => Some(Value::Number(0.0)),
+        "dp_pause_menu_index" => Some(Value::Number(menu_index(fe) as f64)),
         #[cfg(feature = "net")]
         "dp_pause_menu_data" if fe.network_session => Some(crate::game::fe::ava::session::pause::build(cx, loc)),
         "dp_pause_menu_data" => {
-            let drop = fe.current_drop;
-            let full = drop != FIRST_TUTORIAL;
-            let objective = fe.career.event(drop).is_some_and(|e| !e.hud_title.is_empty());
-            let mut items: Vec<(String, bool, &str)> = vec![(loc.text("TXT_PAUSE_MENU_HEADING"), true, "Resume")];
-            if full {
-                let key =
-                    if fe.pause.restart_enabled { "TXT_PAUSE_MENU_RESTART" } else { "TXT_PAUSE_MENU_RESTART_DISABLED" };
-                items.push((loc.text(key), fe.pause.restart_enabled, "RestartStage"));
-            }
-            items.push((loc.text("TXT_PAUSE_MENU_SETTINGS"), true, "A_GameSettings"));
-            if objective {
-                items.push((loc.text("TXT_CAM_OBJECTIVE_TITLE"), true, "ShowObjective"));
-            }
-            if full {
-                items.push((loc.text("TXT_PAUSE_MENU_QUIT"), true, "QuitStage"));
-            }
             let mut out = Vec::new();
-            for (text, enabled, advance) in items {
+            for (key, enabled, advance) in items(fe) {
                 let o = Value::Object(cx.new_object());
-                let _ = cx.set_member(&o, "strItem", Value::str(&text));
+                let _ = cx.set_member(&o, "strItem", Value::str(&loc.text(key)));
                 let _ = cx.set_member(&o, "bEnabled", Value::Bool(enabled));
                 let _ = cx.set_member(&o, "bFocusable", Value::Bool(false));
                 let _ = cx.set_member(&o, "eventAdvance", Value::str(advance));

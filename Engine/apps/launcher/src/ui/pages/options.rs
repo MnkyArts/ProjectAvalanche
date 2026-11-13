@@ -1,5 +1,5 @@
 use eframe::egui::{self, RichText, Ui};
-use ssx_assets::port_options::{BootMovie, RangeMovies};
+use ssx_assets::port_options::{BootMovie, MenuFocus, RangeMovies};
 
 use crate::app::Launcher;
 use crate::settings::{Music, Shading};
@@ -35,6 +35,13 @@ fn range_movies_label(r: RangeMovies) -> &'static str {
     match r {
         RangeMovies::EveryTime => "Every time (as the original game)",
         RangeMovies::FirstTimeOnly => "First time only (once per profile)",
+    }
+}
+
+fn menu_focus_label(m: MenuFocus) -> &'static str {
+    match m {
+        MenuFocus::FirstItem => "On the first item (as the original game)",
+        MenuFocus::LastItem => "On the item picked last",
     }
 }
 
@@ -170,6 +177,31 @@ impl Launcher {
             "The original game plays its boot video at every start. Skip starts the way the game restarts itself \
              after a sign-out: straight to the start screen; the start screen and the sign-in stay as they are. The \
              game's Options (Movie Settings) change it too.",
+        );
+    }
+
+    pub fn menus_section(&mut self, ui: &mut Ui) {
+        let s = &mut self.settings;
+        widgets::heading(ui, "Menus");
+        egui::Grid::new("menu_focus").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
+            widgets::field(ui, "Open menus");
+            let combo =
+                egui::ComboBox::from_id_salt("menu_focus").selected_text(menu_focus_label(s.menu_focus)).width(330.0);
+            widgets::combo(ui, combo, |ui| {
+                for v in MenuFocus::ALL {
+                    ui.selectable_value(&mut s.menu_focus, v, menu_focus_label(v));
+                }
+            })
+            .response
+            .on_hover_text("Where the highlight is when you come back to a menu.");
+            ui.end_row();
+        });
+        ui.add_space(8.0);
+        widgets::note(
+            ui,
+            "The original game opens its main menu, pause menu and settings menu on their first item every time. With \
+             \"On the item picked last\" they, and Project Avalanche's own menus, open on the item you picked there \
+             last. The game starts with this option, and its Options (Menu Settings) change it too.",
         );
     }
 

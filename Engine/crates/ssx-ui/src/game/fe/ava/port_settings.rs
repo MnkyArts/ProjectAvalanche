@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value as Json};
 use ssx_assets::display::{DisplaySettings, WindowMode};
-use ssx_assets::port_options::{BootMovie, RangeMovies};
+use ssx_assets::port_options::{BootMovie, MenuFocus, RangeMovies};
 
 use crate::game::loc::Localization;
 
@@ -43,6 +43,10 @@ const RANGE_MOVIES: [(RangeMovies, &str); 2] = [
 ];
 const BOOT_MOVIES: [(BootMovie, &str); 2] =
     [(BootMovie::EveryStart, "TXT_AVA_OPT_BOOT_MOVIE_EVERY_START"), (BootMovie::Skip, "TXT_AVA_OPT_BOOT_MOVIE_SKIP")];
+const MENU_FOCUS: [(MenuFocus, &str); 2] = [
+    (MenuFocus::FirstItem, "TXT_AVA_OPT_MENU_FOCUS_FIRST_ITEM"),
+    (MenuFocus::LastItem, "TXT_AVA_OPT_MENU_FOCUS_LAST_ITEM"),
+];
 const MUSICS: [(Music, &str, &str); 4] = [
     (Music::Auto, "Auto", "TXT_AVA_OPT_MUSIC_AUTO"),
     (Music::DeadlyDescent, "DeadlyDescent", "TXT_AVA_OPT_MUSIC_DEADLY_DESCENT"),
@@ -68,6 +72,7 @@ pub struct PortSettings {
     pub sfx_volume: f32,
     pub range_movies: RangeMovies,
     pub boot_movie: BootMovie,
+    pub menu_focus: MenuFocus,
     #[cfg(feature = "net")]
     pub player_name: Option<String>,
     #[cfg(feature = "net")]
@@ -100,6 +105,7 @@ impl Default for PortSettings {
             sfx_volume: 1.0,
             range_movies: RangeMovies::EveryTime,
             boot_movie: BootMovie::EveryStart,
+            menu_focus: MenuFocus::FirstItem,
             #[cfg(feature = "net")]
             player_name: None,
             #[cfg(feature = "net")]
@@ -147,6 +153,12 @@ impl PortSettings {
             match x.as_str().and_then(BootMovie::from_name) {
                 Some(v) => s.boot_movie = v,
                 None => bad(BootMovie::MEMBER),
+            }
+        }
+        if let Some(x) = m.get(MenuFocus::MEMBER) {
+            match x.as_str().and_then(MenuFocus::from_name) {
+                Some(v) => s.menu_focus = v,
+                None => bad(MenuFocus::MEMBER),
             }
         }
         for (k, field) in [
@@ -197,6 +209,7 @@ impl PortSettings {
         m.insert("music".into(), Json::String(music.into()));
         m.insert(RangeMovies::MEMBER.into(), Json::String(self.range_movies.name().into()));
         m.insert(BootMovie::MEMBER.into(), Json::String(self.boot_movie.name().into()));
+        m.insert(MenuFocus::MEMBER.into(), Json::String(self.menu_focus.name().into()));
         for (k, b) in [
             ("vsync", self.vsync),
             ("objects", self.objects),
@@ -290,6 +303,7 @@ pub enum Item {
     SfxVolume,
     RangeMovies,
     BootMovie,
+    MenuFocus,
     #[cfg(feature = "net")]
     DownloadLimit,
     #[cfg(feature = "net")]
@@ -304,6 +318,7 @@ pub enum Page {
     Effects,
     Sound,
     Movies,
+    Menus,
     #[cfg(feature = "net")]
     Multiplayer,
 }
@@ -323,6 +338,7 @@ impl Page {
             Page::Effects => &[Item::Particles, Item::SnowTracks, Item::LocalLights, Item::Post, Item::Sky],
             Page::Sound => &[Item::Music, Item::MusicVolume, Item::Sfx, Item::SfxVolume],
             Page::Movies => &[Item::RangeMovies, Item::BootMovie],
+            Page::Menus => &[Item::MenuFocus],
             #[cfg(feature = "net")]
             Page::Multiplayer => &[Item::DownloadLimit, Item::ResourceCache, Item::ServerScripts],
         }
@@ -334,7 +350,7 @@ const NET_ITEMS: [Item; 3] = [Item::DownloadLimit, Item::ResourceCache, Item::Se
 #[cfg(not(feature = "net"))]
 const NET_ITEMS: [Item; 0] = [];
 
-const ALL: [Item; 18] = [
+const ALL: [Item; 19] = [
     Item::WindowMode,
     Item::RenderResolution,
     Item::Subdivide,
@@ -353,6 +369,7 @@ const ALL: [Item; 18] = [
     Item::SfxVolume,
     Item::RangeMovies,
     Item::BootMovie,
+    Item::MenuFocus,
 ];
 
 const RENDER_HEIGHTS: [Option<u32>; 7] = [None, Some(2160), Some(1440), Some(1080), Some(900), Some(720), Some(540)];
@@ -381,6 +398,7 @@ impl Item {
             Item::SfxVolume => "ava_opt_sfx_volume",
             Item::RangeMovies => "ava_opt_range_movies",
             Item::BootMovie => "ava_opt_boot_movie",
+            Item::MenuFocus => "ava_opt_menu_focus",
             #[cfg(feature = "net")]
             Item::DownloadLimit => "ava_opt_download_limit",
             #[cfg(feature = "net")]
@@ -410,6 +428,7 @@ impl Item {
             Item::SfxVolume => "TXT_AVA_OPT_SFX_VOLUME",
             Item::RangeMovies => "TXT_AVA_OPT_RANGE_MOVIES",
             Item::BootMovie => "TXT_AVA_OPT_BOOT_MOVIE",
+            Item::MenuFocus => "TXT_AVA_OPT_MENU_FOCUS",
             #[cfg(feature = "net")]
             Item::DownloadLimit => "TXT_AVA_OPT_DOWNLOAD_LIMIT",
             #[cfg(feature = "net")]
@@ -459,6 +478,7 @@ impl Item {
             Item::SfxVolume => s.sfx_volume = defaults.sfx_volume,
             Item::RangeMovies => s.range_movies = defaults.range_movies,
             Item::BootMovie => s.boot_movie = defaults.boot_movie,
+            Item::MenuFocus => s.menu_focus = defaults.menu_focus,
             #[cfg(feature = "net")]
             Item::DownloadLimit => s.resources.download_limit_mib = defaults.resources.download_limit_mib,
             #[cfg(feature = "net")]
@@ -502,6 +522,7 @@ impl Item {
             Item::SfxVolume => volume_step(s.sfx_volume).to_string(),
             Item::RangeMovies => loc.text(RANGE_MOVIES.iter().find(|x| x.0 == s.range_movies).map_or("", |x| x.1)),
             Item::BootMovie => loc.text(BOOT_MOVIES.iter().find(|x| x.0 == s.boot_movie).map_or("", |x| x.1)),
+            Item::MenuFocus => loc.text(MENU_FOCUS.iter().find(|x| x.0 == s.menu_focus).map_or("", |x| x.1)),
             #[cfg(feature = "net")]
             Item::DownloadLimit => super::resource_settings::size_label(s.resources.download_limit_mib, loc),
             #[cfg(feature = "net")]
@@ -558,6 +579,10 @@ impl Item {
                 s.boot_movie = wrap(&BootMovie::ALL, s.boot_movie, next);
                 true
             }
+            Item::MenuFocus => {
+                s.menu_focus = wrap(&MenuFocus::ALL, s.menu_focus, next);
+                true
+            }
             #[cfg(feature = "net")]
             Item::DownloadLimit => super::resource_settings::step(
                 &mut s.resources.download_limit_mib,
@@ -603,12 +628,13 @@ mod tests {
         let (s, problems) = PortSettings::from_json(&serde_json::json!({
             "iso": "/x.iso", "subdivide": 1, "shading": "Height", "vsync": false, "music": "Off",
             "music_volume": 0.37, "sfx": "yes", "sfx_volume": 2.5, "particles": false, "unknown": [1],
-            "range_movies": "FirstTimeOnly", "boot_movie": "Skip"
+            "range_movies": "FirstTimeOnly", "boot_movie": "Skip", "menu_focus": "LastItem"
         }));
         assert_eq!(
             (s.subdivide, s.shading, s.vsync, s.music, s.particles, s.range_movies, s.boot_movie),
             (1, Shading::Height, false, Music::Off, false, RangeMovies::FirstTimeOnly, BootMovie::Skip)
         );
+        assert_eq!(s.menu_focus, MenuFocus::LastItem);
         assert!(s.sfx && problems.len() == 1 && problems[0].contains("`sfx`"));
         assert_eq!((volume_step(s.music_volume), volume_step(s.sfx_volume)), (4, 10));
         let (d, p) = PortSettings::from_json(&serde_json::json!({}));
@@ -623,6 +649,8 @@ mod tests {
             serde_json::json!({"range_movies": true}),
             serde_json::json!({"boot_movie": "skip"}),
             serde_json::json!({"boot_movie": 1}),
+            serde_json::json!({"menu_focus": "last-item"}),
+            serde_json::json!({"menu_focus": 1}),
         ] {
             let (s, p) = PortSettings::from_json(&bad);
             assert!(s == PortSettings::default() && p.len() == 1, "{bad}");
@@ -640,12 +668,12 @@ mod tests {
         s.sfx_volume = 0.37;
         assert!(Item::SfxVolume.step(&mut s, false) && s.sfx_volume == 0.3);
         assert!(Item::Vsync.step(&mut s, true) && !s.vsync);
-        for p in [Page::Display, Page::Effects, Page::Sound, Page::Movies] {
+        for p in [Page::Display, Page::Effects, Page::Sound, Page::Movies, Page::Menus] {
             for i in p.items() {
                 assert_eq!(Item::of_dp(&format!("dp_{}", i.name())), Some(*i));
             }
         }
-        let pages = [Page::Display, Page::Effects, Page::Sound, Page::Movies];
+        let pages = [Page::Display, Page::Effects, Page::Sound, Page::Movies, Page::Menus];
         assert_eq!(ALL.len(), pages.iter().map(|p| p.items().len()).sum::<usize>());
         assert!(Item::RangeMovies.step(&mut s, true) && s.range_movies == RangeMovies::FirstTimeOnly);
         assert!(Item::RangeMovies.step(&mut s, true) && s.range_movies == RangeMovies::EveryTime);
@@ -657,6 +685,11 @@ mod tests {
         assert!(Item::BootMovie.step(&mut s, false) && s.boot_movie == BootMovie::Skip);
         Item::BootMovie.reset(&mut s, &PortSettings::default());
         assert_eq!(s.boot_movie, BootMovie::EveryStart);
+        assert!(Item::MenuFocus.step(&mut s, true) && s.menu_focus == MenuFocus::LastItem);
+        assert!(Item::MenuFocus.step(&mut s, false) && s.menu_focus == MenuFocus::FirstItem);
+        assert!(Item::MenuFocus.step(&mut s, false) && s.menu_focus == MenuFocus::LastItem);
+        Item::MenuFocus.reset(&mut s, &PortSettings::default());
+        assert_eq!(s.menu_focus, MenuFocus::FirstItem);
         #[cfg(feature = "net")]
         {
             assert_eq!(&NET_ITEMS[..], Page::Multiplayer.items());

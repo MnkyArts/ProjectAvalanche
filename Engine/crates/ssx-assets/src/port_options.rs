@@ -101,6 +101,54 @@ impl FromStr for BootMovie {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MenuFocus {
+    #[default]
+    FirstItem,
+    LastItem,
+}
+
+impl MenuFocus {
+    pub const ALL: [MenuFocus; 2] = [MenuFocus::FirstItem, MenuFocus::LastItem];
+    pub const MEMBER: &str = "menu_focus";
+    pub const FLAG: &str = "--menu-focus";
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MenuFocus::FirstItem => "FirstItem",
+            MenuFocus::LastItem => "LastItem",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<MenuFocus> {
+        MenuFocus::ALL.into_iter().find(|r| r.name() == name)
+    }
+
+    pub fn arg(self) -> &'static str {
+        match self {
+            MenuFocus::FirstItem => "first-item",
+            MenuFocus::LastItem => "last-item",
+        }
+    }
+}
+
+impl fmt::Display for MenuFocus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.arg())
+    }
+}
+
+impl FromStr for MenuFocus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        MenuFocus::ALL.into_iter().find(|r| r.arg() == s).ok_or_else(|| {
+            let values: Vec<&str> = MenuFocus::ALL.iter().map(|r| r.arg()).collect();
+            format!("{}: one of {}", ssx_core::text::quoted_max(s, 64), values.join(", "))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +188,23 @@ mod tests {
         }
         let e = "x\u{1b}[2J".repeat(100).parse::<BootMovie>().unwrap_err();
         assert!(!e.contains('\u{1b}') && e.len() < 200 && e.ends_with("every-start, skip"), "{e}");
+    }
+
+    #[test]
+    fn the_menu_focus_reads_back_by_name_and_by_flag_value() {
+        assert_eq!(MenuFocus::default(), MenuFocus::FirstItem);
+        for m in MenuFocus::ALL {
+            assert_eq!(MenuFocus::from_name(m.name()), Some(m));
+            assert_eq!(m.arg().parse::<MenuFocus>(), Ok(m));
+            assert_eq!(m.to_string(), m.arg());
+        }
+        for bad in ["", "firstitem", "LAST-ITEM", " last-item", "LastItem", "last", "remember"] {
+            assert!(bad.parse::<MenuFocus>().is_err(), "{bad:?}");
+        }
+        for bad in ["", "firstItem", "last-item", "LastItem ", "Remember"] {
+            assert_eq!(MenuFocus::from_name(bad), None, "{bad:?}");
+        }
+        let e = "x\u{1b}[2J".repeat(100).parse::<MenuFocus>().unwrap_err();
+        assert!(!e.contains('\u{1b}') && e.len() < 200 && e.ends_with("first-item, last-item"), "{e}");
     }
 }

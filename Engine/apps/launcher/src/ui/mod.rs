@@ -79,6 +79,7 @@ pub enum SettingsTab {
     Graphics,
     Audio,
     Movies,
+    Menus,
     Controls,
     Multiplayer,
 }
@@ -113,19 +114,20 @@ pub enum ExtrasTab {
 }
 
 impl SettingsTab {
-    pub const ALL: [(Self, &str); 7] = [
+    pub const ALL: [(Self, &str); 8] = [
         (Self::GameData, "GAME DATA"),
         (Self::Display, "DISPLAY"),
         (Self::Graphics, "GRAPHICS"),
         (Self::Audio, "AUDIO"),
         (Self::Movies, "MOVIES"),
+        (Self::Menus, "MENUS"),
         (Self::Controls, "CONTROLS"),
         (Self::Multiplayer, "MULTIPLAYER"),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
         let name = name.to_ascii_lowercase();
-        let names = ["data", "display", "graphics", "audio", "movies", "controls", "multiplayer"];
+        let names = ["data", "display", "graphics", "audio", "movies", "menus", "controls", "multiplayer"];
         names.iter().position(|n| *n == name).map(|i| Self::ALL[i].0)
     }
 }
@@ -158,6 +160,7 @@ mod tests {
         assert_eq!(SettingsTab::parse("controls"), Some(SettingsTab::Controls));
         assert_eq!(SettingsTab::parse("display"), Some(SettingsTab::Display));
         assert_eq!(SettingsTab::parse("movies"), Some(SettingsTab::Movies));
+        assert_eq!(SettingsTab::parse("menus"), Some(SettingsTab::Menus));
         assert_eq!(SettingsTab::parse("multiplayer"), Some(SettingsTab::Multiplayer));
         assert_eq!(ExtrasTab::parse("output"), Some(ExtrasTab::Output));
         assert_eq!(ExtrasTab::parse("updates"), Some(ExtrasTab::Updates));

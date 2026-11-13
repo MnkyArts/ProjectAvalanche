@@ -1,3 +1,5 @@
+use ssx_assets::port_options::MenuFocus;
+
 use crate::avm1::Ctx;
 use crate::avm1::value::Value;
 use crate::game::fe::{ActionParam, FeEnv, FrontEnd, screens};
@@ -134,6 +136,7 @@ pub struct Settings {
     pub category: i32,
     pub changed: bool,
     pub close_feed: bool,
+    pub last_category: Option<i32>,
 }
 
 pub fn init_values(values: &mut UiValues, store: &[(u16, i32); 9]) {
@@ -151,6 +154,7 @@ pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
         category: env.values.int(CATEGORY),
         changed: false,
         close_feed: false,
+        last_category: fe.settings.last_category,
     };
     fe.publish.extend(["dp_settings_init".into(), "dp_settings_menu".into(), "dp_settings_menu_index".into()]);
     for it in &ITEMS {
@@ -173,6 +177,7 @@ pub fn action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str, param: &ActionPa
                 3 => (9, "go_to_activity_feed_video_calibration"),
                 _ => return,
             };
+            fe.settings.last_category = Some(category);
             if fe.settings.from_pause {
                 fe.go_to_screen(env, screen);
             } else {
@@ -348,7 +353,14 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, values: &UiValues, loc: &mut Localizat
             }
             Some(Value::Object(cx.new_array(out)))
         }
-        "dp_settings_menu_index" => Some(Value::Number(0.0)),
+        "dp_settings_menu_index" => {
+            let index = match fe.menu_focus {
+                MenuFocus::FirstItem => 0,
+                // TODO(guess): a port choice — the option "Menus: the last item picked" focuses the page last opened from the menu (its items 0 … 2 are the pages 1 … 3); settle: none (the game's publisher 0x825C3580 always publishes 0).
+                MenuFocus::LastItem => fe.settings.last_category.map_or(0, |c| c - 1),
+            };
+            Some(Value::Number(f64::from(index)))
+        }
         "dp_settings_init" => {
             let o = Value::Object(cx.new_object());
             let done = loc.text("TXT_SETTINGS_SAVE");

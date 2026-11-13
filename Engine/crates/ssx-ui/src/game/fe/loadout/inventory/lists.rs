@@ -26,6 +26,9 @@ impl Inventory {
         } else {
             u.name = rec.name.clone();
             u.description = self.perk_description(loc, rec);
+            if matches!(rec.kind, 0 | 1) {
+                u.perk = (3..6).rev().map(|i| rec.stats[i].0).find(|&t| t != -1);
+            }
             let icon = |k: u32| db.descriptions.iter().find(|d| d.key == k).map(|d| d.icon.clone()).unwrap_or_default();
             u.asset = icon(rec.descriptions[0]);
             u.secondary = icon(rec.descriptions[1]);
@@ -238,6 +241,11 @@ impl Inventory {
         if kind != RIDER {
             self.owned_list.sort_by(by_value);
             self.inventory_list.sort_by(by_value);
+            // TODO(guess): a port choice — suits and boards on the view-more screen are grouped by their perk type (the
+            // ones without a perk last), each group by value as the game sorts.
+            if matches!(kind, 0 | 1) {
+                self.inventory_list.sort_by_key(|u| (u.perk.is_none(), u.perk.unwrap_or(0)));
+            }
             let with_empty = matches!(kind, 2..=4);
             self.owned_list.truncate(if with_empty { 6 } else { 7 });
             if with_empty && let Some(rec) = self.record(db, profile, loc, fnv1(EMPTY[kind as usize].as_bytes()), 0) {

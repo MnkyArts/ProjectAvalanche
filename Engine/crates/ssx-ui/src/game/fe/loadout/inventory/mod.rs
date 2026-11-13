@@ -72,6 +72,7 @@ pub struct UiItem {
     pub src: u8,
     pub flags: u32,
     pub stats: [(i64, i64); 3],
+    pub perk: Option<i64>,
 }
 
 impl UiItem {

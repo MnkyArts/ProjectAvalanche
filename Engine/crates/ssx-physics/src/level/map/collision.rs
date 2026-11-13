@@ -43,6 +43,15 @@ pub fn add_map_collision(
     def: &MapDefinition,
     objects: &BTreeMap<ContentId, MapObject>,
 ) -> Result<MapCollisionStats> {
+    add_map_collision_with_cap(world, def, objects, MAX_COLLISION_TRIANGLES)
+}
+
+pub fn add_map_collision_with_cap(
+    world: &mut CollisionWorld,
+    def: &MapDefinition,
+    objects: &BTreeMap<ContentId, MapObject>,
+    cap: usize,
+) -> Result<MapCollisionStats> {
     let mut object_triangles = 0usize;
     for p in &def.props {
         if let PropLook::Object(id) = &p.look {
@@ -51,10 +60,10 @@ pub fn add_map_collision(
         }
     }
     let total = def.collision_triangles().saturating_add(object_triangles);
-    if total > MAX_COLLISION_TRIANGLES {
+    if total > cap {
         bail!(
             "the map's collision is {total} triangles with its placed objects' ({object_triangles}); at most \
-             {MAX_COLLISION_TRIANGLES}, the disc's largest track"
+             {cap}, the disc's largest track"
         );
     }
     let mut stats = MapCollisionStats::default();
@@ -68,7 +77,11 @@ pub fn add_map_collision(
         let (parts, degenerate) = build_parts(&c.triangles);
         stats.degenerate += degenerate;
         let entity = world.add_entity(PropEntity { object: c.node.clone(), audio: None });
-        // TODO(guess): a port choice — a map's collision mesh is a static part in the world frame (its node's transform already applied), so its part frame is the identity and its AO multiplier 1.0 (the AO byte 255); the disc's props take their placement's quaternion and word 12; settle: the frame and AO the game would give a world-space part (SCMComponent_BuildPartsFromPob 0x82945300's insertion, not followed).
+        // TODO(guess): a port choice — a map's collision mesh is a static part in the world frame (its node's transform
+        // already applied), so its part frame is the identity and its AO multiplier 1.0 (the AO byte 255); the disc's
+        // props take their placement's quaternion and word 12, and the game has no map collision mesh; settle: the frame
+        // and AO the game would give a world-space part (SCMComponent_BuildPartsFromPob 0x82945300's insertion, not
+        // followed).
         crate::guess_hit!();
         add_parts(world, &parts, &|v| v, 1.0, Quat::IDENTITY, entity, &mut stats.collision_clusters);
         stats.collision_triangles += parts.triangle_count();
@@ -181,7 +194,11 @@ fn add_surface(
         }
         kept.push((k, *t));
     }
-    // TODO(guess): a port choice — a map's terrain is cut into clusters by the 16 m square of each triangle's centroid, at most 32 triangles (and 256 vertices) each, with no quad units; the disc's terrain clusters are one cage face each after two refinement levels (PhysicsChunkJob 0x82A71F20: ≤ 32 triangles, 25 vertices), which a triangle mesh does not have; settle: nothing in the game builds clusters from a triangle mesh (a cell size measured against the disc's cluster extents would only tune the BVH).
+    // TODO(guess): a port choice — a map's terrain is cut into clusters by the 16 m square of each triangle's centroid,
+    // at most 32 triangles (and 256 vertices) each, with no quad units; the disc's terrain clusters are one cage face
+    // each after two refinement levels (PhysicsChunkJob 0x82A71F20: ≤ 32 triangles, 25 vertices), which a triangle
+    // mesh does not have; settle: nothing in the game builds clusters from a triangle mesh (a cell size measured
+    // against the disc's cluster extents would only tune the BVH).
     crate::guess_hit!();
     let cell = |t: &[u32; 3]| {
         let c = t.iter().fold(Vec3::ZERO, |a, &v| a + Vec3::from_array(s.positions[v as usize])) / 3.0;

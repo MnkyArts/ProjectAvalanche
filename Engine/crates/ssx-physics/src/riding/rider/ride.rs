@@ -27,8 +27,14 @@ pub(super) fn ride(s: &mut RiderState, w: &World, input: &Input, flags: (bool, b
     let dead_on_ground = matches!(s.landing.uber_recovery, UberRecovery::GettingUp(_)) && uber;
     let is_dead = s.carving.is_dead;
     let vertical = n.y < c.vertical_surface_angle_threshold.cos();
-    let damp = if c.prewind_dampens_carving && input.jump {
-        c.prewind_carve_input_dampening_curve.eval(s.prewind)
+    let has_prewind = super::spq::has_prewind_input(input, s.jump.prewind.hold, s.tricks.classic);
+    let damp = if c.prewind_dampens_carving && has_prewind {
+        let curve = if s.tricks.classic {
+            &c.prewind_carve_input_classic_dampening_curve
+        } else {
+            &c.prewind_carve_input_dampening_curve
+        };
+        curve.eval(s.prewind).min(c.prewind_carve_input_dampening_curve.eval(s.prewind_analog))
     } else {
         1.0
     };
@@ -271,6 +277,8 @@ pub(super) fn ride(s: &mut RiderState, w: &World, input: &Input, flags: (bool, b
     rock_riding_update(s, w, rock_effects, dt);
     let recovery = s.landing.recovery_input(&t.balance, s.kin.fwd, stick.y);
     s.survival.carving_damage += s.avalanche.balance(at, &mut s.landing.bail_on_landing, level_complete, recovery);
+    let spared = s.avalanche.bailed_because_of_avalanche || is_dead || !s.death.is_alive();
+    s.landing.landing_bail_limit(spared, dt);
     s.landing.balance_update(
         &t.balance,
         s.kin.fwd,

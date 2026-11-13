@@ -138,7 +138,11 @@ impl GearDb {
         self.items.iter().filter(move |i| i.rider == rider && !i.locked)
     }
 
-    // TODO(guess): without a front end (`ride_sim`, `--ride`) a fresh profile (nothing bought or equipped); settle: none — the profile is the player's state (the game shell commits the launch's setup, [`GameSetup`]).
+    // TODO(guess): a port choice — without a front end (`ride_sim`, `--ride`) the event's loadout is this one: a forced
+    // item, else the rider's default board / suit and the required slot's one unlocked item (nothing bought or
+    // equipped); the game always rides with the player's profile (the shell commits the launch's setup, `GameSetup`),
+    // and a fresh profile's inventory is the game's `default_equipment` (Elise, her default suit and board, a gear
+    // item; `career::Inventory::new`), not this; settle: none — the game has no ride without a profile.
     pub fn fresh_profile_loadout(&self, rider: u32, forced: &ForcedItems, required: &[u32]) -> Option<GearStats> {
         crate::guess_hit!();
         fn unique(mut it: Vec<&Item>) -> Option<&Item> {

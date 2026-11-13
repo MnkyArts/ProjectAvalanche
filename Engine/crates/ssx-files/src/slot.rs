@@ -8,8 +8,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use crate::folder::Folder;
 use crate::sys::{self, FileId};
 
-// TODO(guess): 8 writers of one file at once (each program has one writer per file; two only when a program runs twice
-// or two installs meet); settle: a program that writes one file from more than 8 threads or processes at once.
+// PORT(choice): 8 writers of one file at once (each program has one writer per file; two only when a program runs twice
+// or two installs meet); tuning: a program that writes one file from more than 8 threads or processes at once; the
+// port's own file layer.
 pub const SLOTS: u32 = 8;
 const SUFFIX: &str = ".partial";
 

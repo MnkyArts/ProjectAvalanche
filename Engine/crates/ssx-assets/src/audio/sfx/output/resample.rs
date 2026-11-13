@@ -1,4 +1,5 @@
-// TODO(guess): a port choice with nothing of the game's behind it — length, cutoff and window picked for a flat band to 18 kHz and 80 dB rejection at a 44.1 kHz device; settle: nothing to decode (a 48 kHz device never comes here).
+// PORT(choice): length, cutoff and window picked for a flat band to 18 kHz and 80 dB rejection at a 44.1 kHz device (a
+// 48 kHz device never comes here); nothing of the game's behind it (the console mixes at 48 kHz).
 const HALF: usize = 32;
 const TAPS: usize = 2 * HALF;
 const PHASES: usize = 256;

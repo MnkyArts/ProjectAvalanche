@@ -17,7 +17,9 @@ pub struct SnapshotInputs {
     pub deadly_descent: bool,
     pub kind: i32,
     pub front_end: bool,
-    pub tricky_song: bool,
+    pub wingsuit_audio: bool,
+    pub script_song: bool,
+    pub tricky_clip: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -75,17 +77,16 @@ impl SnapshotDirector {
         layer2.set(15, on(bit(7) && s.time_dilation < td));
         layer2.set(4, on((bit(0) && bit(14)) || bit(21)));
         layer2.set(5, on(bit(5)));
-        // Super Tricky (bit 18) holds the Tricky mixes (music pulled under the "It's Tricky" song) for its whole
-        // length, as the game does (0x830EB7D8 keeps Tricky_State 2). A mod's script song has no Tricky remix, so
-        // once "It's Tricky" is over, the rest of Super Tricky mixes as Awesome and the mod's song comes back (a port
-        // behaviour; the game ships no mod songs).
-        let tricky = bit(18) && s.tricky_song;
-        let awesome = bit(4) || bit(18);
-        layer2.set(6, on(awesome));
-        layer2.set(7, on(bit(5) && awesome));
+        layer2.set(6, on(bit(4)));
+        layer2.set(7, on(bit(5) && bit(4)));
+        // PORT(choice): for music mods — with a client script's song the Super Tricky mixes (8 / 9, the music pulled
+        // under "It's Tricky") hold only while the clip plays, so the mod's song comes back for the rest of Super
+        // Tricky (PR #53); the game's 0x830AA320 sets them from bit 18 for its whole length and ships no script songs
+        // (the mod music contract).
+        let tricky = bit(18) && (!s.script_song || s.tricky_clip);
         layer2.set(8, on(tricky));
         layer2.set(9, on(tricky && bit(5)));
-        layer2.set(11, on(bit(3)));
+        layer2.set(11, on(bit(3) && s.wingsuit_audio));
         use crate::sfx_game::tuning;
         if bit(28) {
             self.landing = (tuning::BIG_LANDING_HOLD * 30.0) as i32;

@@ -255,6 +255,7 @@ pub struct LzxDecoder {
     wpos: usize,
     main_symbols: usize,
     total: u64,
+    reference: usize,
     r: [u32; 3],
     header_read: bool,
     e8_size: i32,
@@ -279,6 +280,7 @@ impl LzxDecoder {
             wpos: 0,
             main_symbols: NUM_CHARS + 8 * position_slots(window_bits),
             total: 0,
+            reference: 0,
             r: [1, 1, 1],
             header_read: false,
             e8_size: 0,
@@ -292,6 +294,18 @@ impl LzxDecoder {
             pretree: Huffman::new(),
             failed: false,
         })
+    }
+
+    pub fn with_reference(window_bits: u32, reference: &[u8]) -> Result<Self> {
+        let mut decoder = Self::new(window_bits)?;
+        let size = decoder.window.len();
+        if reference.len() > size {
+            return Err(err(format!("reference window of {} bytes exceeds the {size}-byte window", reference.len())));
+        }
+        let at = size - reference.len();
+        decoder.window[at..].copy_from_slice(reference);
+        decoder.reference = reference.len();
+        Ok(decoder)
     }
 
     pub fn reset(&mut self) {
@@ -398,6 +412,12 @@ impl LzxDecoder {
         if out_len == 0 {
             return Ok(());
         }
+        if self.reference > 0 && self.wpos + out_len > self.window.len() {
+            return Err(err(format!(
+                "frame of {out_len} bytes at window position {} would overwrite the reference window",
+                self.wpos
+            )));
+        }
         let mut br = BitReader::new(frame);
         if !self.header_read {
             self.header_read = true;
@@ -495,7 +515,7 @@ impl LzxDecoder {
             if len > left {
                 return Err(err(format!("match of {len} bytes crosses the end of a block or frame")));
             }
-            let produced = self.total + (run - left) as u64;
+            let produced = self.total + self.reference as u64 + (run - left) as u64;
             let offset = offset as usize;
             if offset == 0 || offset > size || offset as u64 > produced {
                 return Err(err(format!("match offset {offset} out of range at stream position {produced}")));

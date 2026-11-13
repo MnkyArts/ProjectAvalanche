@@ -150,7 +150,7 @@ impl GameContent {
     }
 }
 
-// TODO(guess): 8 (a popup's lines); settle: the "content differs" popup in use.
+// PORT(choice): 8 (a popup's lines); tuning: the "content differs" popup in use; the original has no dedicated server.
 pub const MAX_NAMED_DIFFERENCES: usize = 8;
 
 pub fn content_index(data: &Path) -> Result<ContentIndex, String> {

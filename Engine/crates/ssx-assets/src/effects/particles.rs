@@ -84,7 +84,7 @@ impl SnowSpraySet {
     }
 }
 
-pub fn load_snow_spray(db: &Db<'_>, collection: u32) -> Result<SnowSpraySet> {
+pub fn load_snow_spray(db: &Db, collection: u32) -> Result<SnowSpraySet> {
     let fields = db.fields(CLASS_SNOW_SPRAY, collection)?;
     let mut set = SnowSpraySet { slots: Default::default() };
     for (s, row) in SLOT_KEYS.iter().enumerate() {
@@ -124,7 +124,7 @@ fn vec4(fields: &[&ssx_formats::attrib::Field], name: &str) -> Result<[f32; 4]> 
     }
 }
 
-pub fn particle_node(db: &Db<'_>, key: u32) -> Result<ParticleNode> {
+pub fn particle_node(db: &Db, key: u32) -> Result<ParticleNode> {
     let f = db.fields(CLASS_PARTICLE_NODE, key)?;
     let lynx = match value(&f, fnv1("LynxVfx"), "LynxVfx")? {
         Value::Ref(r) if r.collection == 0 => None,
@@ -163,7 +163,7 @@ pub fn particle_node(db: &Db<'_>, key: u32) -> Result<ParticleNode> {
     })
 }
 
-fn lynx_vfx(db: &Db<'_>, key: u32) -> Result<LynxVfx> {
+fn lynx_vfx(db: &Db, key: u32) -> Result<LynxVfx> {
     let f = db.fields(CLASS_LYNX_VFX, key)?;
     let path = match value(&f, 0xDF9E_F8B2, "path")? {
         Value::Text(Some(t)) => t.clone(),
@@ -182,7 +182,9 @@ pub fn gameexplorer(big_root: &Path) -> PathBuf {
 }
 
 pub fn fx_file(big_root: &Path, vault_path: &str) -> PathBuf {
-    gameexplorer(big_root).join(vault_path.replace('\\', "/"))
+    let rel = vault_path.replace('\\', "/");
+    crate::data_roots::find(big_root, &format!("data/xenon/gameexplorer/{rel}"))
+        .unwrap_or_else(|| gameexplorer(big_root).join(rel))
 }
 
 pub fn texture_id(texture: &str) -> Option<ssx_content::ContentId> {
@@ -207,6 +209,25 @@ pub fn load_node_files(big_root: &Path, node: &ParticleNode) -> Result<(Particle
         None => None,
     };
     Ok((sys, behaviour))
+}
+
+pub fn load_node_files_optional(
+    big_root: &Path,
+    node: &ParticleNode,
+) -> Result<Option<(ParticleSystem, Option<Behaviour>)>> {
+    let Some(vfx) = node.lynx.as_ref() else { return Ok(None) };
+    let sys = crate::content::GameContent::of(big_root).particle_system(&vfx.path)?.as_ref().clone();
+    if sys.effect(&vfx.definition).is_none() {
+        return Ok(None);
+    }
+    let behaviour = match &node.behaviour_path {
+        Some(p) => match std::fs::read(fx_file(big_root, p)) {
+            Ok(d) => Some(Behaviour::parse(&d).with_context(|| p.clone())?),
+            Err(_) => None,
+        },
+        None => None,
+    };
+    Ok(Some((sys, behaviour)))
 }
 
 pub struct LoadedSpray {

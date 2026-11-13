@@ -10,12 +10,15 @@ pub const DP_KEYS_INDEX: &str = "dp_ava_keyboard_keys_index";
 pub const OPEN: &str = "ava_keyboard_open";
 pub const CLOSE: &str = "ava_keyboard_close";
 pub const KEY_ACTION: &str = "A_AvaKeyboardKey";
-// TODO(guess): a port choice — 32 characters when the requester asks for no length (the game has no text entry); settle: the fields phase F2 opens the keyboard for (server names 40, the chat line, a password).
+// PORT(choice): 32 characters when the requester asks for no length; tuning: the fields phase F2 opens the keyboard for
+// (server names 40, the chat line, a password); the game has no text entry.
 pub const DEFAULT_MAX: usize = 32;
 pub const MAX_LEN: usize = 256;
-// TODO(guess): a port choice — a password shows `•` per character when the entry field's font draws it, else `*` (the game has no password field); settle: none (the port's own field).
+// PORT(choice): a password shows `•` per character when the entry field's font draws it, else `*` (the port's own
+// field); the game has no password field.
 pub const PASSWORD_MASKS: [char; 2] = ['\u{2022}', '*'];
-// TODO(guess): a port choice — the caret is a steady `|` drawn into the field's text (the game draws no caret anywhere); settle: none (a drawn caret sprite would need a text field's glyph positions, which no AS2 call gives).
+// PORT(choice): the caret is a steady `|` drawn into the field's text (a drawn caret sprite would need a text field's
+// glyph positions, which no AS2 call gives); the game draws no caret anywhere.
 pub const CARET: char = '|';
 pub const COLUMNS: usize = 10;
 

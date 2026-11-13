@@ -8,3 +8,4 @@ pub mod anim_rigops;
 pub mod anim_space;
 pub mod rig_anim;
 pub mod rigamate;
+pub mod tags;

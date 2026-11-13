@@ -12,8 +12,8 @@ use ssx_formats::gfx::text::{Font, FontLayout};
 
 pub use store::{Budget, Converted, stats as store_stats};
 
-// TODO(guess): a port choice — 64 cached shape plans per font; past them a plan is made for its call and not kept;
-// settle: none (port feature).
+// PORT(choice): 64 cached shape plans per font; past them a plan is made for its call and not kept; the original has no
+// fallback fonts.
 const PLANS: usize = 64;
 
 static SERIAL: AtomicU64 = AtomicU64::new(1);

@@ -81,22 +81,11 @@ pub fn ssxdd_event(name: &str) -> Option<u32> {
 }
 
 pub fn find_file(big_root: &Path, rel: &str) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(big_root).ok()?.flatten().map(|e| e.path()).collect();
-    dirs.sort();
-    dirs.into_iter().map(|d| d.join(rel)).find(|p| p.is_file())
+    crate::data_roots::find(big_root, rel)
 }
 
 pub fn find_files(big_root: &Path, rel: &str, ext: &str) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for archive in std::fs::read_dir(big_root).into_iter().flatten().flatten() {
-        for e in std::fs::read_dir(archive.path().join(rel)).into_iter().flatten().flatten() {
-            if e.path().extension().is_some_and(|x| x == ext) {
-                out.push(e.path());
-            }
-        }
-    }
-    out.sort();
-    out
+    crate::data_roots::files_in(big_root, rel, ext)
 }
 
 pub enum Bytes {

@@ -125,7 +125,9 @@ pub(super) struct RamSound {
 #[derive(Default)]
 pub struct DecodedRam(pub(super) Vec<(usize, Arc<RamSound>)>);
 
-// TODO(guess): a port choice of when RAM sounds decode — the whole set at the bank's load (272 MiB of f32 for the night drop's 24 banks, 0.11 s on 8 threads) instead of by the XMA hardware as a voice plays (the frames are the same); settle: a block decoder resuming inside a RAM sound's single block would let the mixer thread decode as it plays.
+// PORT(choice): RAM sounds decode as a whole set at the bank's load (272 MiB of f32 for the night drop's 24 banks, 0.11
+// s on 8 threads), the frames the same; a block decoder resuming inside a RAM sound's single block would let the mixer
+// thread decode as it plays; the console's XMA hardware decodes as a voice plays.
 pub fn decode_ram_sounds(bank: &Bank) -> Result<DecodedRam> {
     let mut out = Vec::new();
     for (idx, slot) in bank.abk.s10a.sounds.iter().enumerate() {

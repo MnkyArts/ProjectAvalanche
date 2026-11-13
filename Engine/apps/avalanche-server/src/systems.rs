@@ -122,8 +122,9 @@ pub fn publish(
     mut order: Local<Vec<Entity>>,
     mut names: Local<Vec<String>>,
 ) {
-    // TODO(guess): a server of several instances shows its first instance's mode and current level in the browser, a
-    // port choice (`/info` lists no instances); settle: phase 5's query and the browser's view of several instances.
+    // PORT(choice): a server of several instances shows its first instance's mode and current level in the browser
+    // (`/info` lists no instances); tuning: phase 5's query and the browser's view of several instances; the original
+    // has no dedicated server.
     if let Some(first) = instances.as_ref().and_then(|i| i.list.first())
         && let Ok(mut level) = bridge.shared.level.lock()
     {
@@ -444,8 +445,8 @@ pub enum Lifecycle {
     },
 }
 
-// TODO(guess): 2 s, twice a polite end's grace (LEAVE_GRACE, 1 s) so that the goodbye can be resent under loss;
-// settle: phase 4's stop, which also posts the round's results first.
+// PORT(choice): 2 s, twice a polite end's grace (LEAVE_GRACE, 1 s) so that the goodbye can be resent under loss;
+// tuning: phase 4's stop, which also posts the round's results first; the original has no dedicated server.
 pub const STOP_GRACE: Duration = Duration::from_secs(2);
 
 pub fn lifecycle(

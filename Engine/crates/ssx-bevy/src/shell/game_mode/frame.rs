@@ -115,7 +115,8 @@ fn text_input(text: &mut TextKeys, ui: &mut GameUiRes, ctrl: bool) {
     }
 }
 
-// TODO(guess): a port choice — Enter confirms and Escape cancels a text field, Backspace / Delete / the arrows / Home / End edit it (the game has no text entry and no keyboard text); settle: none.
+// PORT(choice): Enter confirms and Escape cancels a text field, Backspace / Delete / the arrows / Home / End edit it;
+// the game has no text entry and no keyboard text.
 pub(super) fn key_text(key: KeyCode, text: Option<&str>) -> Vec<ssx_ui::game::fe::ava::keyboard::TextInput> {
     use ssx_ui::game::fe::ava::keyboard::TextInput as T;
     let edit = match key {
@@ -246,9 +247,13 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
         if menu && !ui.views_loading() {
             s.test_launch = None;
             let key = ui.fe.as_ref().and_then(|fe| fe.career.event_named(&name)).map(|e| e.key);
+            let free = s.test_map_mode.as_deref() == Some("freeride");
             match key {
-                Some(key) => ui.fe_call(|fe, env| {
-                    if !ssx_ui::game::fe::globe::tutorial_launch(fe, env, key) {
+                Some(key) => ui.fe_call(move |fe, env| {
+                    ssx_ui::game::fe::progression::go_to_node(fe, key, 2);
+                    if free {
+                        ssx_ui::game::fe::flow::launch_free_ride(fe, env, key, true);
+                    } else if !ssx_ui::game::fe::globe::tutorial_launch(fe, env, key) {
                         ssx_ui::game::fe::flow::launch(fe, env, key, true)
                     }
                 }),
@@ -278,6 +283,8 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
         .filter(|r| r.enabled)
         .map_or_else(|| f.windows.iter().next().map_or(Vec2::new(1280.0, 720.0), |w| w.size()), |r| r.size.as_vec2());
     s.play_movie(&mut ui, dt, window, &mut f.images, &mut f.sprites, &mut f.cameras, f.audio.as_deref_mut());
+    let backdrop_shown = s.movie.is_none() && f.globe.frame.as_ref().is_some_and(|g| g.visible);
+    f.globe.backdrop_movie = s.backdrop.frame(backdrop_shown, dt, &mut f.images);
     s.stage_step(&mut ui, f.level.as_deref(), f.ride.as_deref(), f.live.as_deref_mut());
     let sc = &mut *f.scene;
     let t0 = Instant::now();
@@ -358,6 +365,7 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
         s.write_save(&mut ui, "results", f.audio.as_deref(), f.ride.as_deref());
     }
     let sounds = ui.take_ui_sounds();
+    let posts = ui.take_ui_posts();
     let messages = ui.take_fe_messages();
     let music_requests = ui.fe.as_mut().map(|fe| std::mem::take(&mut fe.music.requests)).unwrap_or_default();
     if let Some(audio) = f.audio.as_mut() {
@@ -381,6 +389,10 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
         for id in sounds {
             audio.ui_sfx(id, boost);
         }
+        let now_ms = s.host.time * 1000.0;
+        for p in posts {
+            audio.ui_post(p.id, p.delay_ms, now_ms);
+        }
         use ssx_ui::game::fe::FeMessage;
         for m in messages {
             match m {
@@ -399,9 +411,19 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
         let kind = s.launch.as_ref().map_or(1, |l| ssx_assets::sfx_game::event_kind(l.event_type as u32));
         let nis = f.ride.as_deref().map_or(0, game_level::nis_state);
         audio.set_setting_67(ui.values.bool(0x67));
-        audio.frame(fe.screen, kind, ui.values.bool(0x30), nis);
+        audio.frame(fe.screen, kind, ui.values.bool(0x30), nis, ui.fe_audio_wind(), s.host.time * 1000.0);
         audio.watch_ui(|id| ui.values.bool(id));
         audio.results(ui.values.bool(0x1ED), ui.values.bool(0x1D7));
+    }
+    if let Some(audio) = f.audio.as_ref() {
+        let msg = audio.state();
+        let beat = audio.beat().map(|b| ssx_ui::game::fe::globe::audio::Beat {
+            beat: b.beat,
+            to_beat: b.to_beat,
+            bar: b.bar,
+            to_bar: b.to_bar,
+        });
+        ui.fe_audio_message(msg.screen, msg.state, beat);
     }
     let presses = s.host.log[s.log_seen.1.min(s.host.log.len())..].iter().filter(|l| l.contains("host: press")).count();
     if presses > 0 && s.input_log {

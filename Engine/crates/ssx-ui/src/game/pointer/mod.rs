@@ -43,7 +43,13 @@ pub struct Entry {
     pub item: i32,
 }
 
-// TODO(guess): a port choice — a hover on an entry of a list the pad drives presses the pad's D-pad (one step a read, toward the entry's slot, the other axis when a step moved nothing within 8 reads, at most 64 steps) until the list's selection is that entry, and a click is the pad's A on it once selected; an entry a carousel shows outside the band its selection stays in (`components.RiderMenu`'s `mUnselectableLeft` / `mUnselectableRight` cells, a `GridMenu`'s unselectable grids) takes no hover — a step toward it turns the carousel and puts another item under a pointer that did not move — and a click on it only selects it; the wheel's notches are capped at 8 a read; settle: none (the console has no pointer: the disc's lists answer only the pad's input).
+// PORT(choice): a hover on an entry of a list the pad drives presses the pad's D-pad (one step a read, toward the
+// entry's slot, the other axis when a step moved nothing within 8 reads, at most 64 steps) until the list's selection
+// is that entry, and a click is the pad's A on it once selected; an entry a carousel shows outside the band its
+// selection stays in (`components.RiderMenu`'s `mUnselectableLeft` / `mUnselectableRight` cells, a `GridMenu`'s
+// unselectable grids) takes no hover — a step toward it turns the carousel and puts another item under a pointer that
+// did not move — and a click on it only selects it; the wheel's notches are capped at 8 a read; the console has no
+// pointer: the disc's lists answer only the pad's input.
 #[derive(Clone, Copy, Debug)]
 struct Focus {
     entry: Entry,
@@ -127,7 +133,9 @@ struct GlobeFocus {
     step: Step<u32>,
 }
 
-// TODO(guess): a port choice — the pointer steers the ranges' globe with a light push of the stick (0.26 on its larger axis) toward the hovered node's billboard, so the pick follows its direction while the globe turns little; settle: none (the console has no pointer).
+// PORT(choice): the pointer steers the ranges' globe with a light push of the stick (0.26 on its larger axis) toward
+// the hovered node's billboard, so the pick follows its direction while the globe turns little; the console has no
+// pointer.
 const STICK_PUSH: f32 = 0.26;
 
 const MAX_GLOBE_STEPS: u32 = 32;
@@ -235,7 +243,9 @@ impl GameUi {
         if left_up {
             cx.vm.pointer_event(PointerEvent::Button { down: false });
         }
-        // TODO(guess): a port choice — the right button is the pad's B and the wheel the D-pad (up away from the player) on the screen under it (the game reads no wheel: its mouse handler 0x825757F0 posts buttons 0…3 only, and the movies' button events take the primary one); settle: none (the console has no mouse).
+        // PORT(choice): the right button is the pad's B and the wheel the D-pad (up away from the player) on the screen
+        // under it (the game reads no wheel: its mouse handler 0x825757F0 posts buttons 0…3 only, and the movies'
+        // button events take the primary one); the console has no mouse.
         if right_down {
             self.pointer_press(Button::DigitalTwo, "the right button: B");
         }
@@ -404,7 +414,8 @@ impl GameUi {
             return;
         }
         let Some((e, _)) = under.entry else {
-            // TODO(guess): a port choice — a click anywhere on a screen that offers the pad no list and no prompt is that screen's A (the results' continue); settle: none (the console has no pointer).
+            // PORT(choice): a click anywhere on a screen that offers the pad no list and no prompt is that screen's A
+            // (the results' continue); the console has no pointer.
             if reach.lists.is_empty() && !under.prompts_shown && under.globe.is_none() && self.globe_level().is_none() {
                 self.pointer_press(Button::DigitalOne, "a click on a screen of one action: A");
             }
@@ -472,7 +483,12 @@ impl Ctx<'_> {
     }
 }
 
-// TODO(guess): a port choice — an entry is hit anywhere in the slot its menu lays it out in (`mCellWidth` × the row's height from the cell's `_x` / `_y`; the rows a view stacks itself — a popup's buttons, a settings page's rows, RiderNet's music rows — bands from each row's top to the next's, as wide as the rows are drawn together), a prompt in its own button area (`mcHitArea`), a globe's billboard where its body is drawn (the union of the bounds of its visible, not faded, not additive / screen / lighten parts; the menus' cells, prompts and billboards are not the movies' buttons, and their invisible, faded or glowing decorations reach over their neighbours); settle: none (the console has no pointer).
+// PORT(choice): an entry is hit anywhere in the slot its menu lays it out in (`mCellWidth` × the row's height from the
+// cell's `_x` / `_y`; the rows a view stacks itself — a popup's buttons, a settings page's rows, RiderNet's music rows
+// — bands from each row's top to the next's, as wide as the rows are drawn together), a prompt in its own button area
+// (`mcHitArea`), a globe's billboard where its body is drawn (the union of the bounds of its visible, not faded, not
+// additive / screen / lighten parts; the menus' cells, prompts and billboards are not the movies' buttons, and their
+// invisible, faded or glowing decorations reach over their neighbours); the console has no pointer.
 fn under(cx: &mut Ctx, order: &[InstanceId], reach: &Reach, stage: (f32, f32)) -> Under {
     let rank: std::collections::HashMap<InstanceId, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let prompts = reach.prompts(cx, lists::instances_of(cx, order, lists::Kind::Label));

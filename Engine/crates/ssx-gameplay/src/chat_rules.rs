@@ -1,14 +1,15 @@
 use core::time::Duration;
 
-// TODO(guess): one line a second with a burst of 5 (a person types a line in seconds; quick chat on a pad takes about
+// PORT(choice): one line a second with a burst of 5 (a person types a line in seconds; quick chat on a pad takes about
 // a second a line); leads: FiveM's event buckets (rate / burst, then a flood bucket that drops the client: netEvent
-// 50/s burst 200, flood 75/300) and MTA:SA's join limit (4 per 30 s); settle: what players send in phase 4's public
-// servers.
+// 50/s burst 200, flood 75/300) and MTA:SA's join limit (4 per 30 s); tuning: what players send in phase 4's public
+// servers; the original has no chat.
 pub const LINES_PER_SECOND: f64 = 1.0;
 pub const LINE_BURST: f64 = 5.0;
 
-// TODO(guess): 10 dropped lines, one more every 3 s (a correct client holds its lines after a flood notice until the
-// wait it names, so only a modified client gets here); settle: the dropped lines of correct clients in phase 4.
+// PORT(choice): 10 dropped lines, one more every 3 s (a correct client holds its lines after a flood notice until the
+// wait it names, so only a modified client gets here); tuning: the dropped lines of correct clients in phase 4; the
+// original has no chat.
 pub const FLOOD_ALLOWANCE: f64 = 10.0;
 pub const FLOOD_REFILL_PER_SECOND: f64 = 1.0 / 3.0;
 

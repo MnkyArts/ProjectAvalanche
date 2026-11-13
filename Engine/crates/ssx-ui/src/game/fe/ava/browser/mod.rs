@@ -30,8 +30,8 @@ pub const DP_WINDOW: &str = "dp_ava_browser_window";
 pub const OPEN: &str = "go_to_ava_browser";
 pub const PROVIDER: &str = "avaserverbrowser";
 
-// TODO(guess): a port choice — every 10 s for a tab's rows (MTA refreshes a list on request, FiveM every few minutes);
-// settle: none (the port's browser), or phase 5's measured request load on public servers.
+// PORT(choice): every 10 s for a tab's rows (MTA refreshes a list on request, FiveM every few minutes); tuning: phase
+// 5's measured request load on public servers; the original has no server browser.
 pub const LIST_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

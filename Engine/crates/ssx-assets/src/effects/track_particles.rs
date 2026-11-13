@@ -59,10 +59,10 @@ pub fn load_track_particles(big_root: &Path, track: &str, drop: Option<u32>) -> 
     with_track_db(big_root, track, |db| track_particles(db, track, drop))
 }
 
-pub fn drop_keys(db: &Db<'_>, track: &str) -> Result<Vec<u32>> {
+pub fn drop_keys(db: &Db, track: &str) -> Result<Vec<u32>> {
     let track_key = fnv1(&format!("{track}_track"));
     let mut out = Vec::new();
-    for (key, _) in db.collections_of(1, CLASS_DROP).collect::<Vec<_>>() {
+    for (key, _) in db.collections_of_all(CLASS_DROP) {
         if matches!(db.field(CLASS_DROP, key, FIELD_TRACK)?.and_then(|f| single(&f.data)),
             Some(Value::Ref(r)) if r.collection == track_key)
         {
@@ -72,7 +72,7 @@ pub fn drop_keys(db: &Db<'_>, track: &str) -> Result<Vec<u32>> {
     Ok(out)
 }
 
-pub fn track_particles(db: &Db<'_>, track: &str, drop: Option<u32>) -> Result<TrackParticles> {
+pub fn track_particles(db: &Db, track: &str, drop: Option<u32>) -> Result<TrackParticles> {
     let mut scene = Vec::new();
     let track_key = fnv1(&format!("{track}_track"));
     if let Some(terrains) = db.field(CLASS_TRACK, track_key, FIELD_TRACK_TERRAIN)? {
@@ -163,7 +163,7 @@ fn placements(d: &FieldData) -> Vec<Placement> {
         .collect()
 }
 
-fn object_particles(db: &Db<'_>, class: u32, key: u32) -> Result<ObjectParticles> {
+fn object_particles(db: &Db, class: u32, key: u32) -> Result<ObjectParticles> {
     let mut o = ObjectParticles { key, object: db.collection_name(key), lods: Vec::new(), controller_script: None };
     if let Some(f) = db.field(class, key, FIELD_CONTROLLER)?
         && let Some(r) = refs(&f.data).into_iter().find(|r| r.collection != 0)
@@ -186,7 +186,7 @@ fn object_particles(db: &Db<'_>, class: u32, key: u32) -> Result<ObjectParticles
     Ok(o)
 }
 
-pub fn game_object_nodes(db: &Db<'_>, key: u32) -> Result<(ObjectParticles, Vec<Vec<crate::track_lights::LightNode>>)> {
+pub fn game_object_nodes(db: &Db, key: u32) -> Result<(ObjectParticles, Vec<Vec<crate::track_lights::LightNode>>)> {
     let class = fnv1("ge_scene_gameobject");
     let particles = object_particles(db, class, key)?;
     let mut lights = Vec::new();
@@ -204,7 +204,7 @@ pub fn game_object_nodes(db: &Db<'_>, key: u32) -> Result<(ObjectParticles, Vec<
     Ok((particles, lights))
 }
 
-pub fn object_controllers(db: &Db<'_>, keys: &[u32]) -> Result<HashMap<u32, String>> {
+pub fn object_controllers(db: &Db, keys: &[u32]) -> Result<HashMap<u32, String>> {
     let class = fnv1("ge_scene_gameobject");
     let mut out = HashMap::new();
     for &k in keys {

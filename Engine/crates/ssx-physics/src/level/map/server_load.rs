@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::character::DEFAULT_GEAR_MIX;
+use crate::graph::RiderGraph;
+use crate::map::{ResolvedMap, load_map_level, start_envelope};
 use ssx_assets::content::GameContent;
 use ssx_assets::content::gamemodes::{ModeChoice, finish_from_record, map_limit_ms};
 use ssx_assets::nis::IntroNis;
@@ -9,9 +12,6 @@ use ssx_content::gamemode::{Rules, TimeUp};
 use ssx_content::map::MapToml;
 use ssx_gameplay::validate::{Limits, MapLimits};
 use ssx_net_proto::instance::built_in_mode;
-use ssx_physics::character::DEFAULT_GEAR_MIX;
-use ssx_physics::graph::RiderGraph;
-use ssx_physics::map::{ResolvedMap, load_map_level, start_envelope};
 use ssx_rules::events::EventType;
 use ssx_rules::subset::TuningLimits;
 
@@ -42,7 +42,7 @@ impl MapLoad {
                 s.first_spread,
                 s.took.as_millis()
             ),
-            None => "; a freeride: no start to check".to_string(),
+            None => "; a freeride: its start stands on ground (no rounds to validate)".to_string(),
         };
         let r = &self.rules;
         let gamemode = self.gamemode_title.as_deref().map(|t| format!(" \"{}\"", ssx_core::text::shown(t)));
@@ -75,15 +75,16 @@ pub struct LoadedStart {
     pub handover: u32,
     pub place: [f32; 3],
     pub place_spread: f32,
-    pub first_spread: [f32; ssx_physics::map::START_FIRST],
+    pub first_spread: [f32; crate::map::START_FIRST],
     pub took: Duration,
 }
 
-// TODO(guess): one rider's graph stands for every rider's — the twelve riders' graphs gave the same starts on the
+// PORT(choice): one rider's graph stands for every rider's — the twelve riders' graphs gave the same starts on the
 // template slope (4 spots, 1 440 starts each) and three riders' on the alps0101 layout (8 spots, 27 gears × 34 inputs
 // each: the largest three distances equal), while a start without a graph lay up to 0.14 / 0.22 / 0.14 / 0.15 m from
-// the riders' after 1 to 4 executions on one spot of the layout; settle: the server running the joining rider's own
-// graph (the rider's look names it) or a proof that the graph's output the start reads is the same for every rider.
+// the riders' after 1 to 4 executions on one spot of the layout; tuning: the server running the joining rider's own
+// graph (the rider's look names it) or a proof that the graph's output the start reads is the same for every rider; the
+// original has no validation.
 pub const START_RIDER: &str = "alex";
 
 pub fn mode_choice(id: &str, event_type: u8, gamemode: Option<&str>) -> Result<ModeChoice, String> {
@@ -159,7 +160,13 @@ pub fn load_resolved(
         return Err(format!("{id} has no volume named `end`, which a {} needs", t.name()));
     }
     let (limits, loaded_start) = match t {
-        EventType::FreeRide => (None, None),
+        EventType::FreeRide => {
+            level
+                .prepare_start_intro(folder, START_RIDER)
+                .map_err(|e| format!("{id}: its helicopter intro: {}", ssx_core::text::message(&format!("{e:#}"))))?;
+            crate::map::start_rider(&level).map_err(|e| format!("{id}: its start: {e:#}"))?;
+            (None, None)
+        }
         _ => {
             let ts = Instant::now();
             level
@@ -175,7 +182,7 @@ pub fn load_resolved(
             let spawns = w
                 .starts
                 .get(level.drop)
-                .map(|d| d.slots.iter().map(|s| ssx_physics::Vec3::from_array(s.position)).collect())
+                .map(|d| d.slots.iter().map(|s| crate::Vec3::from_array(s.position)).collect())
                 .unwrap_or_default();
             let limits = Limits::of_map(
                 MapLimits {

@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use ssx_assets::anim_eval::curve_weight;
+
 use crate::curve::Curve;
 use crate::tags::{BoolTag, FloatTag, TagEvent, TagTracker, TagWindow};
 use crate::tuning::AssetView;
@@ -109,27 +111,188 @@ const DEPLOY_WINDOWS: [TagWindow; 3] =
 pub const CHOP_END_TICKS: f32 = 29.0;
 const CHOP_WINDOWS: [TagWindow; 3] =
     [TagWindow::new(6.0, 0.0, false), TagWindow::new(26.0, 0.0, false), TagWindow::new(26.0, 0.0, false)];
-const CHOPPED_TAG: BoolTag = BoolTag { value: true, mode: 1, reset_on_leave: false };
-const CHOP_RESET_TAG: FloatTag = FloatTag { value: 0.0, mode: 1, reset_on_leave: true, spline: 1.0 };
+const CHOPPED_TAG: BoolTag = BoolTag { value: true, mode: 1, reset: None };
+const CHOP_WEIGHT_TAG: FloatTag = FloatTag { value: 0.0, mode: 1, reset: Some(0.0), spline: 1.0 };
+const START_CHOP_WINDOW: [TagWindow; 1] = [TagWindow::new(0.0, 1.0, false)];
+const START_CHOP_TAG: BoolTag = BoolTag { value: false, mode: 1, reset: None };
+const CHOP_MAX_ACTIVE: usize = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ChopBlend {
+    Default,
+    Accel(f32),
+}
+
+impl ChopBlend {
+    fn time(self) -> f32 {
+        match self {
+            Self::Default => 8.0,
+            Self::Accel(t) => t,
+        }
+    }
+
+    fn new_weight(self, elapsed: f32) -> f32 {
+        let time = self.time();
+        let t = if time <= 0.0 { 1.0 } else { (elapsed / time).clamp(0.0, 1.0) };
+        match self {
+            Self::Default => 1.0 - curve_weight(t, 0),
+            Self::Accel(_) => t,
+        }
+    }
+
+    fn done(self, elapsed: f32, dt: f32) -> bool {
+        self.time() - elapsed <= dt || self.new_weight(elapsed) >= 0.99
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChopNode {
+    Neutral,
+    Chop(Box<ChopActor>),
+    Chopped,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChopActor {
+    pub time: f32,
+    tags: TagTracker,
+    node_tags: TagTracker,
+}
+
+impl ChopActor {
+    fn new() -> Self {
+        Self { time: 0.0, tags: TagTracker::new(&CHOP_WINDOWS), node_tags: TagTracker::new(&START_CHOP_WINDOW) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ChopLink {
+    node: ChopNode,
+    clock: f32,
+    blend: Option<(ChopBlend, f32)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ChopCall {
+    Actor(usize, TagEvent),
+    StartChop(usize, TagEvent),
+    Weight(usize, f32),
+}
+
+#[derive(Debug, Default)]
+struct ChopMonitor {
+    exits: Vec<ChopCall>,
+    registered: Vec<ChopCall>,
+}
+
+impl ChopMonitor {
+    fn exit(&mut self, side: usize, link: &mut ChopLink) {
+        if let ChopNode::Chop(a) = &mut link.node {
+            self.exits.extend(a.tags.exit().into_iter().map(|(i, e)| ChopCall::Actor(i, e)));
+            self.exits.extend(a.node_tags.exit().into_iter().map(|(_, e)| ChopCall::StartChop(side, e)));
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChopLayer {
-    pub chop: Option<f32>,
-    pub chopped_node: bool,
-    tags: TagTracker,
-    exiting: bool,
-    saved: (bool, f32, f32),
+    chain: Vec<ChopLink>,
+    first: bool,
 }
 
 impl Default for ChopLayer {
     fn default() -> Self {
-        Self {
-            chop: None,
-            chopped_node: false,
-            tags: TagTracker::new(&CHOP_WINDOWS),
-            exiting: false,
-            saved: (false, 0.0, 0.0),
+        Self { chain: vec![ChopLink { node: ChopNode::Neutral, clock: 0.0, blend: None }], first: true }
+    }
+}
+
+impl ChopLayer {
+    pub fn node(&self) -> Option<&ChopNode> {
+        self.chain.first().map(|l| &l.node)
+    }
+
+    fn next(&self, side: usize, trigger: bool) -> Option<(f32, ChopNode, ChopBlend, Option<f32>)> {
+        match &self.chain.first()?.node {
+            ChopNode::Neutral if trigger => {
+                let blend = if side == 0 { ChopBlend::Accel(0.0) } else { ChopBlend::Default };
+                Some((0.0, ChopNode::Chop(Box::new(ChopActor::new())), blend, Some(1.0)))
+            }
+            ChopNode::Chop(a) => {
+                let to_end = CHOP_END_TICKS - a.time;
+                let end = (to_end >= 0.0).then_some((to_end, ChopNode::Chopped, ChopBlend::Accel(15.0), None));
+                match end {
+                    Some(e) if e.0 <= 0.0 => Some(e),
+                    _ if !trigger => Some((0.0, ChopNode::Neutral, ChopBlend::Default, Some(0.0))),
+                    e => e,
+                }
+            }
+            ChopNode::Chopped if !trigger => Some((0.0, ChopNode::Neutral, ChopBlend::Default, None)),
+            _ => None,
         }
+    }
+
+    fn update(&mut self, side: usize, trigger: bool, mut dt: f32, m: &mut ChopMonitor) {
+        let first = std::mem::replace(&mut self.first, false);
+        let mut advanced = false;
+        for _ in 0..25 {
+            let Some((t_next, to, blend, weight)) = self.next(side, trigger) else { break };
+            if dt <= t_next && !(t_next <= 0.0 && first) {
+                break;
+            }
+            if t_next > 0.0 {
+                self.update_link(0, side, t_next, m);
+                dt -= t_next;
+                advanced = true;
+            }
+            self.take(side, to, blend, weight, m);
+        }
+        if !advanced || dt > 0.001 {
+            self.update_link(0, side, dt, m);
+        }
+    }
+
+    fn take(&mut self, side: usize, to: ChopNode, blend: ChopBlend, weight: Option<f32>, m: &mut ChopMonitor) {
+        if let Some(w) = weight {
+            m.registered.push(ChopCall::Weight(side, w));
+        }
+        self.chain.insert(0, ChopLink { node: to, clock: 0.0, blend: Some((blend, 0.0)) });
+        if self.chain.len() > CHOP_MAX_ACTIVE {
+            for mut l in self.chain.drain(CHOP_MAX_ACTIVE..) {
+                m.exit(side, &mut l);
+            }
+        }
+    }
+
+    fn update_link(&mut self, i: usize, side: usize, dt: f32, m: &mut ChopMonitor) {
+        let Some(link) = self.chain.get_mut(i) else { return };
+        let older = match link.blend.as_mut() {
+            Some((b, elapsed)) if !b.done(*elapsed, dt) => {
+                *elapsed = (*elapsed + dt).min(b.time().max(0.0));
+                true
+            }
+            _ => {
+                link.blend = None;
+                false
+            }
+        };
+        if older {
+            self.update_link(i + 1, side, dt, m);
+        } else if self.chain.len() > i + 1 {
+            for mut l in self.chain.drain(i + 1..) {
+                m.exit(side, &mut l);
+            }
+        }
+        let Some(link) = self.chain.get_mut(i) else { return };
+        if let ChopNode::Chop(a) = &mut link.node {
+            a.time += dt;
+            if a.tags.update(a.time) {
+                m.registered.extend(a.tags.process().into_iter().map(|(t, e)| ChopCall::Actor(t, e)));
+            }
+            if a.node_tags.update(link.clock) {
+                m.registered.extend(a.node_tags.process().into_iter().map(|(_, e)| ChopCall::StartChop(side, e)));
+            }
+        }
+        link.clock += dt;
     }
 }
 
@@ -233,60 +396,30 @@ impl IceAxeState {
                     1 => (1.0, tag_spline(&DEPLOY_SPLINE, w), &mut self.blend_weight),
                     _ => (0.0, tag_spline(&DEPLOY_SPLINE, w), &mut self.layer_weight),
                 };
-                FloatTag { value, mode: 3, reset_on_leave: false, spline }.on(e, var, &mut self.deploy_saved[i]);
+                FloatTag { value, mode: 3, reset: None, spline }.on(e, var, &mut self.deploy_saved[i]);
             }
             if self.deploy == DeployNode::Deployed {
                 self.deploy_tags = None;
             }
         }
-        for side in 0..2 {
-            self.chop_layer(side, dt);
+        let mut m = ChopMonitor::default();
+        for (side, layer) in self.layers.iter_mut().enumerate() {
+            layer.update(side, self.start_chop[side], dt, &mut m);
         }
+        self.monitor(m);
     }
 
-    fn chop_layer(&mut self, side: usize, dt: f32) {
-        let trigger = self.start_chop[side];
-        let l = &mut self.layers[side];
-        let (mut weights, mut chopped) = (self.chop_weight, self.chopped);
-        let mut transition_weight = None;
-        match (l.chop, l.chopped_node) {
-            (None, false) if trigger => {
-                l.chop = Some(dt);
-                l.tags = TagTracker::new(&CHOP_WINDOWS);
-                transition_weight = Some(1.0);
-            }
-            (Some(_), _) if !trigger => {
-                l.chop = None;
-                l.exiting = true;
-                transition_weight = Some(0.0);
-            }
-            (Some(t), _) if t + dt >= CHOP_END_TICKS => {
-                (l.chop, l.chopped_node, l.exiting) = (None, true, true);
-            }
-            (Some(t), _) => l.chop = Some(t + dt),
-            (None, true) if !trigger => l.chopped_node = false, // chopped → neutral (no tag)
-            _ => {}
-        }
-        if let Some(w) = transition_weight {
-            weights[side] = w;
-        }
-        let events = match l.chop {
-            Some(t) if l.tags.update(t) => l.tags.process(),
-            Some(_) => Vec::new(),
-            None if l.exiting => {
-                l.exiting = false;
-                l.tags.exit()
-            }
-            None => Vec::new(),
-        };
-        for (i, e) in events {
-            match i {
-                0 => CHOPPED_TAG.on(e, &mut chopped, &mut l.saved.0),
-                1 => CHOP_RESET_TAG.on(e, &mut weights[1], &mut l.saved.1),
-                _ => CHOP_RESET_TAG.on(e, &mut weights[0], &mut l.saved.2),
+    fn monitor(&mut self, m: ChopMonitor) {
+        let (mut saved_bool, mut saved_float) = (false, 0.0);
+        for call in m.exits.into_iter().chain(m.registered) {
+            match call {
+                ChopCall::Actor(0, e) => CHOPPED_TAG.on(e, &mut self.chopped, &mut saved_bool),
+                ChopCall::Actor(1, e) => CHOP_WEIGHT_TAG.on(e, &mut self.chop_weight[1], &mut saved_float),
+                ChopCall::Actor(_, e) => CHOP_WEIGHT_TAG.on(e, &mut self.chop_weight[0], &mut saved_float),
+                ChopCall::StartChop(side, e) => START_CHOP_TAG.on(e, &mut self.start_chop[side], &mut saved_bool),
+                ChopCall::Weight(side, w) => self.chop_weight[side] = w,
             }
         }
-        (self.chop_weight, self.chopped) = (weights, chopped);
     }
 
     pub fn chop(&self) -> f32 {
@@ -345,8 +478,13 @@ mod tests {
         assert_eq!(bare.deploy, DeployNode::Holstered);
     }
 
+    fn step(s: &mut IceAxeState, trigger: [bool; 2]) {
+        s.start_chop = trigger;
+        s.layers_update(false, 2.0);
+    }
+
     #[test]
-    fn chops_and_bites() {
+    fn a_chop_ends_at_weight_0() {
         let t = tuning();
         let mut s = IceAxeState { blend_weight: 1.0, ..IceAxeState::default() };
         let f = s.read_inputs(&t, 1.0, 0.9, 0.5, 0.3, 0.25, 2.0);
@@ -355,31 +493,62 @@ mod tests {
         assert_eq!(s.start_chop, [false, true]);
         let mut chopped_at = None;
         let mut weights = Vec::new();
-        for i in 0..16 {
-            s.layers_update(false, 2.0);
+        for i in 0..15 {
+            step(&mut s, [false, true]);
             weights.push(s.chop_weight[1]);
             if s.chopped && chopped_at.is_none() {
                 chopped_at = Some(i);
             }
         }
-        assert_eq!(chopped_at, Some(2), "clip ticks 2, 4, 6");
-        assert_eq!(weights[0], 1.0);
-        assert_eq!(weights[12], 0.0, "clip tick 26");
-        assert_eq!(weights[13], 1.0, "restored on leave");
-        // chopped → neutral: the transition {450af909} has no tag, the weight stays at 1.
-        assert!(s.layers[1].chopped_node);
-        s.start_chop = [false, false];
-        s.layers_update(false, 2.0);
-        assert!(!s.layers[1].chopped_node && s.chop_weight[1] == 1.0, "chopped → neutral");
+        assert_eq!(chopped_at, Some(2), "actor ticks 2, 4, 6");
+        assert_eq!((weights[0], weights[11]), (1.0, 1.0), "ticks 2…24");
+        assert_eq!(weights[12], 0.0, "tick 26");
+        assert_eq!(weights[13], 0.0, "tick 28: the leave writes the default 0");
+        assert!(matches!(s.layers[1].node(), Some(ChopNode::Chopped)) && s.chop() == 0.0, "End at 29");
+        step(&mut s, [false, false]);
+        assert!(matches!(s.layers[1].node(), Some(ChopNode::Neutral)) && s.chop() == 0.0, "chopped → neutral");
         s.start_chop = [false, true];
         assert!(s.read_inputs(&t, 1.0, 0.9, 0.5, 0.3, 0.25, 2.0).active, "chopped and leaning: the bite");
         assert!(!s.read_inputs(&t, 1.0, 0.1, 0.5, 0.3, 0.25, 2.0).active, "off ice");
         s.chop_update(&t, 0.1);
         assert!(!s.chopped && s.start_chop == [false, false]);
-        let mut a = IceAxeState { blend_weight: 1.0, start_chop: [true, false], ..IceAxeState::default() };
-        a.layers_update(false, 2.0);
-        a.start_chop = [false, false];
-        a.layers_update(false, 2.0);
-        assert_eq!(a.chop_weight[0], 0.0, "chop → neutral");
+    }
+
+    #[test]
+    fn the_chop_node_clears_its_trigger() {
+        let mut s = IceAxeState::default();
+        step(&mut s, [true, false]);
+        assert_eq!((s.start_chop, s.chop_weight), ([false, false], [1.0, 0.0]));
+        s.layers_update(false, 2.0);
+        assert!(matches!(s.layers[0].node(), Some(ChopNode::Neutral)) && s.chop_weight == [0.0, 0.0]);
+    }
+
+    #[test]
+    fn an_interrupted_chop_runs_on_in_its_blend() {
+        let mut s = IceAxeState::default();
+        step(&mut s, [false, true]);
+        step(&mut s, [false, false]);
+        assert!(matches!(s.layers[1].node(), Some(ChopNode::Neutral)) && s.chop_weight[1] == 0.0 && !s.chopped);
+        step(&mut s, [false, false]);
+        assert!(s.chopped, "the old side's actor at tick 6");
+        step(&mut s, [false, false]);
+        step(&mut s, [false, false]);
+        assert_eq!(s.layers[1].chain.len(), 1, "the blend dropped");
+    }
+
+    #[test]
+    fn a_new_chop_and_the_old_side() {
+        for side in 0..2 {
+            let on = |b: bool| if side == 0 { [b, false] } else { [false, b] };
+            let mut s = IceAxeState::default();
+            for _ in 0..11 {
+                step(&mut s, on(true));
+            }
+            step(&mut s, on(false));
+            assert_eq!(s.chop_weight[side], 0.0, "chop → neutral");
+            step(&mut s, on(true));
+            let expect = if side == 0 { 1.0 } else { 0.0 };
+            assert_eq!(s.chop_weight[side], expect, "side {side}");
+        }
     }
 }

@@ -6,8 +6,8 @@ use crate::host::call::{Dispatch, dispatch};
 use crate::host::elements::ROOT;
 use crate::value::NetValue;
 
-// TODO(guess): 64 held joins (the server's join queue's 64, which a held join is not part of); settle: a measured
-// join burst of phase 4's 32-player servers with a deferring gamemode.
+// PORT(choice): 64 held joins (the server's join queue's 64, which a held join is not part of); tuning: a measured join
+// burst of phase 4's 32-player servers with a deferring gamemode; the original runs no mod scripts.
 pub const MAX_HELD: usize = 64;
 
 pub const MAX_TEXT: usize = 256;

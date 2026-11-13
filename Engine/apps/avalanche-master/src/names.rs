@@ -3,11 +3,12 @@ use std::net::{IpAddr, ToSocketAddrs};
 
 use crate::address::{canonical, never_a_server, not_public};
 
-// TODO(guess): 8 names (Coolify runs one proxy container, `coolify-proxy`; room for a second proxy); settle: none (an
-// operator's choice; more names are more lookups every refresh).
+// PORT(choice): 8 names (Coolify runs one proxy container, `coolify-proxy`; room for a second proxy; an operator's
+// choice: more names are more lookups every refresh); the original has no master server.
 pub const MAX_TRUSTED_HOSTS: usize = 8;
-// TODO(guess): 8 (a proxy container on a few Docker networks with an IPv4 and an IPv6 address each; Docker's DNS
-// answers the addresses on one shared network); settle: none (more is an alias several containers share).
+// PORT(choice): 8 (a proxy container on a few Docker networks with an IPv4 and an IPv6 address each; Docker's DNS
+// answers the addresses on one shared network; more is an alias several containers share); the original has no master
+// server.
 pub const MAX_ADDRESSES: usize = 8;
 const MAX_NAME: usize = 253;
 const MAX_LABEL: usize = 63;

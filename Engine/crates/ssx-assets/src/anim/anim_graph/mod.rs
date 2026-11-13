@@ -25,6 +25,17 @@ pub enum SignalKind {
     Other(String),
 }
 
+impl SignalKind {
+    pub fn default_value(&self) -> f32 {
+        match *self {
+            SignalKind::Bool(b) => f32::from(u8::from(b)),
+            SignalKind::Float(x) => x,
+            SignalKind::Int(i) | SignalKind::Enum(i) => i as f32,
+            _ => 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Signal {
     pub name: String,
@@ -190,6 +201,28 @@ pub struct SeqAnim {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct AudioTag {
+    pub name: String,
+    pub time: f32,
+    pub duration: f32,
+    pub system: i64,
+    pub event: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameTag {
+    pub name: String,
+    pub signal: SigId,
+    pub window: crate::tags::TagWindow,
+    pub value: f32,
+    pub boolean: bool,
+    pub mode: u32,
+    pub reset_on_leave: bool,
+    pub default: f32,
+    pub spline: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct BranchWindow {
     pub kind: String,
     pub filter: u32,
@@ -277,6 +310,8 @@ pub enum Ctrl {
         length: f32,
         windows: Vec<BranchWindow>,
         start_tick: f32,
+        audio_tags: Vec<AudioTag>,
+        game_tags: Vec<GameTag>,
     },
     Looping {
         subject: Option<CtrlId>,

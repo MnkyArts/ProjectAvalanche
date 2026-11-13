@@ -43,29 +43,31 @@ pub const EVENTS: (f64, f64) = (50.0, 200.0);
 pub const BYTES: (f64, f64) = (128.0 * 1024.0, 384.0 * 1024.0);
 pub const WRITES: (f64, f64) = (75.0, 125.0);
 pub const FLOOD: (f64, f64) = (75.0, 300.0);
-// TODO(guess): the byte flood bound is twice the byte bucket (256 KiB a second, a burst of 768 KiB); FiveM kicks for a
-// full reliable buffer instead, MTA has no byte bound on events; settle: the bytes of real gamemodes' client events
-// (a scoreboard's, a map editor's) measured over a session.
+// PORT(choice): the byte flood bound is twice the byte bucket (256 KiB a second, a burst of 768 KiB); FiveM kicks for a
+// full reliable buffer instead, MTA has no byte bound on events; tuning: the bytes of real gamemodes' client events (a
+// scoreboard's, a map editor's) measured over a session; the original runs no mod scripts.
 pub const BYTE_FLOOD: (f64, f64) = (2.0 * BYTES.0, 2.0 * BYTES.1);
 
 pub const HELD_BYTES: usize = 192 * 1024;
 pub const HELD_MESSAGES: usize = 192;
-// TODO(guess): 16 MiB per client, the host's outbox bytes; the clients together are bounded by TOTAL_QUEUE_BYTES;
-// settle: the snapshots of real gamemodes' trees and a measured slow client.
+// PORT(choice): 16 MiB per client, the host's outbox bytes; the clients together are bounded by TOTAL_QUEUE_BYTES;
+// tuning: the snapshots of real gamemodes' trees and a measured slow client; the original runs no mod scripts.
 pub const QUEUE_BYTES: usize = 16 << 20;
-// TODO(guess): 128 MiB, eight whole queues (the measured honest runs hold kilobytes; 64 slow clients would hold 1 GiB
-// without it); settle: a server's resident memory under many slow clients against what an operator gives it.
+// PORT(choice): 128 MiB, eight whole queues (the measured honest runs hold kilobytes; 64 slow clients would hold 1 GiB
+// without it); tuning: a server's resident memory under many slow clients against what an operator gives it; the
+// original runs no mod scripts.
 pub const TOTAL_QUEUE_BYTES: usize = 8 * QUEUE_BYTES;
 pub const LATENT_DOWN_BUCKET: (f64, f64) = (LATENT_DOWN as f64, LATENT_DOWN as f64);
 pub const LATENT_UP_BUCKET: (f64, f64) = (LATENT_UP as f64, 3.0 * LATENT_UP as f64);
 
 pub type Shared = Arc<[u8]>;
 
-// TODO(guess): 64 KiB a frame (1.9 MiB/s at 30 Hz). Sending is the world's work: under a hostile script's flood to 8
+// PORT(choice): 64 KiB a frame (1.9 MiB/s at 30 Hz). Sending is the world's work: under a hostile script's flood to 8
 // clients on loopback (round net7b's trace) a KiB on the wire cost about 30 us of the frame (lightyear's packets,
 // netcode's sealing, the UDP send: 4.6 ms a frame for about 140 wires), so 64 KiB costs about 2 ms of the 33.3 ms tick
 // whatever the clients' count, where the clients' windows alone (192 KiB each per round trip) let 64 clients cost more
-// than the tick; settle: the cost per KiB on a real network card, and real gamemodes' traffic beside the rides.
+// than the tick; tuning: the cost per KiB on a real network card, and real gamemodes' traffic beside the rides; the
+// original runs no mod scripts.
 pub const SEND_BUDGET: usize = 64 << 10;
 
 #[derive(Component, Debug)]

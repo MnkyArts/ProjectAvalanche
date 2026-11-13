@@ -18,11 +18,12 @@ use bevy::log::{BoxedFmtLayer, BoxedLayer, tracing_subscriber};
 
 pub const LOG_FOLDER: &str = "logs";
 
-// TODO(guess): 16 MiB per file; settle: the log volume of phase 4's servers over a week.
+// PORT(choice): 16 MiB per file; tuning: the log volume of phase 4's servers over a week; the original has no dedicated
+// server.
 pub const MAX_LOG_BYTES: u64 = 16 * 1024 * 1024;
 
-// TODO(guess): 20 a second with a burst of 100 per call site; settle: the busiest legitimate call site of phase 2's
-// sessions (joins and kicks of a full server).
+// PORT(choice): 20 a second with a burst of 100 per call site; tuning: the busiest legitimate call site of phase 2's
+// sessions (joins and kicks of a full server); the original has no dedicated server.
 pub const LINES_PER_SECOND: f64 = 20.0;
 pub const LINE_BURST: f64 = 100.0;
 

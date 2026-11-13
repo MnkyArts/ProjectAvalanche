@@ -73,7 +73,7 @@ pub fn load_trigger_volumes(big_root: &Path, track: &str, drop_key: Option<u32>)
 }
 
 pub fn add_instance_volumes(
-    db: &ssx_assets::vault_db::Db<'_>,
+    db: &ssx_assets::vault_db::Db,
     set: &mut TriggerSet,
     (class, key): (u32, u32),
     scope: TriggerScope,
@@ -197,8 +197,12 @@ pub struct Boundary(SpdtFile);
 
 impl Boundary {
     pub fn load(track_dir: &Path, track: &str) -> Option<Self> {
-        let path = track_dir.join(format!("{track}_track_boundary.spdt"));
-        let file = SpdtFile::parse(&std::fs::read(path).ok()?).ok()?;
+        let name = format!("{track}_track_boundary.spdt");
+        let data = match ssx_assets::data_roots::overlay_track_file(track, &name) {
+            Some(path) => std::fs::read(path).ok()?,
+            None => std::fs::read(track_dir.join(&name)).ok()?,
+        };
+        let file = SpdtFile::parse(&data).ok()?;
         matches!(file.cells, SpdtCells::Boundary(_)).then_some(Self(file))
     }
 

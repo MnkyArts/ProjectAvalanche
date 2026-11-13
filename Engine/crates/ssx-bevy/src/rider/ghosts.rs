@@ -471,7 +471,23 @@ fn ghost_records(
 
 fn ghost_time(g: &mut Ghosts, ride: Option<&crate::ride::Ride>, time: &Time) -> Option<f32> {
     if let Some(ride) = ride.filter(|_| g.riding) {
-        let (run, ev) = (&mut g.run, &ride.session.event);
+        return g.drawn_time(ride);
+    }
+    if let Some(t) = std::env::var("SSX_GHOST_TIME").ok().and_then(|v| v.parse::<f32>().ok()) {
+        return Some(t);
+    }
+    let now = time.elapsed_secs();
+    let epoch = *g.run.epoch.get_or_insert(now);
+    let longest = g.list.iter().map(|e| e.rival.replay.duration()).fold(0.0f32, f32::max);
+    Some((now - epoch) % (longest + 3.0))
+}
+
+impl Ghosts {
+    pub fn drawn_time(&mut self, ride: &crate::ride::Ride) -> Option<f32> {
+        if !self.riding {
+            return None;
+        }
+        let (run, ev) = (&mut self.run, &ride.session.event);
         let idle = ev.state == ssx_physics::event::EventState::Idle && !ev.clock.running && ev.clock.seconds == 0.0;
         if ride.steps < run.last_steps || idle {
             *run = GhostRun::default();
@@ -488,15 +504,26 @@ fn ghost_time(g: &mut Ghosts, ride: Option<&crate::ride::Ride>, time: &Time) -> 
             return None;
         };
         let lag = (ride.steps as f32 / ssx_physics::SIM_HZ - ride.render_time).max(0.0);
-        return Some((newest - lag).max(0.0));
+        Some((newest - lag).max(0.0))
     }
-    if let Some(t) = std::env::var("SSX_GHOST_TIME").ok().and_then(|v| v.parse::<f32>().ok()) {
-        return Some(t);
+
+    pub fn drawn(&self, t: Option<f32>) -> Vec<(u64, Vec3)> {
+        if t.is_none()
+            && self.riding
+            && let Some((at, _)) = self.idle_at
+        {
+            return self.list.iter().map(|e| (u64::from(e.rival.replay.id), at)).collect();
+        }
+        let shown = t.unwrap_or(0.0);
+        self.list
+            .iter()
+            .filter(|e| !e.rival.replay.finished(shown))
+            .map(|e| {
+                let p = e.rival.replay.pose(shown).trajectory_position;
+                (u64::from(e.rival.replay.id), Vec3::from_array(p))
+            })
+            .collect()
     }
-    let now = time.elapsed_secs();
-    let epoch = *g.run.epoch.get_or_insert(now);
-    let longest = g.list.iter().map(|e| e.rival.replay.duration()).fold(0.0f32, f32::max);
-    Some((now - epoch) % (longest + 3.0))
 }
 
 fn update(

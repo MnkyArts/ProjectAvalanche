@@ -189,6 +189,97 @@ fn a_damaged_index_is_found() {
 }
 
 #[test]
+fn a_complete_folders_files_are_checked_against_its_rows() {
+    let t = Temp::new("files");
+    folder(&t.0, Setup::Now);
+    let member = t.0.join("big/data0/data/m_data0.bin");
+    let movie = t.0.join("disc/data/common/fmv/alps.vp6");
+    let damaged = |what: &str, want: &str| {
+        let s = state(&t.0);
+        let State::FilesDamaged(why) = &s else { panic!("{what}: {s:?}") };
+        assert!(why.contains(want), "{what}: {why}");
+        assert!(!s.playable() && s.needs_repair() && !s.is_complete(), "{what}");
+        let err = content_index(&t.0).unwrap_err();
+        let text = err.to_string();
+        let head = format!("the game data folder {}: files of it are missing or damaged (", t.0.display());
+        assert!(text.starts_with(&head) && text.contains("Repair game data"), "{what}: {text}");
+    };
+    fs::remove_file(&member).unwrap();
+    damaged("removed", r#"1 file: 1 missing; first "big/data0/data/m_data0.bin", missing"#);
+    fs::write(&member, b"data").unwrap();
+    damaged("truncated", r#"1 of another size; first "big/data0/data/m_data0.bin", 4 bytes"#);
+    fs::write(&member, b"data0data0").unwrap();
+    damaged("grown", "10 bytes");
+    fs::remove_file(&member).unwrap();
+    fs::create_dir(&member).unwrap();
+    damaged("a folder where the file belongs", "1 not a plain file");
+    fs::remove_dir(&member).unwrap();
+    fs::write(&member, b"data0").unwrap();
+    fs::remove_file(&movie).unwrap();
+    fs::remove_file(t.0.join("big/cache8/data/m_cache8.bin")).unwrap();
+    damaged("a movie and a member", "2 files: 2 missing");
+    fs::remove_dir_all(t.0.join("disc")).unwrap();
+    fs::write(t.0.join("disc"), b"").unwrap();
+    damaged("a file where a folder belongs", "1 not a plain file");
+    fs::remove_file(t.0.join("disc")).unwrap();
+    fs::create_dir_all(movie.parent().unwrap()).unwrap();
+    fs::write(&movie, b"movie").unwrap();
+    fs::write(t.0.join("big/cache8/data/m_cache8.bin"), b"cache8").unwrap();
+    assert!(state(&t.0).is_complete(), "as the setup left it");
+    #[cfg(unix)]
+    {
+        let elsewhere = t.0.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(elsewhere.join("m_data0.bin"), b"data0").unwrap();
+        fs::remove_file(&member).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("m_data0.bin"), &member).unwrap();
+        damaged("a link where the file belongs", "1 not a plain file");
+        fs::remove_file(&member).unwrap();
+        fs::write(&member, b"data0").unwrap();
+        fs::rename(t.0.join("big/data0/data"), elsewhere.join("data")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("data"), t.0.join("big/data0/data")).unwrap();
+        damaged("a linked folder", r#"first "big/data0/data/m_data0.bin", not a plain file"#);
+        fs::remove_file(t.0.join("big/data0/data")).unwrap();
+        fs::rename(elsewhere.join("data"), t.0.join("big/data0/data")).unwrap();
+        assert!(state(&t.0).is_complete());
+    }
+    fs::write(&member, b"DATA0").unwrap();
+    assert!(state(&t.0).is_complete());
+}
+
+#[test]
+fn an_unmarked_trees_files_are_checked_and_hashed_again() {
+    let t = Temp::new("files-dev");
+    let index = files(&t.0, true);
+    fs::write(t.0.join(INDEX_FILE), index.to_tsv()).unwrap();
+    fs::remove_file(t.0.join("big/cache3/data/m_cache3.bin")).unwrap();
+    assert!(matches!(state(&t.0), State::FilesDamaged(w) if w.contains("m_cache3.bin")));
+    let hashed = crate::content::hash::ensure_index(&t.0, 1).unwrap();
+    assert_eq!(hashed.entries.len(), index.entries.len() - 1);
+    assert_eq!(state(&t.0), State::Complete { marked: false, files: index.entries.len() - 1 });
+}
+
+#[test]
+fn a_file_damage_names_its_counts_and_first_row() {
+    let damage = FileDamage {
+        rows: vec![
+            ("big/data0/a".into(), Fault::Size(3)),
+            ("big/data0/b".into(), Fault::Missing),
+            ("big/data1/c".into(), Fault::Missing),
+            ("disc/data/common/fmv/x.vp6".into(), Fault::NotPlain),
+            ("disc/data/common/fmv/y.vp6".into(), Fault::Unreadable("denied".into())),
+        ],
+    };
+    let text = damage.to_string();
+    assert_eq!(
+        text,
+        r#"5 files: 2 missing, 1 not a plain file, 1 of another size, 1 unreadable; first "big/data0/a", 3 bytes"#
+    );
+    assert!(damage.below("big/data1/") && damage.below("disc/") && !damage.below("big/cache0/"));
+    assert!(FileDamage::default().is_empty());
+}
+
+#[test]
 fn a_v030_index_is_checked_against_its_counts() {
     let t = Temp::new("v030");
     let index = folder(&t.0, Setup::V030);

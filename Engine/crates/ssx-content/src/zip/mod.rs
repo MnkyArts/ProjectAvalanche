@@ -57,6 +57,13 @@ fn method_name(code: u16) -> String {
     format!("{name} (method {code})")
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ZipNames {
+    #[default]
+    Package,
+    PlayerDump,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZipLimits {
     pub max_archive_bytes: u64,
@@ -65,6 +72,7 @@ pub struct ZipLimits {
     pub max_total_bytes: u64,
     pub max_ratio: u64,
     pub ratio_floor: u64,
+    pub names: ZipNames,
 }
 
 impl Default for ZipLimits {
@@ -76,6 +84,7 @@ impl Default for ZipLimits {
             max_total_bytes: MAX_PACKAGE_BYTES,
             max_ratio: MAX_ZIP_RATIO,
             ratio_floor: RATIO_FLOOR,
+            names: ZipNames::Package,
         }
     }
 }

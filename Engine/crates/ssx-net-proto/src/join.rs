@@ -12,16 +12,19 @@ pub const CHALLENGE_SIZE: usize = 40;
 pub const TOKEN_SIZE: usize = 2048;
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_BUILD_BYTES: usize = 64;
-// TODO(guess): 64 bytes; settle: the on-screen keyboard's password field of the server browser (phase F2).
+// PORT(choice): 64 bytes; tuning: the on-screen keyboard's password field of the server browser (phase F2); the
+// original has no dedicated server.
 pub const MAX_PASSWORD_BYTES: usize = 64;
-// TODO(guess): 200 bytes, as a control message's text; settle: the refusal popup's text field (phase F2).
+// PORT(choice): 200 bytes, as a control message's text; tuning: the refusal popup's text field (phase F2); the original
+// has no dedicated server.
 pub const MAX_REFUSAL_TEXT: usize = 200;
 pub const HOLD_TICKET_SIZE: usize = 32;
 pub const MAX_HOLD_TEXT: usize = 256;
 pub const MIN_ASK_AFTER_MS: u16 = 500;
 pub const MAX_ASK_AFTER_MS: u16 = 5_000;
-// TODO(guess): 120 s; settle: the first gamemode with a queue or an outside check on a full server, and the user's
-// word on whether a queue for a full server belongs to the scripts (a held join takes no slot while it waits).
+// PORT(choice): 120 s; tuning: the first gamemode with a queue or an outside check on a full server, and the user's
+// word on whether a queue for a full server belongs to the scripts (a held join takes no slot while it waits); the
+// original has no dedicated server.
 pub const MAX_HOLD: Duration = Duration::from_secs(120);
 
 const JOIN_MAGIC: [u8; 4] = *b"SSXJ";

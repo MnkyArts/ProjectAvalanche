@@ -326,7 +326,8 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, loc: &mut Localization, dp: &str) -> O
             }
             Some(Value::Object(cx.new_array(out)))
         }
-        // TODO(guess): a port choice — the port's menu follows the game's menus' option "Menus" (the first row, or the row last picked); settle: none (the original has no such menu).
+        // PORT(choice): the port's menu follows the game's menus' option "Menus" (the first row, or the row last
+        // picked); the original has no such menu.
         DP_MENU_INDEX => {
             let row = match fe.menu_focus {
                 ssx_assets::port_options::MenuFocus::FirstItem => None,

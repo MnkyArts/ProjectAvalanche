@@ -38,7 +38,8 @@ pub fn open(l: &mut Lua) {
     });
     l.lib_fn(t, "dump", |l, a| {
         l.check_func(a, 1)?;
-        // TODO(guess): our bytecode is not Lua's, so no precompiled chunk can be produced (no game script calls `string.dump`); settle: implement Lua 5.1's dump format if a script needs it.
+        // PORT(choice): our bytecode is not Lua's, so no precompiled chunk can be produced (no game script calls
+        // `string.dump`); Lua 5.1's dump format would be implemented if a script needs it.
         Err(l.rt_error("unable to dump given function"))
     });
     l.lib_fn(t, "find", |l, a| find_aux(l, a, true));

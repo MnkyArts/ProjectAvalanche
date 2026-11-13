@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
 use super::vars::Vars;
 use crate::career::Profile;
@@ -101,6 +101,10 @@ pub struct LaunchBlock {
 }
 
 impl LaunchBlock {
+    pub fn wingsuit_audio(&self) -> bool {
+        self.gear[1] != 0
+    }
+
     pub fn new(
         campaign: CampaignWords,
         required: [bool; 7],
@@ -163,33 +167,19 @@ impl LaunchBlock {
 
 pub fn gear_audio_infos(big_root: &Path) -> Result<HashMap<u32, u32>> {
     use crate::vault_db::{fnv1, single};
-    use ssx_formats::attrib::{Schema, Value, Vault, collection};
-    let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let read = |stem: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        let p = |ext: &str| dir.join(format!("{stem}.{ext}"));
-        let v = std::fs::read(p("vlt")).with_context(|| format!("reading {}", p("vlt").display()))?;
-        Ok((v, std::fs::read(p("bin"))?))
-    };
-    let (sv, sb) = read("attribdb_schema")?;
-    let schema = Schema::from_vault(&Vault::parse(&sv, &sb)?).context("reading the schema")?;
+    use ssx_formats::attrib::Value;
     let class = fnv1("equipment_description");
-    let mut out = HashMap::new();
-    for stem in ["attribdb", "ge_attribdb"] {
-        let (v, b) = read(stem)?;
-        let vault = Vault::parse(&v, &b)?;
-        let cols = collection::collections(&vault)?;
-        let decoded = cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-        let index = collection::index(&cols);
-        for (i, c) in cols.iter().enumerate().filter(|(_, c)| c.class == class) {
-            let fields = collection::with_inherited(&cols, &decoded, &index, i)?;
-            let info = fields.iter().find_map(|(_, f)| match single(&f.data) {
+    crate::vault_db::with_all_db(big_root, |db| {
+        let mut out = HashMap::new();
+        for (key, _) in db.collections_of_all(class) {
+            let info = db.fields(class, key)?.into_iter().find_map(|f| match single(&f.data) {
                 Some(Value::Ref(r)) if f.key == 0xB97D_9FD5 => Some(r.collection),
                 _ => None,
             });
-            out.entry(c.key).or_insert(info.unwrap_or(0));
+            out.entry(key).or_insert(info.unwrap_or(0));
         }
-    }
-    Ok(out)
+        Ok(out)
+    })
 }
 
 #[cfg(test)]

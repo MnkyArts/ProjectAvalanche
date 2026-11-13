@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
-use crate::camera::GAME_REST_HFOV_DEG;
 use crate::camera::graph::{Channels, Flow, Inputs, Lowpass, Shared};
+use crate::camera::{GAME_NEAR, GAME_REST_HFOV_DEG};
 use crate::ride::Ride;
 use crate::rider::anim::player_speed;
 use crate::rider::skin::RiderRig;
@@ -38,6 +38,7 @@ struct Snapshot {
     position: Vec3,
     rotation: Quat,
     fov_deg: f32,
+    near: f32,
 }
 
 const CAMERA_TYPE_15P: i32 = 4;
@@ -178,6 +179,7 @@ struct CamSnapshot {
     eye: (Quat, Vec3),
     start: StartState,
     camera_orientation: Quat,
+    near: f32,
 }
 
 pub struct Chase {
@@ -190,6 +192,7 @@ pub struct Chase {
     camera_fade_ticks: f32,
     handback: Option<(f32, Channels)>,
     rig: Channels,
+    near: f32,
     ticks_since_collision: f32,
     previous: Option<Vec3>,
     camera_pos: Option<Vec3>,
@@ -214,6 +217,13 @@ pub struct Chase {
 
 #[derive(Resource, Default)]
 pub struct ChaseCamera(Option<Chase>);
+
+impl ChaseCamera {
+    pub fn reverse_camera(&self) -> Option<Quat> {
+        let c = self.0.as_ref()?;
+        (c.node == CamNode::Reverse && !c.nis).then_some(c.camera_orientation)
+    }
+}
 
 fn inputs(ride: &Ride, rig: Option<&mut RiderRig>) -> Inputs {
     let s = &ride.state;
@@ -261,7 +271,8 @@ impl Chase {
     }
 
     fn base(steps: u64, shared: Shared, meta: MetaState, node: CamNode, rig: Channels, eye: (Quat, Vec3)) -> Self {
-        let none = Snapshot { position: Vec3::ZERO, rotation: Quat::IDENTITY, fov_deg: GAME_REST_HFOV_DEG };
+        let none =
+            Snapshot { position: Vec3::ZERO, rotation: Quat::IDENTITY, fov_deg: GAME_REST_HFOV_DEG, near: GAME_NEAR };
         let carving = CarvingNoise::new(shared.carving_weight);
         Self {
             shared,
@@ -278,6 +289,7 @@ impl Chase {
             camera_fade_ticks: 8.0,
             handback: None,
             rig,
+            near: GAME_NEAR,
             ticks_since_collision: TICKS_SINCE_COLLISION,
             previous: None,
             camera_pos: None,
@@ -392,6 +404,7 @@ fn render_blend(a: &Snapshot, b: &Snapshot, t: f32) -> Snapshot {
         position: a.position.lerp(b.position, t),
         rotation: Quat::from_vec4(Vec4::from(a.rotation).lerp(Vec4::from(q), t)).normalize(),
         fov_deg: a.fov_deg + (b.fov_deg - a.fov_deg) * t,
+        near: a.near + (b.near - a.near) * t,
     }
 }
 
@@ -400,14 +413,20 @@ mod tests {
     use super::*;
     #[test]
     fn view_blend_is_shortest_path_nlerp() {
-        let a = Snapshot { position: Vec3::ZERO, rotation: Quat::IDENTITY, fov_deg: 80.0 };
-        let b = Snapshot { position: Vec3::new(2.0, 0.0, 0.0), rotation: Quat::from_rotation_y(1.0), fov_deg: 90.0 };
+        let a = Snapshot { position: Vec3::ZERO, rotation: Quat::IDENTITY, fov_deg: 80.0, near: 0.5 };
+        let b = Snapshot {
+            position: Vec3::new(2.0, 0.0, 0.0),
+            rotation: Quat::from_rotation_y(1.0),
+            fov_deg: 90.0,
+            near: 0.1,
+        };
         assert_eq!(render_blend(&a, &b, 0.0), a);
         assert!(render_blend(&a, &b, 1.0).rotation.angle_between(b.rotation) < 1e-5);
         let flipped = Snapshot { rotation: -b.rotation, ..b };
         for blend in [render_blend(&a, &b, 0.5), render_blend(&a, &flipped, 0.5)] {
             assert!(blend.rotation.angle_between(Quat::from_rotation_y(0.5)) < 1e-5);
             assert!((blend.position.x - 1.0).abs() < 1e-6 && (blend.fov_deg - 85.0).abs() < 1e-5);
+            assert!((blend.near - 0.3).abs() < 1e-6, "0x828C22E8 lerps the near plane");
         }
     }
 }

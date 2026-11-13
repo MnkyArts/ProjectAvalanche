@@ -16,7 +16,11 @@ impl GameUi {
         }
     }
 
-    // TODO(guess): the game calls the completion inside `DispatchEvent` (0x82B46760 → 0x82F9B5A8, in the movie's frame); the port takes the native calls one FE update later; settle: nothing to decode — the port's VM queues its native calls.
+    // TODO(guess): the game calls the completion inside `DispatchEvent` (0x82B46760 → 0x82F9B5A8, which takes it out of
+    // the map +8 / +0x28 by the view's name and calls its vt+0xC: the Lua continuation 0x825A2768, so the nav's next
+    // actions run at once, inside the movie's frame); the port's VM queues its native calls and `take_calls` answers
+    // them at the next FE update, so the nav's next actions run one FE update later, after that update's providers;
+    // settle: a native the VM answers inside its frame (a synchronous call hook), then this called from there.
     pub(super) fn view_acknowledged(&mut self, entered: bool, view: &str) {
         let wait = match (&self.nav_wait, entered) {
             (Some(NavWait::Enter(v)), true) if v == view => self.nav_wait.take(),
@@ -83,7 +87,6 @@ impl GameUi {
                     None => Vec::new(),
                 };
                 let Some(view) = self.store.activate(vm_name).map(|v| v.view.clone()) else {
-                    // TODO(guess): a view model the disc lacks is not loaded and completes at once (unreached: the chart's 71 view models are all among the 73 `.vm` files); settle: 0x825A27E8's failed-resource branch.
                     self.stats.actions.push(format!("loadView({vm_name}): no such view model"));
                     return None;
                 };
@@ -133,7 +136,8 @@ impl GameUi {
                 let (load, unload) = match a.name.as_str() {
                     "pushPopup" => (front.popups.push(&name, &mode), false),
                     "popPopup" if was_empty => {
-                        // TODO(guess): `popPopup` on an empty stack (0x82F968C0) neither pops nor continues, so the game's nav would wait for good; the port goes on (unreached by the game's flows); settle: none.
+                        // PORT(choice): the port goes on (unreached by the game's flows); `popPopup` on an empty stack
+                        // (0x82F968C0) neither pops nor continues, so the game's nav would wait for good.
                         front.note(format!("popPopup {name} on an empty stack (the game's handler never completes)"));
                         (false, false)
                     }
@@ -157,7 +161,7 @@ impl GameUi {
             }
             "showHUD" | "hideHUD" => {
                 let nis = self.values.bool(values::id::NIS_IS_ACTIVE);
-                hud::set_hud_shown(&mut self.values, a.name == "showHUD", nis, self.nav.drop_key);
+                hud::set_hud_shown(&mut self.values, a.name == "showHUD", nis, self.nav.drop_key, self.free_ride);
             }
             name @ ("set_dimmer_state" | "push_dimmer_state" | "pop_dimmer_state") if self.fe.is_none() => {
                 self.dimmer.nav(name, a.args.first().map_or("", String::as_str));

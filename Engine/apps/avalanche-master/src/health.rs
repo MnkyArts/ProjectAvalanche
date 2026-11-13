@@ -16,8 +16,8 @@ use tokio::time::timeout;
 
 use crate::config::Config;
 
-// TODO(guess): 2 s to connect (loopback answers at once), 8 s in all; settle: none (the master answers on loopback in
-// under a millisecond; the bound only ends a master that hangs).
+// PORT(choice): 2 s to connect (loopback answers at once), 8 s in all (the master answers on loopback in under a
+// millisecond; the bound only ends a master that hangs); the original has no master server.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_HEAD: usize = 8192;

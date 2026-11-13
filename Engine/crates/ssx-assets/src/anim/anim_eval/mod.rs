@@ -15,6 +15,14 @@ pub use state_flow::*;
 pub struct GameState {
     values: Vec<std::sync::atomic::AtomicU32>,
     pub random: RandomState,
+    pub audio_tags: Vec<AudioTagEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioTagEvent {
+    pub name: String,
+    pub system: i64,
+    pub event: i64,
 }
 
 #[derive(Debug, Default)]
@@ -34,7 +42,11 @@ impl Clone for GameState {
 
 impl GameState {
     pub fn from_values(values: Vec<f32>, random: RandomState) -> Self {
-        Self { values: values.into_iter().map(|v| std::sync::atomic::AtomicU32::new(v.to_bits())).collect(), random }
+        Self {
+            values: values.into_iter().map(|v| std::sync::atomic::AtomicU32::new(v.to_bits())).collect(),
+            random,
+            audio_tags: Vec::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -53,17 +65,7 @@ impl GameState {
     }
 
     pub fn new(g: &Graph) -> Self {
-        use crate::anim_graph::SignalKind::*;
-        let values = g
-            .signals
-            .iter()
-            .map(|s| match s.kind {
-                Bool(b) => f32::from(u8::from(b)),
-                Float(x) => x,
-                Int(i) | Enum(i) => i as f32,
-                _ => 0.0,
-            })
-            .collect();
+        let values = g.signals.iter().map(|s| s.kind.default_value()).collect();
         Self::from_values(values, RandomState(std::sync::atomic::AtomicU32::new(g.random_seed.unwrap_or(0))))
     }
 

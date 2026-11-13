@@ -10,7 +10,8 @@ use ssx_net_proto::PROTOCOL_VERSION;
 use ssx_net_proto::query::{LAN_PORT, LanAnswer, LanProbe, MAX_LAN_ANSWER};
 
 pub const EVERY: Duration = Duration::from_secs(2);
-// TODO(guess): 256 servers on a LAN, 16 test targets; settle: a LAN party's servers.
+// PORT(choice): 256 servers on a LAN, 16 test targets; tuning: a LAN party's servers; the original has no server
+// browser.
 pub const MAX_SERVERS: usize = 256;
 pub const MAX_TARGETS: usize = 16;
 const TICK: Duration = Duration::from_millis(50);

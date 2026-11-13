@@ -32,6 +32,12 @@ pub fn decoder_threads() -> Threads {
     Threads { threads: (n.saturating_sub(1)).clamp(1, 8) as u16, frame_delay: 0 }
 }
 
+pub struct Started {
+    play: Playback,
+    id: ssx_content::ContentId,
+    source: String,
+}
+
 impl WebmMovie {
     pub fn open(fmv: &Fmv, content: &GameContent, images: &mut Assets<Image>) -> Result<Self> {
         let Fmv::Package { id, source, info, .. } = fmv else { anyhow::bail!("not a package movie") };
@@ -43,17 +49,34 @@ impl WebmMovie {
         };
         let play =
             Playback::start(file, len, &Limits::default(), decoder_threads(), sink).map_err(anyhow::Error::msg)?;
+        let started = Started { play, id: id.clone(), source: source.clone() };
+        Ok(Self::shown(started, audio, TextureFormat::Rgba8UnormSrgb, images))
+    }
+
+    pub fn start_looping(fmv: &Fmv, content: &GameContent) -> Result<Started> {
+        let Fmv::Package { id, source, .. } = fmv else { anyhow::bail!("not a package movie") };
+        let (file, len) = content.open_fmv(fmv).map_err(anyhow::Error::msg)?;
+        let play =
+            Playback::start_looping(file, len, &Limits::default(), decoder_threads()).map_err(anyhow::Error::msg)?;
+        Ok(Started { play, id: id.clone(), source: source.clone() })
+    }
+
+    pub fn looping(started: Started, images: &mut Assets<Image>) -> Self {
+        Self::shown(started, None, TextureFormat::Rgba8Unorm, images)
+    }
+
+    fn shown(
+        started: Started,
+        audio: Option<Arc<MovieAudio>>,
+        format: TextureFormat,
+        images: &mut Assets<Image>,
+    ) -> Self {
+        let Started { play, id, source } = started;
         let v = &play.info.video;
         let size = Extent3d { width: v.width, height: v.height, depth_or_array_layers: 1 };
         let black = vec![0u8; v.width as usize * v.height as usize * 4];
-        let image = images.add(Image::new(
-            size,
-            TextureDimension::D2,
-            black,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        ));
-        Ok(Self {
+        let image = images.add(Image::new(size, TextureDimension::D2, black, format, RenderAssetUsages::default()));
+        Self {
             play,
             image,
             time: 0.0,
@@ -63,9 +86,9 @@ impl WebmMovie {
             since_picture: 0.0,
             frames_seen: 0,
             failure: None,
-            id: id.clone(),
-            source: source.clone(),
-        })
+            id,
+            source,
+        }
     }
 
     pub fn audio(&self) -> Option<Arc<MovieAudio>> {

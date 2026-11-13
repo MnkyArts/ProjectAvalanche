@@ -13,7 +13,8 @@ pub mod pause;
 pub mod vars;
 pub mod vm;
 
-use context::{ContextSystem, Fire, Lcg};
+use crate::career::random::{GameRandom, Source};
+use context::{ContextSystem, Fire, Lcg, SpeechRandom};
 use game::{SpeechGame, Trigger};
 use module::{Bank, Line, SpeechModule};
 use vars::Vars;
@@ -74,39 +75,26 @@ fn helicopter_text_of(info: &[(u32, HeliValue)], key: u32) -> Option<String> {
 
 fn helicopter_info(big_root: &Path, helicopter: u32) -> Result<Vec<(u32, HeliValue)>> {
     use crate::vault_db::{single, single_text};
-    use ssx_formats::attrib::{Schema, Value, Vault, collection};
-    let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let read = |stem: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        Ok((std::fs::read(dir.join(format!("{stem}.vlt")))?, std::fs::read(dir.join(format!("{stem}.bin")))?))
-    };
-    let (sv, sb) = read("attribdb_schema")?;
-    let schema = Schema::from_vault(&Vault::parse(&sv, &sb)?).context("reading the schema")?;
-    let (gv, gb) = read("ge_attribdb")?;
-    let gvault = Vault::parse(&gv, &gb)?;
-    let gcols = collection::collections(&gvault)?;
-    let gdecoded = gcols.iter().map(|c| c.decode(&gvault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-    let gindex = collection::index(&gcols);
-    let fields = |class: u32, key: u32| -> Result<Vec<(u32, &ssx_formats::attrib::collection::Field)>> {
-        let i = *gindex.get(&(class, key)).with_context(|| format!("{class:#010x}/{key:#010x} missing"))?;
-        Ok(collection::with_inherited(&gcols, &gdecoded, &gindex, i)?)
-    };
-    let heli = fields(0x8136_C3AA, helicopter)?;
-    let info = heli
-        .iter()
-        .find_map(|(_, f)| match single(&f.data) {
-            Some(Value::Ref(r)) if f.key == 0x78A6_E89F => Some(r.collection),
-            _ => None,
-        })
-        .context("helicopter: no pilot audio_game_info")?;
-    let mut out = Vec::new();
-    for (_, f) in fields(0x2306_91A5, info)? {
-        if let Some(Value::Int32(v)) = single(&f.data) {
-            out.push((f.key, HeliValue::Int(*v)));
-        } else if let Some(t) = single_text(&f.data) {
-            out.push((f.key, HeliValue::Text(t)));
+    use ssx_formats::attrib::Value;
+    crate::vault_db::with_all_db(big_root, |db| {
+        let heli = db.fields(0x8136_C3AA, helicopter)?;
+        let info = heli
+            .iter()
+            .find_map(|f| match single(&f.data) {
+                Some(Value::Ref(r)) if f.key == 0x78A6_E89F => Some(r.collection),
+                _ => None,
+            })
+            .context("helicopter: no pilot audio_game_info")?;
+        let mut out = Vec::new();
+        for f in db.fields(0x2306_91A5, info)? {
+            if let Some(Value::Int32(v)) = single(&f.data) {
+                out.push((f.key, HeliValue::Int(*v)));
+            } else if let Some(t) = single_text(&f.data) {
+                out.push((f.key, HeliValue::Text(t)));
+            }
         }
-    }
-    Ok(out)
+        Ok(out)
+    })
 }
 
 pub const DEFAULT_HELICOPTER: u32 = 0xB48A_C47B;
@@ -121,55 +109,38 @@ pub fn audio_helicopter(big_root: &Path, ui_drop: &str) -> Result<u32> {
 }
 
 fn range_helicopter(big_root: &Path, range: u32) -> Result<Option<u32>> {
-    use ssx_formats::attrib::{Schema, Vault, collection};
-    let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let read = |stem: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        Ok((std::fs::read(dir.join(format!("{stem}.vlt")))?, std::fs::read(dir.join(format!("{stem}.bin")))?))
-    };
-    let (sv, sb) = read("attribdb_schema")?;
-    let schema = Schema::from_vault(&Vault::parse(&sv, &sb)?).context("reading the schema")?;
-    for stem in ["attribdb", "ge_attribdb"] {
-        let (v, b) = read(stem)?;
-        let vault = Vault::parse(&v, &b)?;
-        let cols = collection::collections(&vault)?;
-        let index = collection::index(&cols);
-        let Some(&i) = index.get(&(crate::vault_db::fnv1("range"), range)) else { continue };
-        let decoded = cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-        let heli = collection::with_inherited(&cols, &decoded, &index, i)?
+    crate::vault_db::with_all_db(big_root, |db| {
+        let heli = db
+            .fields(crate::vault_db::fnv1("range"), range)?
             .into_iter()
-            .find(|(_, f)| f.key == crate::vault_db::fnv1("helicopter"))
-            .and_then(|(_, f)| crate::vault_db::refs(&f.data).first().map(|r| r.collection))
+            .find(|f| f.key == crate::vault_db::fnv1("helicopter"))
+            .and_then(|f| crate::vault_db::refs(&f.data).first().map(|r| r.collection))
             .filter(|&k| k != 0);
-        return Ok(heli);
-    }
-    Ok(None)
+        Ok(heli)
+    })
 }
 
 pub fn drop_audio_game_info(big_root: &Path, drop_key: u32) -> Result<Option<[i32; 27]>> {
-    use ssx_formats::attrib::{Schema, Value, Vault, collection};
+    use ssx_formats::attrib::{Schema, Value, Vault};
     const CLASS: u32 = 0x2306_91A5;
     let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let read = |stem: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        Ok((std::fs::read(dir.join(format!("{stem}.vlt")))?, std::fs::read(dir.join(format!("{stem}.bin")))?))
-    };
-    let (sv, sb) = read("attribdb_schema")?;
+    let (sv, sb) = (std::fs::read(dir.join("attribdb_schema.vlt"))?, std::fs::read(dir.join("attribdb_schema.bin"))?);
     let schema = Schema::from_vault(&Vault::parse(&sv, &sb)?).context("reading the schema")?;
     let class = schema.class(CLASS).context("no audio_game_info class")?;
-    let (v, b) = read("ge_attribdb")?;
-    let vault = Vault::parse(&v, &b)?;
-    let cols = collection::collections(&vault)?;
-    let index = collection::index(&cols);
-    let Some(&i) = index.get(&(CLASS, drop_key)) else { return Ok(None) };
-    let decoded = cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-    let fields = collection::with_inherited(&cols, &decoded, &index, i)?;
-    let mut words = [0i32; 27];
-    for d in class.definitions.iter().filter(|d| d.in_layout() && usize::from(d.offset) < 27 * 4) {
-        let value = fields.iter().find(|(_, f)| f.key == d.key).and_then(|(_, f)| crate::vault_db::single(&f.data));
-        if let Some(Value::Int32(x)) = value {
-            words[usize::from(d.offset) / 4] = *x;
+    crate::vault_db::with_all_db(big_root, |db| {
+        if db.find(CLASS, drop_key).is_none() {
+            return Ok(None);
         }
-    }
-    Ok(Some(words))
+        let fields = db.fields(CLASS, drop_key)?;
+        let mut words = [0i32; 27];
+        for d in class.definitions.iter().filter(|d| d.in_layout() && usize::from(d.offset) < 27 * 4) {
+            let value = fields.iter().find(|f| f.key == d.key).and_then(|f| crate::vault_db::single(&f.data));
+            if let Some(Value::Int32(x)) = value {
+                words[usize::from(d.offset) / 4] = *x;
+            }
+        }
+        Ok(Some(words))
+    })
 }
 
 fn drop_vars(v: &mut Vars, w: &[i32; 27]) {
@@ -199,7 +170,8 @@ pub struct SpeechSetup {
     pub region_id: i32,
     pub kind: game::EventKind,
     pub deadly_descent: bool,
-    pub seed: u32,
+    pub rng: SpeechRandom,
+    pub random: Source,
     pub drop_info: Option<[i32; 27]>,
 }
 
@@ -233,8 +205,8 @@ pub struct Speech {
     pub contexts: ContextSystem,
     pub module: SpeechModule,
     pub game: SpeechGame,
-    pub rng: Lcg,
-    random: crate::career::store::Mt19937,
+    pub rng: SpeechRandom,
+    random: Source,
     voices: Vec<Voice>,
     handles: Vec<Option<u32>>,
     fading: Vec<u32>,
@@ -303,8 +275,8 @@ impl Speech {
             contexts,
             module,
             game: SpeechGame::new(pilot_flag(setup.pilot_id), setup.rider_id, 2, setup.kind),
-            rng: Lcg(setup.seed),
-            random: crate::career::store::Mt19937::new(setup.seed ^ 0x5EED),
+            rng: setup.rng.clone(),
+            random: setup.random.clone(),
             voices: (0..VOICES.len()).map(|_| Voice::default()).collect(),
             handles: vec![None; VOICES.len()],
             fading: Vec::new(),
@@ -326,6 +298,15 @@ impl Speech {
         for t in list {
             let n = self.contexts.trigger(t.name, &t.params, now);
             self.log.push(format!("{:.3} {} {:?} → {n} contexts", self.time, t.name, t.params));
+            if std::env::var("SSX_SPEECH_EXPLAIN").is_ok() {
+                for (c, prio, fail) in self.contexts.explain(t.name, &t.params, &self.vars, now) {
+                    self.log.push(format!(
+                        "{:.3}   context {c} ({prio}): {}",
+                        self.time,
+                        fail.unwrap_or_else(|| "valid".into())
+                    ));
+                }
+            }
         }
     }
 }
@@ -393,24 +374,28 @@ impl Speech {
         let (mut refire, mut lines, mut package) = (Vec::new(), Vec::new(), Vec::new());
         let module = &self.module;
         let overrides = &self.overrides;
-        let fired = self.contexts.update(now, &self.vars, &mut self.rng, &mut |fire: &Fire, rng: &mut Lcg| {
-            if let Some(&name) = TRIGGERS.iter().find(|n| **n == fire.event) {
-                refire.push(Trigger { name, params: fire.params.clone() });
-                return true;
-            }
-            if let Some(sound) = overrides.get(&fire.event.to_ascii_lowercase())
-                && let Some(draw) = sound.draw()
-            {
-                package.push((fire.event.clone(), fire.params.first().copied().unwrap_or(0), sound.clone(), draw));
-                return true;
-            }
-            match module.choose(&fire.event, &fire.params, rng) {
-                Some(line) => {
-                    lines.push(line);
-                    true
+        let contexts = &mut self.contexts;
+        let vars = &self.vars;
+        let fired = self.rng.with(|rng| {
+            contexts.update(now, vars, rng, &mut |fire: &Fire, rng: &mut Lcg| {
+                if let Some(&name) = TRIGGERS.iter().find(|n| **n == fire.event) {
+                    refire.push(Trigger { name, params: fire.params.clone() });
+                    return true;
                 }
-                None => false,
-            }
+                if let Some(sound) = overrides.get(&fire.event.to_ascii_lowercase())
+                    && let Some(draw) = sound.draw()
+                {
+                    package.push((fire.event.clone(), fire.params.first().copied().unwrap_or(0), sound.clone(), draw));
+                    return true;
+                }
+                match module.choose(&fire.event, &fire.params, rng) {
+                    Some(line) => {
+                        lines.push(line);
+                        true
+                    }
+                    None => false,
+                }
+            })
         });
         if let Some(fire) = &fired {
             self.log.push(format!("{:.3} context {} → {} {:?}", f.time, fire.context, fire.event, fire.params));

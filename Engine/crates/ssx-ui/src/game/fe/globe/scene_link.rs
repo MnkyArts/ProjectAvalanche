@@ -144,9 +144,6 @@ pub fn scene_update(fe: &mut FrontEnd, env: &mut FeEnv, dt: f64) {
     if let Some(r) = ev.recommendation {
         env.values.set_bool(0xC6, r);
     }
-    if let Some(id) = ev.audio.and_then(super::levels::highlight_sound) {
-        fe.play_sound(id);
-    }
     if let Some(r) = ev.range {
         fe.note(format!("globe: the stick selects range {r:#x}"));
         focus_range(fe, r);

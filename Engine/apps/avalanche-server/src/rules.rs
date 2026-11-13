@@ -18,11 +18,11 @@ use crate::resources::Settled;
 mod configured;
 pub use configured::{DropFinding, check_configured};
 
-// TODO(guess): "big" below `--data`, a port choice (the layout of the game's extraction); settle: the folder phase 4's
-// `setup` writes (round net4a), merged with this.
+// PORT(choice): "big" below `--data` (the layout of the game's extraction), to be merged with the folder phase 4's
+// `setup` writes (round net4a); the original has no dedicated server.
 pub const DEFAULT_DATA_FOLDER: &str = "big";
 
-// TODO(guess): 4 096 bytes (Linux's PATH_MAX), a port bound; settle: none needed.
+// PORT(choice): 4 096 bytes (Linux's PATH_MAX), a port bound; the original has no dedicated server.
 const MAX_FOLDER_PATH: usize = 4096;
 
 #[derive(Clone)]

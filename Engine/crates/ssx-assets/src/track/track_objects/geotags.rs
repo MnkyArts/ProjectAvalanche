@@ -130,7 +130,7 @@ fn first_ref(d: &FieldData) -> Option<ssx_formats::attrib::RefSpec> {
     refs(d).into_iter().find(|r| r.collection != 0)
 }
 
-fn game_object(db: &Db<'_>, schema: &str, name: &str) -> Result<GeotagObject> {
+fn game_object(db: &Db, schema: &str, name: &str) -> Result<GeotagObject> {
     let key = fnv1(name);
     let field = |k: u32| db.field(CLASS_GAMEOBJECT, key, k);
     let lod_thresholds = match field(FIELD_LOD_THRESHOLDS)?.map(|f| &f.data) {
@@ -185,7 +185,9 @@ fn game_object(db: &Db<'_>, schema: &str, name: &str) -> Result<GeotagObject> {
 }
 
 pub fn geotag_file(big_root: &Path, track: &str) -> PathBuf {
-    big_root.join(GEOCACHE_DIR).join(format!("{track}_track_geotagdb.csv"))
+    let rel = format!("data/common/geocaches/{track}_track_geotagdb.csv");
+    crate::data_roots::find(big_root, &rel)
+        .unwrap_or_else(|| big_root.join(GEOCACHE_DIR).join(format!("{track}_track_geotagdb.csv")))
 }
 
 pub fn load_rows(big_root: &Path, track: &str) -> Result<Option<Vec<Geotag>>> {

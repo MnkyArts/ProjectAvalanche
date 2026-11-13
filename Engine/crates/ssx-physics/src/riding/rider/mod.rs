@@ -81,6 +81,7 @@ pub struct Input {
     pub brake: f32,
     pub tuck: f32,
     pub dpad: Vec2,
+    pub dpad_held: bool,
     pub jump: bool,
 }
 
@@ -106,6 +107,37 @@ impl Input {
     pub fn air_stick(&self, classic: bool) -> Vec2 {
         if classic { self.dpad.clamp(Vec2::splat(-1.0), Vec2::splat(1.0)) } else { self.stick() }
     }
+
+    pub fn flip_acceleration(&self, classic: bool) -> f32 {
+        self.air_stick(classic).y
+    }
+
+    pub fn with_stick(&self, stick: Vec2) -> Self {
+        Input { steer: stick.x, tuck: stick.y.max(0.0), brake: (-stick.y).max(0.0), ..*self }
+    }
+}
+
+pub fn reverse_camera_stick(stick: Vec2, camera: Quat, alignment: Quat, forward_sign: f32, velocity: Vec3) -> Vec2 {
+    let mag = stick.length();
+    if mag <= TINY {
+        return Vec2::ZERO;
+    }
+    const SPEED_THRESHOLD_SQUARED: f32 = 0.0025;
+    const CONE_SMALL: f32 = 0.261_799_4;
+    const CONE_LARGE: f32 = std::f32::consts::FRAC_PI_4;
+    let speed_squared = velocity.length_squared();
+    let travel = if speed_squared <= SPEED_THRESHOLD_SQUARED {
+        alignment * Vec3::new(forward_sign, 0.0, 0.0)
+    } else {
+        velocity / speed_squared.sqrt()
+    };
+    let d = camera.inverse() * travel;
+    let on_screen = (-d.z).atan2(d.y);
+    let opposite = if d.x < 0.0 { if on_screen >= 0.0 { PI } else { -PI } } else { 0.0 };
+    let w = ((CONE_LARGE - d.x.abs().clamp(0.0, 1.0).acos()) / (CONE_LARGE - CONE_SMALL)).clamp(0.0, 1.0);
+    let target = on_screen + w * (opposite - on_screen);
+    let angle = wrap_pi(stick.y.atan2(stick.x) - target);
+    Vec2::new(mag * angle.cos(), mag * angle.sin())
 }
 
 fn disc(x: f32, y: f32) -> Vec2 {
@@ -172,6 +204,7 @@ pub struct RiderState {
     pub angular_velocity_q: Quat,
     pub filtered_angular_velocity: Quat,
     pub prewind: f32,
+    pub prewind_analog: f32,
     pub prewind_reset: bool,
     pub goofy: bool,
     pub ballistic: BallisticRay,
@@ -188,6 +221,8 @@ pub struct RiderState {
     pub uber_gate_timer: f32,
     pub uber_trigger_seen: bool,
     pub stick_prev: Vec2,
+    pub reverse_camera: Option<Quat>,
+    pub pad_stick: Vec2,
     pub nested_stable: bool,
     pub request_stop: bool,
     pub level_start: Vec3,
@@ -197,6 +232,7 @@ pub struct RiderState {
     pub air_jumped: bool,
     pub jump_airborne: bool,
     pub graph: GraphFeedback,
+    pub audio_tags: Vec<ssx_assets::anim_eval::AudioTagEvent>,
     pub get_going: Option<GetGoing>,
     pub heli_trick: Option<heli_trick::HeliTrick>,
     pub heli: crate::helicopter::interaction::RiderHeliStates,
@@ -240,7 +276,7 @@ pub struct GameplayNode {
 }
 
 const TRIGGER_GO_WINDOW: TagWindow = TagWindow::new(0.0, 1.0, false);
-const TRIGGER_GO_TAG: BoolTag = BoolTag { value: true, mode: 1, reset_on_leave: false };
+const TRIGGER_GO_TAG: BoolTag = BoolTag { value: true, mode: 1, reset: None };
 
 impl GameplayNode {
     pub fn new() -> Self {
@@ -352,6 +388,7 @@ impl RiderState {
             angular_velocity_q: Quat::IDENTITY,
             filtered_angular_velocity: Quat::IDENTITY,
             prewind: 0.0,
+            prewind_analog: 0.0,
             prewind_reset: false,
             goofy: false,
             ballistic: BallisticRay::default(),
@@ -368,6 +405,8 @@ impl RiderState {
             uber_gate_timer: 0.0,
             uber_trigger_seen: false,
             stick_prev: Vec2::ZERO,
+            reverse_camera: None,
+            pad_stick: Vec2::ZERO,
             nested_stable: false,
             request_stop: false,
             level_start: traj,
@@ -377,6 +416,7 @@ impl RiderState {
             air_jumped: false,
             jump_airborne: false,
             graph: GraphFeedback::default(),
+            audio_tags: Vec::new(),
             get_going: None,
             heli_trick: None,
             heli: crate::helicopter::interaction::RiderHeliStates::default(),
@@ -482,7 +522,8 @@ impl RiderState {
             return if ls.idle() { ls.offset } else { self.traj - Vec3::Y * TRAJECTORY_HEIGHT_DOF };
         }
         let up = if self.in_air() { Vec3::Y } else { self.alignment * Vec3::Y };
-        // TODO(guess): [`Self::spawn`]'s riding start probes with the joint at the riding pose's height before the carving's first update; settle: nothing in the game spawns a rider riding (only a test fixture).
+        // PORT(choice): [`Self::spawn`]'s riding start probes with the joint at the riding pose's height before the
+        // carving's first update (only a test fixture spawns a rider riding); nothing in the game does.
         let rh = if self.carving.riding_height < 0.0 {
             self.carving.riding_height
         } else {

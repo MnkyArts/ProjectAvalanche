@@ -299,6 +299,31 @@ pub fn acos(x: f32) -> f32 {
     sub(mul(PI, 0.5), asin(x))
 }
 
+// TODO(guess): the mantissa rounds toward zero (the dropped 13 bits cut off) — Xenia's note on the encoding (12ff95197, 2022: "as used in vpkd3d128 (no denormals, rounding towards zero)"); canary since 1182f9d73 / 11815400c (2025-10 / 2026-02) rounds to nearest even, but only to meet pack_test.cc's PACK_FLOAT16_4 expectation (5678.0 → 0x6D8C, 9.0123 → 0x4882), which dates from 2014 (f74aafeb8) and was written against Microsoft's XMConvertFloatToHalf C code (poly::float_to_half, ties to even), not a console; the hardware-run instr_vpkd3d128.s packs only exactly representable values, and no SSX data holds a packed value of a known float; settle: a console's vpkd3d128 type 5 on an inexact value (5678.0: 0x6D8B toward zero, 0x6D8C to nearest even).
+pub fn pack_half(x: f32) -> u16 {
+    let bits = x.to_bits();
+    let abs = bits & 0x7FFF_FFFF;
+    let sign = ((bits & 0x8000_0000) >> 16) as u16;
+    let magnitude = if abs >= 0x47FF_E000 {
+        0x7FFF
+    } else if abs < 0x3880_0000 {
+        0
+    } else {
+        ((abs.wrapping_add(0xC800_0000) >> 13) & 0x7FFF) as u16
+    };
+    magnitude | sign
+}
+
+pub fn unpack_half(h: u16) -> f32 {
+    let sign = u32::from(h & 0x8000) << 16;
+    let exponent = u32::from((h >> 10) & 0x1F);
+    if exponent == 0 {
+        return f32::from_bits(sign);
+    }
+    let mantissa = u32::from(h & 0x3FF);
+    f32::from_bits(sign | ((exponent + 112) << 23) | (mantissa << 13))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +377,30 @@ mod tests {
         assert_eq!(to_u32(f32::NAN), 0);
         assert_eq!(to_u32(5e9), u32::MAX);
         assert_eq!(dot3([1e30; 3], [1e30; 3]).to_bits(), f32::NAN.to_bits());
+    }
+
+    #[test]
+    fn xenos_halves() {
+        assert_eq!(pack_half(1234.0), 0x64D2);
+        assert_eq!(pack_half(4.5678), 0x4491);
+        assert_eq!(pack_half(1.0), 0x3C00);
+        assert_eq!(pack_half(-2.0), 0xC000);
+        assert_eq!(pack_half(6.103_515_6e-5), 0x0400, "2^-14, the smallest normal");
+        assert_eq!(pack_half(6.1e-5), 0, "below 2^-14: zero");
+        assert_eq!(pack_half(-1e-6), 0x8000, "a negative zero");
+        assert_eq!(pack_half(131_008.0), 0x7FFF);
+        assert_eq!(pack_half(1e9), 0x7FFF);
+        assert_eq!(pack_half(f32::NEG_INFINITY), 0xFFFF);
+        assert_eq!(pack_half(f32::NAN), 0x7FFF);
+        assert_eq!(pack_half(5678.0), 0x6D8B);
+        assert_eq!(pack_half(9.0123), 0x4881);
+        assert_eq!(unpack_half(0x7FFF), 131_008.0);
+        assert_eq!(unpack_half(0x7C00), 65_536.0);
+        assert_eq!(unpack_half(0x03FF).to_bits(), 0, "exponent 0 is zero");
+        assert_eq!(unpack_half(0x8001).to_bits(), 0x8000_0000);
+        for h in 0x0400..0x7FFF_u16 {
+            assert_eq!(pack_half(unpack_half(h)), h);
+            assert_eq!(pack_half(unpack_half(h | 0x8000)), h | 0x8000);
+        }
     }
 }

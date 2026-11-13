@@ -205,7 +205,8 @@ pub fn post_event_results_with_splits(
 ) -> Posted {
     let career = career_results_with_splits(ctx, r, splits, profile, rules);
     let medal = career.medal.map_or(-1, |m| m as i32);
-    // TODO(guess): without a front end the game mode (0x825775C0) comes from the event's name (`exp_` 0, `chapter_` 1, else 3), with one from the launch; settle: none (the front end's is the game's).
+    // PORT(choice): without a front end the game mode (0x825775C0) comes from the event's name (`exp_` 0, `chapter_` 1,
+    // else 3), with one from the launch; in the game the front end's is the game mode.
     let game_mode = if let Some(f) = ui.fe.as_ref() {
         f.game_mode as i32
     } else if ctx.event_name.starts_with("exp_") {
@@ -251,7 +252,7 @@ pub fn post_event_results_with_splits(
 
 pub fn post_death_body(ui: &mut GameUi, course: Option<ssx_physics::event::Course>, r: &EventResult) {
     let course_mm = course.map_or(0, |c| ((c.start_y - c.end_y).abs() * 1000.0) as i64);
-    super::hud::results::death_body(&mut ui.values, &mut ui.loc, course_mm, r.descent_mm);
+    super::hud::results::death_body(&mut ui.values, &mut ui.loc, course_mm, r.descent_mm, ui.free_ride);
 }
 
 impl RideDriver {
@@ -327,7 +328,7 @@ impl RideDriver {
         if let Some(d) = def.as_ref()
             && let Ok(data) = ssx_physics::session::bots::BotData::load(big_root)
         {
-            let mut rng = ssx_physics::session::bots::Mt19937::seeded(ssx_physics::session::bots::DEFAULT_BOT_SEED);
+            let mut rng = ssx_assets::career::random::Mt19937::seeded(ssx_physics::session::bots::DEFAULT_BOT_SEED);
             let course = session.event.setup.course;
             session.bots =
                 ssx_physics::session::bots::BotRace::for_event(big_root, d, &data, &mut rng, course).map(|(r, _)| r);
@@ -396,6 +397,7 @@ impl RideDriver {
             (input.steer, input.tuck, input.brake) = (self.opts.spin, 0.0, 0.0);
             if s.tricks.classic {
                 input.dpad = Vec2::new(self.opts.spin, 0.0);
+                input.dpad_held = self.opts.spin != 0.0;
             }
         }
         if s.state != RideState::Riding && s.air.air_time < 0.5 * 60.0 {
@@ -439,15 +441,9 @@ impl RideDriver {
             &self.world.triggers,
             &mut ui.loc,
         );
-        self.feed.ghosts = if ssx_physics::event::shows_explore_ghosts(
-            self.session.event.setup.event_type,
-            self.session.bots.is_some(),
-        ) {
-            ghosts
-        } else {
-            Vec::new()
-        };
-        self.feed.ghost_racers = racers;
+        let explore = ssx_physics::event::shows_explore_ghosts(self.session.event.setup.event_type);
+        self.feed.ghosts = if explore { ghosts } else { Vec::new() };
+        self.feed.ghost_racers = if explore { racers } else { Vec::new() };
         self.feed.feed(ui, &self.rider, &self.session, &self.world, Some(&e));
         let events = self.session.tutorial.as_mut().map_or_else(Vec::new, |t| t.take_events());
         let rider = self.feed.rider.clone();

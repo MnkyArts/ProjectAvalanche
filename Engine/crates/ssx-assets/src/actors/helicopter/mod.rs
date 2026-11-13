@@ -1,7 +1,7 @@
 mod animation;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use ssx_formats::attrib::collection::{self, Collection, DecodedCollection, Field, FieldData};
@@ -60,27 +60,37 @@ pub(crate) struct Vaults {
 impl Vaults {
     pub(crate) fn load(big_root: &Path) -> Result<Self> {
         let dir = big_root.join("bootcache/data/xenon/attribdb");
-        let read = |name: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-            let p = dir.join(name);
+        let read = |path: &Path| -> Result<(Vec<u8>, Vec<u8>)> {
             Ok((
-                std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?,
-                std::fs::read(p.with_extension("bin")).with_context(|| format!("reading {}", p.display()))?,
+                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?,
+                std::fs::read(path.with_extension("bin")).with_context(|| format!("reading {}", path.display()))?,
             ))
         };
-        let (svlt, sbin) = read("attribdb_schema.vlt")?;
+        let (svlt, sbin) = read(&dir.join("attribdb_schema.vlt"))?;
         let schema = Schema::from_vault(&Vault::parse(&svlt, &sbin)?).context("reading the schema")?;
+        let known: std::collections::HashSet<u32> = schema.classes.iter().map(|c| c.key).collect();
+        let mut sources: Vec<(PathBuf, bool)> =
+            crate::vault_db::dlc_vaults(big_root).into_iter().map(|p| (p, false)).collect();
+        sources.push((dir.join("attribdb.vlt"), true));
         let mut out = Self { cols: Vec::new(), decoded: Vec::new(), index: Vec::new() };
-        for name in ["attribdb.vlt", "ge_attribdb.vlt"] {
-            let (vlt, bin) = read(name)?;
-            let vault = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {name}"))?;
+        for (path, route) in sources {
+            let (vlt, bin) = read(&path)?;
+            let vault = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {}", path.display()))?;
             let cols = collection::collections(&vault)?;
-            let mut decoded =
-                cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-            if name == "attribdb.vlt" {
-                crate::content::data::events::route_ui_drops(big_root, &cols, &mut decoded);
+            let mut kept = Vec::with_capacity(cols.len());
+            let mut decoded = Vec::with_capacity(cols.len());
+            for c in cols {
+                if !known.contains(&c.class) {
+                    continue;
+                }
+                decoded.push(c.decode(&vault, &schema).with_context(|| format!("collection {:#010x}", c.key))?);
+                kept.push(c);
             }
-            out.index.push(collection::index(&cols));
-            out.cols.push(cols);
+            if route {
+                crate::content::data::events::route_ui_drops(big_root, &kept, &mut decoded);
+            }
+            out.index.push(collection::index(&kept));
+            out.cols.push(kept);
             out.decoded.push(decoded);
         }
         Ok(out)

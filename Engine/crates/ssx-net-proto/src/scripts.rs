@@ -14,11 +14,13 @@ pub const MAX_ID: usize = 256;
 pub const MAX_TITLE: usize = 256;
 pub const MAX_TEXT: usize = 1024;
 pub const MAX_LATENT: u32 = 16 << 20;
-// TODO(guess): 1 000 000 B/s, the host's top rate for one transfer (MTA's default per transfer is 50 000 B/s; its
-// per-client bandwidth was not checked here); settle: latent transfers measured on real links beside the rides.
+// PORT(choice): 1 000 000 B/s, the host's top rate for one transfer (MTA's default per transfer is 50 000 B/s; its
+// per-client bandwidth was not checked here); tuning: latent transfers measured on real links beside the rides; the
+// original runs no mod scripts.
 pub const LATENT_DOWN: u32 = 1_000_000;
-// TODO(guess): 64 KiB/s, half of FiveM's netEventSize (128 KiB/s), the server's bucket a burst of 3 s (net bunching);
-// settle: a gamemode's client uploads (screenshots, replays) measured beside its remote events.
+// PORT(choice): 64 KiB/s, half of FiveM's netEventSize (128 KiB/s), the server's bucket a burst of 3 s (net bunching);
+// tuning: a gamemode's client uploads (screenshots, replays) measured beside its remote events; the original runs no
+// mod scripts.
 pub const LATENT_UP: u32 = 64 << 10;
 
 #[derive(Clone, Debug, PartialEq)]

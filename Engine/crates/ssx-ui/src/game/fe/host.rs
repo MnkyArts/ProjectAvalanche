@@ -469,7 +469,8 @@ impl Host {
                     self.reported = false;
                     match self.load_ride(&l) {
                         Ok(d) => {
-                            ui.set_drop(d.drop_key, d.event_type);
+                            let nis = crate::game::feed::nis_is_active(&d.rider, &d.session);
+                            ui.set_drop(d.drop_key, d.event_type, l.free_ride, nis);
                             self.ride_rows = ghost_values(&self.big_root, d.drop_key);
                             self.note(format!(
                                 "ride loaded: {} drop {} event {:?} (type {}), rider {}",
@@ -482,7 +483,8 @@ impl Host {
                 }
             }
             Phase::Loading(since) => {
-                // TODO(guess): a test harness's stand-in — the headless host loads no world; the load and the streaming report take `loading_seconds`; settle: none (no world to stream here).
+                // PORT(choice): a test harness's stand-in — the headless host loads no world (no world to stream here);
+                // the load and the streaming report take `loading_seconds`; the game always loads its level.
                 if !self.reported && self.time - since >= self.loading_seconds {
                     self.reported = true;
                     self.note("level loaded: the camera's streaming report (0xDAE83AFD {0})".into());

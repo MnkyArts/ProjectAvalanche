@@ -14,6 +14,7 @@ impl FrontEnd {
     pub fn build(&mut self, cx: &mut Ctx, values: &mut UiValues, loc: &mut Localization, dp: &str) -> Option<Value> {
         match dp {
             "dp_boot_logo_screen_data" => Some(boot::build(self, cx)),
+            boot::ESRB_READY => boot::esrb_ready(self),
             "dp_debug_menu" | "dp_debug_menu_index" if self.post_race.active => {
                 postrace::build(self, cx, values, loc, dp)
             }

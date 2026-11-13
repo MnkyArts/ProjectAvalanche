@@ -29,7 +29,11 @@ fn key(p: Pad) -> Option<KeyCode> {
         Pad::LeftStick(_, y) if y < 0 => KeyCode::ArrowDown,
         Pad::LeftStick(x, _) if x < 0 => KeyCode::ArrowLeft,
         Pad::LeftStick(..) => KeyCode::ArrowRight,
-        Pad::Back | Pad::Start | Pad::LeftThumb | Pad::RightThumb | Pad::Dpad(..) | Pad::RightStick(..) => return None,
+        Pad::RightStick(_, y) if y > 0 => KeyCode::Numpad8,
+        Pad::RightStick(_, y) if y < 0 => KeyCode::Numpad2,
+        Pad::RightStick(x, _) if x < 0 => KeyCode::Numpad4,
+        Pad::RightStick(..) => KeyCode::Numpad6,
+        Pad::Back | Pad::Start | Pad::LeftThumb | Pad::RightThumb | Pad::Dpad(..) => return None,
     })
 }
 

@@ -8,9 +8,13 @@ use crate::game::loc::Localization;
 pub const DP: &str = "dp_notification_data";
 
 pub const KIND_BADGE: u32 = 0x14;
+pub const KIND_GEOTAG: u32 = 0xE;
 pub const QUEUE_MAX: usize = 25;
 
-// TODO(guess): the port's notices show as the docks' generic notification (style 0: the gamer picture, the header, the body; the rider's icon as the picture), non-actionable, held until the next dock asks (the results' DockPostGame, not the ride's dock that unloads with the switch) and then taken by request 1 as types 7/0xE/0x10/0x14/0x17 are, 6 s, the generic sounds 0x1E/0x1F; the game has no such notice (port feature); settle: none on the disc — a design choice to review.
+// PORT(choice): the port's notices show as the docks' generic notification (style 0: the gamer picture, the header, the
+// body; the rider's icon as the picture), non-actionable, held until the next dock asks (the results' DockPostGame, not
+// the ride's dock that unloads with the switch) and then taken by request 1 as types 7/0xE/0x10/0x14/0x17 are, 6 s, the
+// generic sounds 0x1E/0x1F; a design choice to review; the game has no such notice (port feature).
 pub const KIND_PORT: u32 = 0x100;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -114,6 +118,23 @@ pub fn post_badge(fe: &mut FrontEnd, loc: &mut Localization, b: &ssx_assets::car
     fe.notifications.push(n);
 }
 
+pub fn post_geotag(fe: &mut FrontEnd, loc: &mut Localization, value: i64, collected: usize, total: usize) {
+    let title = loc.text("TXT_NOTIFY_GEOTAG_COLLECTED_TITLE");
+    let money = loc.currency(value, true);
+    let count = loc.int(collected as i64);
+    let of = loc.int(total as i64);
+    let message = loc.format("TXT_NOTIFY_GEOTAG_OFFLINE_COLLECTED_BODY", &[&money, &count, &of]);
+    let n = Notification {
+        kind: KIND_GEOTAG,
+        id: 0,
+        title,
+        message,
+        icon: "assets\\notificationIcons\\notification_geotag.dds".into(),
+    };
+    fe.note(format!("notification: geotag collected ({value} credits, {collected} of {total})"));
+    fe.notifications.push(n);
+}
+
 pub fn post_best_not_kept(
     fe: &mut FrontEnd,
     loc: &mut Localization,
@@ -152,7 +173,7 @@ pub fn post_hint(fe: &mut FrontEnd, loc: &mut Localization, r: &crate::game::fe:
 }
 
 pub fn update(fe: &mut FrontEnd, env: &mut FeEnv) {
-    if env.values.int(0xA6) != 1 || fe.notifications.current.is_some() {
+    if env.values.int(crate::game::values::id::FLOW_RECEIVE_NOTIFICATIONS) != 1 || fe.notifications.current.is_some() {
         return;
     }
     if let Some(n) = fe.notifications.take() {
@@ -219,6 +240,10 @@ mod tests {
         q.request = 2;
         assert_eq!(q.take().map(|n| n.id), Some(5));
         assert_eq!((style(KIND_BADGE), display_time(KIND_BADGE), sounds(KIND_BADGE)), (1, 3000, (26, 27)));
+        assert_eq!(
+            (style(KIND_GEOTAG), display_time(KIND_GEOTAG), sounds(KIND_GEOTAG), actionable(KIND_GEOTAG)),
+            (0, 6000, (0x26, 0x27), false)
+        );
         q.request = 1;
         q.hold(Notification { kind: KIND_PORT, ..Default::default() });
         assert!(q.take().is_none(), "held from the dock that asked before it");

@@ -49,8 +49,8 @@ impl<'a> Configured<'a> {
 }
 
 const SHOWN: usize = 8;
-// TODO(guess): 20 000 entries looked at (the whole list makes 1 925 files in about 300 folders); settle: none needed
-// unless the list grows (resources' files are elsewhere).
+// PORT(choice): 20 000 entries looked at (the whole list makes 1 925 files in about 300 folders), enough unless the
+// list grows (resources' files are elsewhere); the original has no dedicated server.
 const MAX_ENTRIES: usize = 20_000;
 
 pub fn shown(name: &std::ffi::OsStr) -> String {

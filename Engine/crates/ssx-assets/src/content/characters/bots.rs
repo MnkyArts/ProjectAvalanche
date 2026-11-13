@@ -38,9 +38,9 @@ pub fn bot_look(big_root: &Path, id: &ContentId, at: &LookSource, lods: usize) -
     }
     let mut out = Vec::new();
     for k in 0..lods.max(1) {
-        // TODO(guess): a package look's LOD k is drawn at the game object's LOD k thresholds (`LODThresholds` of the
-        // character's game object, field 0x030BB788's model list), its last LOD for the rest; the game has no package
-        // LODs to compare with — a record field of its own (`character.toml`) would let the author set them.
+        // PORT(choice): a package look's LOD k is drawn at the game object's LOD k thresholds (`LODThresholds` of the
+        // character's game object, field 0x030BB788's model list), its last LOD for the rest; a record field of its own
+        // (`character.toml`) would let the author set them; the game has no package LODs to compare with.
         let lod = k.min(have - 1);
         let mut parts = parts_of_lod(&built, lod, &sk.rig, &sk.bind);
         for (slot, o) in &def.outfit {

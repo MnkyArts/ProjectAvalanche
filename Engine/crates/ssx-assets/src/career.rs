@@ -10,7 +10,7 @@ pub mod store;
 mod tests;
 pub mod world_tour;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -20,7 +20,7 @@ use ssx_formats::rnf::{CampaignGraph, DropPositions};
 
 pub use data::{
     Description, DropType, Event, ExploreRewards, Item, ItemContent, Peak, Progression, Range, Rider, RiderContent,
-    StoreTables, StoreTemplate,
+    StoreTables, StoreTemplate, UnlockKind, Unlockable,
 };
 pub use profile::{EventOutcome, EventRule, Medal, Notice, Profile, ResultReport, Rules};
 
@@ -45,6 +45,9 @@ pub struct CareerDb {
     pub badges: Vec<(String, i32)>,
     pub boost_max: Vec<u8>,
     pub default_equipment: Vec<u32>,
+    pub unlockables: Vec<Unlockable>,
+    pub unlock_problems: Vec<String>,
+    pub unknown_classes: Vec<(u32, usize)>,
 }
 
 pub type BadgeDefinitions = (Vec<(String, i32)>, Vec<(String, i64)>);
@@ -92,15 +95,24 @@ impl CareerDb {
         };
         let ghosts = ssx_formats::csvdb::parse_ghosts(&ghost_text.context("reading ghostdb.csv")?)?;
         let mut geotags = BTreeMap::new();
-        let dir = big_root.join("cache1/data/common/geocaches");
-        for e in std::fs::read_dir(&dir).with_context(|| format!("listing {}", dir.display()))?.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(track) = name.strip_suffix("_track_geotagdb.csv") {
-                let text = std::fs::read_to_string(e.path())?;
-                geotags.insert(track.to_string(), ssx_formats::csvdb::parse_geotags(&text)?);
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for path in crate::data_roots::files_in(big_root, "data/common/geocaches", "csv") {
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let Some(track) = name.strip_suffix("_track_geotagdb.csv") else { continue };
+            let track = track.to_string();
+            if !seen.insert(name) {
+                continue;
             }
+            let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+            geotags.insert(track, ssx_formats::csvdb::parse_geotags(&text)?);
         }
         let (badges, track_bonuses) = badge_definitions(&read("memresident/data/common/scripts/init_badges.lua")?);
+        let (unlockables, unlock_problems) = if routed {
+            data::unlockables(&v, crate::content::dlc::unlockables_from_roots(&crate::content::dlc::active_roots()))
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let unknown_classes = v.unknown.iter().map(|(&k, &n)| (k, n)).collect();
         Ok(CareerDb {
             ranges: data::ranges(&v)?,
             peaks: data::peaks(&v)?,
@@ -121,6 +133,9 @@ impl CareerDb {
             badges,
             boost_max: data::boost_max(&v)?,
             default_equipment: data::default_equipment(&v)?,
+            unlockables,
+            unlock_problems,
+            unknown_classes,
         })
     }
 

@@ -19,26 +19,26 @@ pub const DISABLE: &str = "ava_chat_disable";
 pub const QUICK_OPEN: &str = "ava_quickchat_open";
 pub const QUICK_CLOSE: &str = "ava_quickchat_close";
 
-// TODO(guess): a port choice — the chat layer is the game's event-timer layer (`LAYER_EVENT_TIMER`), which only the
-// online live events' timer view `eventtimer` uses (the nav enables it on the Global Events drop screen and disables it
-// at the quit stage; a session's level never has it); a layer holds one view (`ux.view.Layer.ChangeView` loads a second
-// one in place of the first, at the layer's base depth), and `LAYER_HUD` holds the game's `hud` view — measured: on it
-// the chat's rows were published and never drawn in a level; settle: a layer of the port's own, if the framework's
-// layer manager is ever extended, or Global Events in a session (phase 10) needing the timer.
+// PORT(choice): the chat layer is the game's event-timer layer (`LAYER_EVENT_TIMER`), which only the online live
+// events' timer view `eventtimer` uses (the nav enables it on the Global Events drop screen and disables it at the quit
+// stage; a session's level never has it); a layer holds one view (`ux.view.Layer.ChangeView` loads a second one in
+// place of the first, at the layer's base depth), and `LAYER_HUD` holds the game's `hud` view — measured: on it the
+// chat's rows were published and never drawn in a level; a layer of the port's own would replace it if the framework's
+// layer manager is ever extended, or if Global Events in a session (phase 10) need the timer; the original has no chat.
 pub const LAYER: &str = "LAYER_EVENT_TIMER";
 
-// TODO(guess): a port choice — six rows of the newest lines at the HUD's left (the game has no chat; FiveM's chat shows
-// about ten lines, MTA:SA's a configurable box), small enough to leave the ride's view: a box of 470 × 212 px at
-// (36, 382) of the 1280 × 720 stage, below hud.gfx's time panel and notification (96, 54 / 61), above the ready loop's
-// "(Y) Change Equipment" prompt (measured at 636–664 px) and left of the score bar (from 472 px, 576 px down);
-// settle: what players of phase 4's public servers ask for.
+// PORT(choice): six rows of the newest lines at the HUD's left (FiveM's chat shows about ten lines, MTA:SA's a
+// configurable box), small enough to leave the ride's view: a box of 470 × 212 px at (36, 382) of the 1280 × 720 stage,
+// below hud.gfx's time panel and notification (96, 54 / 61), above the ready loop's "(Y) Change Equipment" prompt
+// (measured at 636–664 px) and left of the score bar (from 472 px, 576 px down); tuning: what players of phase 4's
+// public servers ask for; the game has no chat.
 pub const ROWS: usize = 6;
-// TODO(guess): a port choice — 10 s (FiveM's and MTA:SA's chat boxes fade their lines after a few seconds); settle: as
-// [`ROWS`].
+// PORT(choice): 10 s (FiveM's and MTA:SA's chat boxes fade their lines after a few seconds); tuning: as [`ROWS`]; the
+// game has no chat.
 pub const LINE_SECONDS: f64 = 10.0;
 pub const KEPT: usize = 32;
-// TODO(guess): a port choice — three names of at most 32 characters keep the notice within about two of the layer's
-// rows (a package name has at most 64); settle: what players of phase 6's servers ask for.
+// PORT(choice): three names of at most 32 characters keep the notice within about two of the layer's rows (a package
+// name has at most 64); tuning: what players of phase 6's servers ask for; the game has no chat.
 pub const MODS_NAMED: usize = 3;
 pub const MOD_NAME_CHARS: usize = 32;
 

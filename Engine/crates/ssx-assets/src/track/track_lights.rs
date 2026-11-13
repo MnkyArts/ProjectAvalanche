@@ -173,20 +173,20 @@ impl TrackLights {
     }
 }
 
-pub fn all_lights(db: &Db<'_>) -> Result<BTreeMap<&'static str, Vec<SceneLight>>> {
+pub fn all_lights(db: &Db) -> Result<BTreeMap<&'static str, Vec<SceneLight>>> {
     let mut out = BTreeMap::new();
     for (class, name) in
         [(CLASS_POINT, "ge_scene_pointlight"), (CLASS_SPOT, "ge_scene_spotlight"), (CLASS_BOX, "ge_scene_boxlight")]
     {
-        let keys: Vec<u32> = db.collections_of(1, class).map(|(k, _)| k).collect();
+        let keys: Vec<u32> = db.collections_of_all(class).into_iter().map(|(k, _)| k).collect();
         let lights = keys.into_iter().map(|k| scene_light(db, class, k)).collect::<Result<Vec<_>>>()?;
         out.insert(name, lights);
     }
     Ok(out)
 }
 
-pub fn all_light_nodes(db: &Db<'_>) -> Result<Vec<LightNode>> {
-    let keys: Vec<u32> = db.collections_of(1, CLASS_LIGHT_NODE).map(|(k, _)| k).collect();
+pub fn all_light_nodes(db: &Db) -> Result<Vec<LightNode>> {
+    let keys: Vec<u32> = db.collections_of_all(CLASS_LIGHT_NODE).into_iter().map(|(k, _)| k).collect();
     keys.into_iter().map(|k| light_node(db, k)).collect()
 }
 
@@ -200,7 +200,7 @@ fn placements(d: &FieldData) -> Vec<Placement> {
         .collect()
 }
 
-fn object_lights(db: &Db<'_>, class: u32, key: u32) -> Result<ObjectLights> {
+fn object_lights(db: &Db, class: u32, key: u32) -> Result<ObjectLights> {
     let mut o = ObjectLights { object: db.collection_name(key), key, lods: Vec::new(), controller_script: None };
     if let Some(f) = db.field(class, key, FIELD_CONTROLLER)?
         && let Some(r) = refs(&f.data).into_iter().find(|r| r.collection != 0)
@@ -229,7 +229,7 @@ struct Fields<'a> {
 }
 
 impl<'a> Fields<'a> {
-    fn new(db: &'a Db<'_>, class: u32, key: u32) -> Result<Self> {
+    fn new(db: &'a Db, class: u32, key: u32) -> Result<Self> {
         Ok(Fields {
             what: format!("{}/{}", db.class_name(class), db.collection_name(key)),
             fields: db.fields(class, key)?,
@@ -271,7 +271,7 @@ impl<'a> Fields<'a> {
     }
 }
 
-pub fn light_node(db: &Db<'_>, key: u32) -> Result<LightNode> {
+pub fn light_node(db: &Db, key: u32) -> Result<LightNode> {
     let f = Fields::new(db, CLASS_LIGHT_NODE, key)?;
     let light = match f.value("Light", fnv1("Light"))? {
         Value::Ref(r) if r.collection == 0 => None,
@@ -293,7 +293,7 @@ pub fn light_node(db: &Db<'_>, key: u32) -> Result<LightNode> {
     })
 }
 
-fn scene_light(db: &Db<'_>, class: u32, key: u32) -> Result<SceneLight> {
+fn scene_light(db: &Db, class: u32, key: u32) -> Result<SceneLight> {
     let f = Fields::new(db, class, key)?;
     let shape = match class {
         CLASS_POINT => {

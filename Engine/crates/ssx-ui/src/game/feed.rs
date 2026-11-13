@@ -16,6 +16,10 @@ use super::loc::Localization;
 use super::tricks::{TrickRecordView, trick_name};
 use super::values::{SplitsCallout, UiValue, UiValues, id};
 
+pub fn nis_is_active(s: &RiderState, x: &Session) -> bool {
+    x.flow.nis_active || s.start.is_some()
+}
+
 pub const TRICKY_WARN_TICKS: f32 = 120.0;
 
 // TODO(guess): true for every racer of the port (bots and ghosts keep their slot after their playback ended); the race leaderboard 0x824CC8B8 calls vt+0x28 of the racer record's +0x14 interface 0xD6FEE28B (at 0x824CCDD4; false → value −1, last); the player's actor component 0x82ABCFF0 registers 0xD6FEE28B with seven methods (0x82132568),
@@ -105,7 +109,7 @@ impl HudFeed {
                 ui.values.set_bool(0x188, false);
             }
             let drop = ui.nav.drop_key;
-            super::hud::show_drop_elements(&mut ui.values, drop);
+            super::hud::show_drop_elements(&mut ui.values, drop, x.event.setup.free_ride);
             if let Some(fe) = ui.fe.as_mut() {
                 super::fe::flow::race_start_camera(fe, &mut ui.values);
             }
@@ -184,10 +188,10 @@ impl HudFeed {
             self.finish_posted = true;
         }
         if x.event.state == EventState::LoopOutro && self.event_state != EventState::LoopOutro {
-            super::hud::set_hud_shown(&mut ui.values, false, false, ui.nav.drop_key);
+            super::hud::set_hud_shown(&mut ui.values, false, false, ui.nav.drop_key, x.event.setup.free_ride);
         }
         self.event_state = x.event.state;
-        ui.values.set_bool(id::NIS_IS_ACTIVE, x.flow.nis_active || s.start.is_some());
+        ui.values.set_bool(id::NIS_IS_ACTIVE, nis_is_active(s, x));
     }
 
     fn player_name(&self, ui: &GameUi) -> String {
@@ -225,16 +229,15 @@ impl HudFeed {
                 .collect()
         });
         let progress = x.event.progress;
-        self.trick.update(
-            &mut ui.values,
-            &mut ui.loc,
-            EventType::TrickBots,
-            &player,
-            s.score.score,
+        let frame = crate::game::leaderboard::TrickFrame {
+            event_type: EventType::TrickBots,
+            player: &player,
+            points: s.score.score,
             progress,
             world_tour,
-            &bots,
-        );
+            bots: &bots,
+        };
+        self.trick.update(&mut ui.values, &mut ui.loc, frame);
     }
 
     fn session_entrants(
@@ -366,7 +369,8 @@ impl HudFeed {
             }
             v.set(id::TOMBSTONE_LIST, UiValue::Markers(tombstone_list(cam, &tombstones)));
         } else if latch {
-            // TODO(guess): without a camera (the headless tools) the wingsuit timer sits at the stage centre (640, 541); settle: none (the viewer passes its camera, `HudFeed::camera`).
+            // PORT(choice): without a camera (the headless tools) the wingsuit timer sits at the stage centre (640,
+            // 541); the viewer passes its camera (`HudFeed::camera`), and the game always has one.
             v.set_float(id::WINGSUIT_TIMER_POS_X, 640.0);
             v.set_float(id::WINGSUIT_TIMER_POS_Y, 541.0);
         }
@@ -374,7 +378,7 @@ impl HudFeed {
 
     pub fn paused_frame(&self, ui: &mut GameUi, s: &RiderState, x: &Session) {
         self.project(ui, s, x);
-        ui.values.set_bool(id::NIS_IS_ACTIVE, x.flow.nis_active || s.start.is_some());
+        ui.values.set_bool(id::NIS_IS_ACTIVE, nis_is_active(s, x));
     }
 
     fn messages(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
@@ -506,7 +510,10 @@ fn survive_left(y: f32, end: f32) -> Option<f32> {
 const NO_PROMPT_DROPS: [u32; 3] = [0x28F6_34F8, 0xC145_699A, 0xB0F3_51A2];
 
 pub fn nis_prompt_shown(drop: u32, no_prompt: bool, tutorial: bool, loops: u32, session: bool) -> bool {
-    // TODO(guess): a port choice (the user's, 2026-11-08: a change of equipment makes no sense in a multiplayer session) — a network session's level counts as HUD_NONISPROMPT (UI 0x11A) raised: the game has no network sessions, and its own rule (0x11A set when the front end's frame state begins, 0x82381C88) leaves the prompt to a level restarted in place, which a session's next round on the same drop is (A_GameRestartStage); settle: none (no network sessions on the disc).
+    // PORT(choice): the user's, 2026-11-08 (a change of equipment makes no sense in a multiplayer session) — a network
+    // session's level counts as HUD_NONISPROMPT (UI 0x11A) raised; the game's own rule (0x11A set when the front end's
+    // frame state begins, 0x82381C88) leaves the prompt to a level restarted in place, which a session's next round on
+    // the same drop is (A_GameRestartStage); the game has no network sessions.
     !no_prompt && !session && !tutorial && loops == 0 && !NO_PROMPT_DROPS.contains(&drop)
 }
 

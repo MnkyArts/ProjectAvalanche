@@ -4,7 +4,9 @@ use ssx_ui::game::input::{Button, PADS};
 
 use super::GameUiRes;
 
-// TODO(guess): a PC keyboard map (Enter START, Space A, Backspace B, X, Y, arrows D-pad, Q / E bumpers, Z / C and Page Up / Page Down triggers — the lists' paging —, V Back), read as a pad device of its own (`KEYBOARD_DEVICE`); a gamepad's buttons are the pad's; settle: none (a port choice: the console reads pads only).
+// PORT(choice): a PC keyboard map (Enter START, Space A, Backspace B, X, Y, arrows D-pad, Q / E bumpers, Z / C and Page
+// Up / Page Down triggers — the lists' paging —, V Back), read as a pad device of its own (`KEYBOARD_DEVICE`); a
+// gamepad's buttons are the pad's; the console reads pads only.
 pub fn pad_presses(
     keys: &ButtonInput<KeyCode>,
     pads: &Query<(Entity, &Gamepad)>,
@@ -47,7 +49,8 @@ pub fn pad_presses(
     let keyboard = ssx_ui::game::input::KEYBOARD_DEVICE;
     let mut out: Vec<(Button, u8)> =
         map.iter().filter(|(k, _)| keys.just_pressed(*k)).map(|&(_, b)| (b, keyboard)).collect();
-    // TODO(guess): a port choice — F and the right stick's click are the server browser's search (`RAS`), the one key the browser needs beyond the game's controller map (which maps no stick click); settle: none (the port's screen).
+    // PORT(choice): F and the right stick's click are the server browser's search (`RAS`), the one key the browser
+    // needs beyond the game's controller map (which maps no stick click); the port's screen, none in the original.
     if search && keys.just_pressed(KeyCode::KeyF) {
         out.push((Button::Ras, keyboard));
     }
@@ -121,6 +124,11 @@ impl PadState {
     }
 }
 
+#[derive(Component)]
+pub struct ScriptPad;
+
+type PadQuery<'w, 's> = Query<'w, 's, (Entity, Has<Gamepad>, Has<ScriptPad>), With<GamepadSettings>>;
+
 #[derive(Resource, Default)]
 pub struct PadSlots {
     slots: [Option<Entity>; PADS],
@@ -140,17 +148,23 @@ impl PadSlots {
         self.slots.iter().position(|s| *s == Some(pad)).map(|d| d as u8)
     }
 
-    // TODO(guess): a new pad takes the lowest free device and a returning one its old device (the console's user indices); settle: none.
-    fn update(&mut self, pads: &Query<(Entity, Has<Gamepad>), With<GamepadSettings>>) -> Vec<(usize, bool)> {
-        let gamepads: Vec<(Entity, bool)> = pads.iter().collect();
+    // PORT(choice): a new pad takes the lowest free device and a returning one its old device; the console has its user
+    // indices.
+    fn update(&mut self, pads: &PadQuery) -> Vec<(usize, bool)> {
+        let gamepads: Vec<(Entity, bool, bool)> = pads.iter().collect();
         self.update_with(&gamepads)
     }
 
-    fn update_with(&mut self, gamepads: &[(Entity, bool)]) -> Vec<(usize, bool)> {
+    fn update_with(&mut self, gamepads: &[(Entity, bool, bool)]) -> Vec<(usize, bool)> {
         let first = usize::from(self.script_pad);
-        let connected = |e: Option<Entity>| e.is_some_and(|e| gamepads.iter().any(|&(g, c)| g == e && c));
-        for &(e, c) in gamepads {
+        let connected = |e: Option<Entity>| e.is_some_and(|e| gamepads.iter().any(|&(g, c, _)| g == e && c));
+        for &(e, c, script) in gamepads {
             if !c || self.slots.contains(&Some(e)) {
+                continue;
+            }
+            if script && self.script_pad {
+                info!("shell: gamepad {e} is the scripts' pad, device 0");
+                self.slots[0] = Some(e);
                 continue;
             }
             if let Some(d) = (first..PADS).find(|&d| !connected(self.slots[d])) {
@@ -170,11 +184,11 @@ impl PadSlots {
     }
 }
 
-// TODO(guess): the window's focus stands for the console's system UI (`XN_SYS_UI`, `fe::pads::system_ui`); settle: none.
-// TODO(guess): a start on the keyboard leaves every gamepad live; settle: none.
+// PORT(choice): the window's focus stands for the console's system UI (`XN_SYS_UI`, `fe::pads::system_ui`).
+// PORT(choice): a start on the keyboard leaves every gamepad live; the console reads pads only.
 pub fn pads_frame(
     mut slots: ResMut<PadSlots>,
-    gamepads: Query<(Entity, Has<Gamepad>), With<GamepadSettings>>,
+    gamepads: PadQuery,
     mut states: Query<(Entity, &mut Gamepad)>,
     mut focus: MessageReader<bevy::window::WindowFocused>,
     mut ui: ResMut<GameUiRes>,
@@ -226,16 +240,26 @@ mod tests {
         let mut s = PadSlots::default();
         assert_eq!(s.update_with(&[]), vec![(0, false), (1, false), (2, false), (3, false)]);
         s.synced = true;
-        assert_eq!(s.update_with(&[(a, true), (b, true)]), vec![(0, true), (1, true)]);
+        assert_eq!(s.update_with(&[(a, true, false), (b, true, false)]), vec![(0, true), (1, true)]);
         assert_eq!(s.device(b), Some(1));
-        assert_eq!(s.update_with(&[(a, false), (b, true)]), vec![(0, false)]);
-        assert_eq!(s.update_with(&[(a, true), (b, true)]), vec![(0, true)]);
+        assert_eq!(s.update_with(&[(a, false, false), (b, true, false)]), vec![(0, false)]);
+        assert_eq!(s.update_with(&[(a, true, false), (b, true, false)]), vec![(0, true)]);
         assert_eq!(s.device(a), Some(0));
-        assert_eq!(s.update_with(&[(a, false), (b, true), (c, true)]), vec![]);
+        assert_eq!(s.update_with(&[(a, false, false), (b, true, false), (c, true, false)]), vec![]);
         assert_eq!(s.device(c), Some(0));
         let mut t = PadSlots { script_pad: true, synced: true, ..Default::default() };
-        assert_eq!(t.update_with(&[(a, true)]), vec![(1, true)]);
+        assert_eq!(t.update_with(&[(a, true, false)]), vec![(1, true)]);
         assert_eq!(t.device(a), Some(1));
+    }
+
+    #[test]
+    fn the_scripts_gamepad_is_device_zero_in_a_test_run() {
+        let (a, p) = (Entity::from_raw_u32(10).unwrap(), Entity::from_raw_u32(11).unwrap());
+        let mut t = PadSlots { script_pad: true, synced: true, ..Default::default() };
+        assert_eq!(t.update_with(&[(a, true, false), (p, true, true)]), vec![(1, true)]);
+        assert_eq!((t.device(p), t.device(a)), (Some(0), Some(1)));
+        let mut s = PadSlots { synced: true, ..Default::default() };
+        assert_eq!(s.update_with(&[(p, true, true)]), vec![(0, true)]);
     }
 
     #[test]

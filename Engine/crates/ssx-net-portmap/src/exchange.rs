@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 
 use crate::Error;
 
-// TODO(guess): four of RFC 6886's nine tries (its 64 s would hold a server's start; the gateway is on the LAN and
-// answers in milliseconds); settle: real gateways' answer times.
+// PORT(choice): four of RFC 6886's nine tries (its 64 s would hold a server's start; the gateway is on the LAN and
+// answers in milliseconds); tuning: real gateways' answer times; the original has no dedicated server.
 pub const NATPMP_SCHEDULE: [Duration; 4] =
     [Duration::from_millis(250), Duration::from_millis(500), Duration::from_millis(1000), Duration::from_millis(2000)];
-// TODO(guess): two of RFC 6887's retransmissions (its MRD is unbounded for a client that keeps a mapping); settle: real
-// gateways' answer times.
+// PORT(choice): two of RFC 6887's retransmissions (its MRD is unbounded for a client that keeps a mapping); tuning:
+// real gateways' answer times; the original has no dedicated server.
 pub const PCP_SCHEDULE: [Duration; 2] = [Duration::from_secs(3), Duration::from_secs(6)];
 const BUF: usize = 2048;
 

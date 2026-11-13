@@ -223,8 +223,9 @@ const CONTROLS: [(&str, &str); 3] = [
     ),
     (
         "Keys on the mountain",
-        "Arrow keys or W A S D = left stick (steer, tuck, brake), Space = A (jump), I / J / L / K = Y / X / B / A, \
-         Shift = RT, Ctrl = LT, E = RB, Backspace = LB (rewind), Esc = START (pause).",
+        "Arrow keys or W A S D = left stick (steer, tuck, brake), Numpad 8 / 4 / 6 / 2 = right stick (grabs, up = \
+         jump, down = ready for the helicopter), Space = A (jump), I / J / L / K = Y / X / B / A, Shift = RT, \
+         Ctrl = LT, E = RB, Backspace = LB (rewind), Esc = START (pause).",
     ),
 ];
 

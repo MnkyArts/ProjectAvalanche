@@ -1,9 +1,10 @@
 use crate::DecodeError;
 use crate::name::drawable;
 
-// TODO(guess): 100 characters, two wrapped lines of the chat layer's 16-px text; leads (recalled, not re-read: this
+// PORT(choice): 100 characters, two wrapped lines of the chat layer's 16-px text; leads (recalled, not re-read: this
 // round had no network beyond loopback): MTA:SA's chat input and FiveM's chat resource cap a line at a few hundred
-// characters; settle: the chat layer's row measured at the widest glyphs (W, M, Œ) and what players type.
+// characters; tuning: the chat layer's row measured at the widest glyphs (W, M, Œ) and what players type; the original
+// has no chat.
 pub const MAX_CHAT_CHARS: usize = 100;
 
 pub const MAX_CHAT_BYTES: usize = MAX_CHAT_CHARS * 3;

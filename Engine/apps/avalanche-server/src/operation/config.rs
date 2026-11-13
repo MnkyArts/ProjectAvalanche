@@ -8,14 +8,14 @@ use toml::Spanned;
 
 use crate::config::ConfigError;
 
-// TODO(guess): 32 ranges (a scraper or two, a monitoring network, both address families); settle: the deployments
-// operators run.
+// PORT(choice): 32 ranges (a scraper or two, a monitoring network, both address families); tuning: the deployments
+// operators run; the original has no dedicated server.
 pub const MAX_METRICS_ALLOW: usize = 32;
 
-// TODO(guess): 60 s — long enough for a run in its last minute to finish (SSX's race drops run about one to four
+// PORT(choice): 60 s — long enough for a run in its last minute to finish (SSX's race drops run about one to four
 // minutes), short enough for systemd's stop timeout (90 s in our unit) and Docker's grace (90 s in our compose file)
-// with the results' display and the goodbyes after it; settle: the events' run times (the rival ghosts' durations) and
-// the supervisors operators use.
+// with the results' display and the goodbyes after it; tuning: the events' run times (the rival ghosts' durations) and
+// the supervisors operators use; the original has no dedicated server.
 pub const DEFAULT_ROUND_END_SECS: u32 = 60;
 pub const ROUND_END_SECS: std::ops::RangeInclusive<i64> = 0..=600;
 

@@ -119,7 +119,7 @@ impl GlobeScene {
         self.dispatches = self.dispatches.wrapping_add(1);
         self.state = msg;
         self.state_node = node;
-        self.sounds.extend_from_slice(state_sounds(msg));
+        self.audio.globe_state(msg, &mut self.sounds);
         self.controller_message(msg, node);
         match msg {
             3 => self.state = 4,
@@ -190,7 +190,7 @@ impl GlobeScene {
     fn peak_focus_scene(&mut self, peak: u32) {
         let Some(p) = self.nodes.peaks.get(&peak) else { return };
         self.peak_shot = p.shot_peak;
-        self.shots.queue(&[Segment::new(self.peak_shot, 3, 1.0)]);
+        self.shots.queue(&[Segment::new(self.peak_shot, 3, 1.0)], &mut self.audio);
         self.drop_level = false;
         self.scene_peak = peak;
     }
@@ -208,7 +208,7 @@ impl GlobeScene {
         let peak = d.peak;
         let index = self.nodes.drops_of(peak).filter(|o| o.screen_x < x).count();
         if self.drop_level && index != self.drop_index {
-            self.shots.queue(&[Segment::new(self.drop_shot, 3, 0.5)]);
+            self.shots.queue(&[Segment::new(self.drop_shot, 3, 0.5)], &mut self.audio);
         }
         self.drop_index = index;
         self.drop_count = self.nodes.drops_of(peak).count();
@@ -222,11 +222,11 @@ impl GlobeScene {
         let shots = self.data.globe.shots;
         let node_shot = |s: &Shot| (normalize(sub(s.look, s.offset)), s.offset, s.look);
         match msg {
-            3 => self.shots.go(shots[1], 1.0, Some(shots[0])),
-            5 => self.shots.go(shots[3], 0.5, None),
-            7 => self.shots.go(shots[3], 1.0, Some(shots[2])),
-            9 => self.shots.go(shots[4], 1.0, None),
-            11 => self.shots.go(shots[3], 1.0, None),
+            3 => self.shots.go(shots[1], 1.0, Some(shots[0]), &mut self.audio),
+            5 => self.shots.go(shots[3], 0.5, None, &mut self.audio),
+            7 => self.shots.go(shots[3], 1.0, Some(shots[2]), &mut self.audio),
+            9 => self.shots.go(shots[4], 1.0, None, &mut self.audio),
+            11 => self.shots.go(shots[3], 1.0, None, &mut self.audio),
             12 => {
                 self.drop_level = false;
                 if let Some(p) = self.nodes.peaks.get(&self.scene_peak) {
@@ -241,7 +241,10 @@ impl GlobeScene {
                     target: [0.0; 3],
                     fov: n.fov,
                 };
-                self.shots.queue(&[Segment::new(a, 5, 1.0), Segment::new(b, 0, 0.0), Segment::new(n, 6, 0.75)]);
+                self.shots.queue(
+                    &[Segment::new(a, 5, 1.0), Segment::new(b, 0, 0.0), Segment::new(n, 6, 0.75)],
+                    &mut self.audio,
+                );
             }
             14 => {
                 self.drop_level = false;
@@ -254,25 +257,28 @@ impl GlobeScene {
                     fov: n.fov,
                 };
                 let b = Shot { offset: APPROACH, look, target: [0.0; 3], fov: shots[4].fov };
-                self.shots.queue(&[Segment::new(a, 5, 0.75), Segment::new(b, 0, 0.0), Segment::new(shots[4], 6, 0.75)]);
+                self.shots.queue(
+                    &[Segment::new(a, 5, 0.75), Segment::new(b, 0, 0.0), Segment::new(shots[4], 6, 0.75)],
+                    &mut self.audio,
+                );
             }
             16 => {
                 if let Some(p) = self.nodes.peaks.get(&self.scene_peak) {
                     self.drop_shot = p.shot_drop;
                 }
-                self.shots.queue(&[Segment::new(self.drop_shot, 2, 0.5)]);
+                self.shots.queue(&[Segment::new(self.drop_shot, 2, 0.5)], &mut self.audio);
             }
             18 => {
                 self.drop_level = false;
-                self.shots.queue(&[Segment::new(self.peak_shot, 2, 0.5)]);
+                self.shots.queue(&[Segment::new(self.peak_shot, 2, 0.5)], &mut self.audio);
             }
             20 => {
                 let (dir, offset, _) = node_shot(&self.drop_shot);
                 let o = add(offset, scale(dir, 20.0));
                 let s = Shot { offset: o, look: add(o, dir), ..self.drop_shot };
-                self.shots.queue(&[Segment::new(s, 2, 1.0)]);
+                self.shots.queue(&[Segment::new(s, 2, 1.0)], &mut self.audio);
             }
-            21 => self.shots.queue(&[Segment::new(self.drop_shot, 2, 0.5)]),
+            21 => self.shots.queue(&[Segment::new(self.drop_shot, 2, 0.5)], &mut self.audio),
             _ => {}
         }
     }
@@ -430,37 +436,6 @@ impl Nearest {
     }
 }
 
-/// The UI sounds of a `FEGlobeUiTransitionMessage` dispatch (`FEGlobeAudioHandler` 0x82510FE8, cases 5…0x14; the
-/// ids are `UI_SOUNDS` entries). 5 `globe_intro` begins, 7 `globe_modeselect_intro` (`UI_SOUNDS[0x3F]`, read at
-/// 0x837F3A48 + 0x2F4), 0xC `RS_menu_select` + `trans_globe_range_start`, 0xD `trans_globe_range_transit`, 0xE
-/// `menu_back` + `trans_range_globe`, 0x10 `PS_menu_select` + `trans_range_to_peak`, 0x12 `menu_back` +
-/// `trans_peak_to_range`, 0x14 `DS_menu_select`.
-pub fn state_sounds(state: u32) -> &'static [i32] {
-    match state {
-        5 => &[0x3E],
-        7 => &[0x3F],
-        0xC => &[0x45, 0x39],
-        0xD => &[0x3A],
-        0xE => &[4, 0x3B],
-        0x10 => &[0x47, 0x3C],
-        0x12 => &[4, 0x38],
-        0x14 => &[0x49],
-        _ => &[],
-    }
-}
-
-/// The game manager's audio state 0x82511A90(n) → 0x82511348: 1 `RS_menu_highlight` (0x44), 2 `PS_menu_highlight`
-/// (0x46), 3 `DS_menu_highlight` (0x48). The range controller passes 1 (0x82556BD0), the peak controller 2
-/// (0x825545EC), the drop controller 3 (0x82552B44).
-pub fn highlight_sound(state: i32) -> Option<i32> {
-    match state {
-        1 => Some(0x44),
-        2 => Some(0x46),
-        3 => Some(0x48),
-        _ => None,
-    }
-}
-
 impl GlobeScene {
     pub fn update(&mut self, dt: f32, screen: u32, input: bool, flow: &dyn GlobeFlow) -> SceneEvents {
         self.time += dt;
@@ -472,7 +447,7 @@ impl GlobeScene {
         let mut ev = SceneEvents::default();
         self.entity_update();
         self.dispatch();
-        self.shots.step(dt);
+        self.shots.step(dt, &mut self.audio);
         if self.transition > 0 && self.shots.total <= 0.0 {
             self.transition -= 1;
         }
@@ -486,9 +461,7 @@ impl GlobeScene {
             } else if range_screen || matches!(self.state, 10 | 0xF) {
                 ev.range = self.camera_range(dt, input, flow);
                 if ev.range.is_some() {
-                    // the range controller's new focus passes 1 (0x82556BD0; peak 2 at 0x825545EC, drop 3 at
-                    // 0x82552B44) → 0x82511A90 → 0x82511348 plays RS_menu_highlight (0x44)
-                    ev.audio = Some(1);
+                    self.audio.highlight(1, &mut self.sounds);
                 }
                 ev.list_type = Some(1);
                 ran = true;
@@ -511,6 +484,13 @@ impl GlobeScene {
             self.camera_idle(dt);
         }
         self.dpad = 0.0;
+        // TODO(guess): the FE audio object's update (0x82511C58, from the FE game object's 0x824F9BE0, thunk
+        // 0x823F7740) and the globe entity's (0x824F7360: the queue 0x824F6368, thunk 0x823F4424) are two game
+        // objects' updates whose order in a frame was not traced (neither thunk is referenced as data or by an
+        // immediate); the port runs the audio object's after the globe's, and its state message (+0x10 screen, +0x14
+        // state, `FeAudio::adopt`) comes back from the audio after the UI's frame, so the globe's posts and the beat
+        // sync of a frame test the message of the frame before; settle: the game-object manager's update order.
+        self.audio.update(dt);
         ev
     }
 
@@ -562,7 +542,7 @@ impl GlobeScene {
             self.peak_repeat = 0.4;
             self.peak_focus_scene(k);
             ev.peak = Some(k);
-            ev.audio = Some(2);
+            self.audio.highlight(2, &mut self.sounds);
             ev.recommendation = Some(recommended_peak != 0 && recommended_peak == k);
         }
     }
@@ -608,7 +588,7 @@ impl GlobeScene {
             self.drop_repeat = 0.4;
             self.drop_focus_scene();
             ev.drop = Some(k);
-            ev.audio = Some(3);
+            self.audio.highlight(3, &mut self.sounds);
             ev.recommendation = Some(k == recommended);
         }
     }
@@ -669,29 +649,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn globe_states_play_their_sounds() {
+    fn globe_states_play_and_post_their_sounds() {
+        use crate::game::fe::globe::audio::{Beat, Post};
         let mut scene = GlobeScene::new(Default::default());
-        for (state, ids) in [
-            (5, &[0x3E][..]),
-            (7, &[0x3F]),
-            (0xC, &[0x45, 0x39]),
-            (0xD, &[0x3A]),
-            (0xE, &[4, 0x3B]),
-            (0x10, &[0x47, 0x3C]),
-            (0x12, &[4, 0x38]),
-            (0x14, &[0x49]),
-            (9, &[]),
+        scene.audio.beat_message(Beat { beat: 500, to_beat: 200, bar: 2000, to_bar: 200 });
+        scene.audio.adopt(crate::game::fe::screens::id::MAIN_MENU, 4);
+        for (state, plays, posts) in [
+            (5, &[][..], &[0x3E][..]),
+            (7, &[], &[0x3F]),
+            (0xC, &[0x45], &[0x39]),
+            (0xD, &[], &[0x3A]),
+            (0xE, &[4], &[0x3B]),
+            (0x10, &[0x47], &[0x3C]),
+            (0x12, &[4], &[0x38]),
+            (0x14, &[0x49], &[]),
+            (9, &[], &[]),
         ] {
             scene.state = 0;
             scene.sounds.clear();
+            scene.audio.posts.clear();
             scene.queue.push_back((state, 0));
             scene.dispatch();
-            assert_eq!(scene.sounds, ids, "state {state:#x}");
+            assert_eq!(scene.sounds, plays, "state {state:#x}");
+            let want: Vec<Post> = posts.iter().map(|&id| Post { id, delay_ms: 0.0 }).collect();
+            let got: Vec<Post> = scene.audio.posts.iter().copied().filter(|p| p.id != 0x3D).collect();
+            assert_eq!(got, want, "state {state:#x}");
+            assert_eq!(scene.audio.globe_state, state as i32);
         }
-    }
-
-    #[test]
-    fn highlight_states_map_to_sounds() {
-        assert_eq!([1, 2, 3, 0, 4].map(highlight_sound), [Some(0x44), Some(0x46), Some(0x48), None, None]);
     }
 }

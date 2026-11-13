@@ -50,11 +50,11 @@ pub fn load_drop_starts(big_root: &Path, track: &str) -> Result<Vec<DropStart>> 
     with_track_db(big_root, track, |db| drop_starts(db, track))
 }
 
-pub fn drop_starts(db: &Db<'_>, track: &str) -> Result<Vec<DropStart>> {
+pub fn drop_starts(db: &Db, track: &str) -> Result<Vec<DropStart>> {
     let track_key = fnv1(&format!("{track}_track"));
     {
         let mut out = Vec::new();
-        for (key, _) in db.collections_of(1, CLASS_DROP).collect::<Vec<_>>() {
+        for (key, _) in db.collections_of_all(CLASS_DROP) {
             let fields = db.fields(CLASS_DROP, key)?;
             let field = |k: u32| fields.iter().find(|f| f.key == k);
             if !matches!(field(FIELD_TRACK).and_then(|f| single(&f.data)), Some(Value::Ref(r)) if r.collection == track_key)
@@ -97,7 +97,7 @@ pub fn load_end_locator(big_root: &Path, track: &str, drop_key: u32) -> Result<O
     with_track_db(big_root, track, |db| end_locator(db, track, drop_key))
 }
 
-pub fn end_locator(db: &Db<'_>, track: &str, drop_key: u32) -> Result<Option<Vec3>> {
+pub fn end_locator(db: &Db, track: &str, drop_key: u32) -> Result<Option<Vec3>> {
     {
         let mut list = drop_scene_instances(db, drop_key)?;
         list.extend(track_scene_instances(db, track)?);
@@ -128,10 +128,10 @@ pub fn decode_placements(d: &FieldData) -> Vec<Placement> {
         .collect()
 }
 
-pub fn track_drop_keys(db: &Db<'_>, track: &str) -> Result<Vec<u32>> {
+pub fn track_drop_keys(db: &Db, track: &str) -> Result<Vec<u32>> {
     let track_key = fnv1(&format!("{track}_track"));
     let mut out = Vec::new();
-    for (key, _) in db.collections_of(1, CLASS_DROP).collect::<Vec<_>>() {
+    for (key, _) in db.collections_of_all(CLASS_DROP) {
         if matches!(db.field(CLASS_DROP, key, FIELD_TRACK)?.and_then(|f| single(&f.data)),
             Some(Value::Ref(r)) if r.collection == track_key)
         {
@@ -141,7 +141,7 @@ pub fn track_drop_keys(db: &Db<'_>, track: &str) -> Result<Vec<u32>> {
     Ok(out)
 }
 
-pub fn track_scene_instances(db: &Db<'_>, track: &str) -> Result<Vec<(u32, u32)>> {
+pub fn track_scene_instances(db: &Db, track: &str) -> Result<Vec<(u32, u32)>> {
     let track_key = fnv1(&format!("{track}_track"));
     let mut out = Vec::new();
     let Some(terrains) = db.field(CLASS_TRACK, track_key, FIELD_TRACK_TERRAIN)? else { return Ok(out) };
@@ -156,14 +156,14 @@ pub fn track_scene_instances(db: &Db<'_>, track: &str) -> Result<Vec<(u32, u32)>
     Ok(out)
 }
 
-pub fn drop_scene_instances(db: &Db<'_>, drop_key: u32) -> Result<Vec<(u32, u32)>> {
+pub fn drop_scene_instances(db: &Db, drop_key: u32) -> Result<Vec<(u32, u32)>> {
     Ok(match db.field(CLASS_DROP, drop_key, FIELD_DROP_SCENE_INSTANCES)? {
         Some(f) => refs(&f.data).into_iter().filter(|r| r.collection != 0).map(|r| (r.class, r.collection)).collect(),
         None => Vec::new(),
     })
 }
 
-pub fn trigger_volume_record(db: &Db<'_>, class: u32, key: u32) -> Result<TriggerVolumeRecord> {
+pub fn trigger_volume_record(db: &Db, class: u32, key: u32) -> Result<TriggerVolumeRecord> {
     let fields = db.fields(class, key)?;
     let get = |k: u32| fields.iter().find(|f| f.key == k).and_then(|f| single(&f.data));
     let vec4 = |k: u32| match get(k) {
@@ -189,7 +189,7 @@ pub fn trigger_volume_record(db: &Db<'_>, class: u32, key: u32) -> Result<Trigge
     })
 }
 
-pub fn instance_refs(db: &Db<'_>, (class, key): (u32, u32)) -> Result<Option<(RefSpec, RefSpec)>> {
+pub fn instance_refs(db: &Db, (class, key): (u32, u32)) -> Result<Option<(RefSpec, RefSpec)>> {
     let sif = db.fields(class, key)?;
     let reference = |k: u32| sif.iter().find(|f| f.key == k).and_then(|f| refs(&f.data).first().copied());
     let (Some(obj), Some(data)) = (reference(FIELD_GAMEOBJECT), reference(FIELD_INSTANCE_DATA)) else {
@@ -201,14 +201,14 @@ pub fn instance_refs(db: &Db<'_>, (class, key): (u32, u32)) -> Result<Option<(Re
     Ok(Some((obj, data)))
 }
 
-pub fn object_volumes(db: &Db<'_>, obj: RefSpec) -> Result<Vec<RefSpec>> {
+pub fn object_volumes(db: &Db, obj: RefSpec) -> Result<Vec<RefSpec>> {
     Ok(match db.field(obj.class, obj.collection, FIELD_TRIGGER_VOLUMES)? {
         Some(f) => refs(&f.data).into_iter().filter(|r| r.collection != 0).collect(),
         None => Vec::new(),
     })
 }
 
-pub fn instance_placements(db: &Db<'_>, data: RefSpec) -> Result<Vec<Placement>> {
+pub fn instance_placements(db: &Db, data: RefSpec) -> Result<Vec<Placement>> {
     Ok(match db.field(data.class, data.collection, FIELD_INSTANCE_DATA)? {
         Some(f) => decode_placements(&f.data),
         None => Vec::new(),
@@ -216,7 +216,7 @@ pub fn instance_placements(db: &Db<'_>, data: RefSpec) -> Result<Vec<Placement>>
 }
 
 pub fn place_volumes(
-    db: &Db<'_>,
+    db: &Db,
     volumes: &[RefSpec],
     placements: &[Placement],
     (object, instance): (u32, u32),
@@ -234,7 +234,7 @@ pub fn place_volumes(
     Ok(out)
 }
 
-pub fn drop_trigger_volumes(db: &Db<'_>, track: &str, drop_key: Option<u32>) -> Result<Vec<TriggerVolume>> {
+pub fn drop_trigger_volumes(db: &Db, track: &str, drop_key: Option<u32>) -> Result<Vec<TriggerVolume>> {
     let mut out = Vec::new();
     let mut add = |si: (u32, u32), scope: TriggerScope| -> Result<()> {
         let Some((obj, data)) = instance_refs(db, si)? else { return Ok(()) };

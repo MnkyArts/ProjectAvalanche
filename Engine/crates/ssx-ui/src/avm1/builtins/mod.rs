@@ -114,7 +114,8 @@ pub(crate) fn install(heap: &mut Heap) -> (ObjId, Protos, HashMap<ObjId, &'stati
     let (movieclip, textfield, textformat, loader) = movieclip::install(&mut b, global);
     let flash = b.obj();
     b.value(global, "flash", Value::Object(flash));
-    let (color, color_transform, transform, matrix, point, rectangle, filter) = geom::install(&mut b, global, flash);
+    let geom::GeomClasses { color, color_transform, transform, matrix, point, rectangle, filter } =
+        geom::install(&mut b, global, flash);
     misc::install(&mut b, global);
     for (p, n) in [
         (array, "Array"),

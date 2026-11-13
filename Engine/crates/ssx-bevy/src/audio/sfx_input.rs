@@ -93,7 +93,7 @@ pub fn reverb_zones(session: &Session, world: &World) -> [bool; 3] {
     REVERB_ZONES.map(|n| session.tracker.touching_name(&world.triggers, n))
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FrameEvents {
     pub rider_dead: bool,
     pub ended_by_death: bool,
@@ -337,7 +337,6 @@ pub struct SpeechTrack {
 }
 
 impl SpeechTrack {
-    #[allow(dead_code)]
     pub fn respawn(&mut self, sfx: &mut ssx_assets::sfx::SfxEngine) {
         if let Some(sp) = sfx.speech.as_mut() {
             sp.game.previous_death = self.last_death;
@@ -364,19 +363,20 @@ pub fn trick_msg(f: &ssx_physics::scoring::BanksFlushed) -> ssx_assets::sfx::spe
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn drive_speech(
-    sfx: &mut ssx_assets::sfx::SfxEngine,
-    s: &RiderState,
-    world: &World,
-    session: &Session,
-    step: &SpeechStep,
-    input: &InputTrack,
-    r: &RideAudio,
-    t: f32,
-    track: &mut SpeechTrack,
-) {
+#[derive(Clone, Copy)]
+pub struct SpeechInputs<'a> {
+    pub s: &'a RiderState,
+    pub world: &'a World,
+    pub session: &'a Session,
+    pub step: &'a SpeechStep,
+    pub input: &'a InputTrack,
+    pub r: &'a RideAudio,
+    pub t: f32,
+}
+
+pub fn drive_speech(sfx: &mut ssx_assets::sfx::SfxEngine, f: SpeechInputs, track: &mut SpeechTrack) {
     use ssx_assets::sfx::speech::{game::DeathCauses, game::SpeechFrame, vars::id};
+    let SpeechInputs { s, world, session, step, input, r, t } = f;
     let Some(sp) = sfx.speech.as_mut() else { return };
     if !track.set_up {
         track.set_up = true;
@@ -479,40 +479,83 @@ pub fn speech_pilot(big_root: &std::path::Path, heli: u32) -> anyhow::Result<(i3
     ssx_assets::sfx::speech::helicopter_pilot(big_root, heli)
 }
 
-pub fn speech_lang() -> String {
-    let lang = std::env::var("SSX_SPEECH_LANG").ok().filter(|l| matches!(l.as_str(), "eng" | "fre" | "ger"));
-    lang.unwrap_or_else(|| "eng".into())
+pub fn speech_code(lang: ssx_ui::game::loc::Language) -> &'static str {
+    use ssx_ui::game::loc::Language;
+    match lang {
+        Language::French => "fre",
+        Language::German => "ger",
+        Language::English | Language::Spanish | Language::Italian | Language::Japanese => "eng",
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn speech_setup(
-    big_root: &std::path::Path,
-    character: &str,
-    rider: &ssx_assets::sfx::RiderAudioInfo,
-    track: &ssx_assets::sfx::TrackAudioInfo,
-    pilot: (i32, String),
-    session: &Session,
-    drop: Option<u32>,
-    deadly_descent: bool,
-    seed: u32,
-) -> ssx_assets::sfx::speech::SpeechSetup {
-    let voice = ssx_assets::content::GameContent::of(big_root).voice_of(character);
-    let bank = match voice.as_str() {
-        "travisrice" => "travis",
-        "ty" => "tyler",
-        n => n,
-    };
-    ssx_assets::sfx::speech::SpeechSetup {
-        lang: speech_lang(),
-        rider: bank.to_string(),
-        rider_id: rider.speech_id,
-        pilot_id: pilot.0,
-        pilot: pilot.1,
-        region_id: track.region_id,
-        kind: speech_kind(session),
-        deadly_descent,
-        seed,
-        drop_info: drop.and_then(|k| ssx_assets::sfx::speech::drop_audio_game_info(big_root, k).ok().flatten()),
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpeechLanguage(&'static str);
+
+impl SpeechLanguage {
+    pub fn of(lang: Option<ssx_ui::game::loc::Language>) -> Self {
+        let asked = std::env::var("SSX_SPEECH_LANG").ok();
+        let asked = asked.and_then(|l| ["eng", "fre", "ger"].into_iter().find(|&code| code == l));
+        SpeechLanguage(asked.unwrap_or_else(|| lang.map_or("eng", speech_code)))
+    }
+
+    pub fn code(self) -> &'static str {
+        self.0
+    }
+}
+
+#[cfg(test)]
+mod speech_language_tests {
+    use super::*;
+    use ssx_ui::game::loc::Language;
+
+    #[test]
+    fn the_text_language_picks_the_speech_the_disc_has() {
+        assert_eq!(speech_code(Language::French), "fre");
+        assert_eq!(speech_code(Language::German), "ger");
+        for l in [Language::English, Language::Spanish, Language::Italian, Language::Japanese] {
+            assert_eq!(speech_code(l), "eng", "{l:?}");
+        }
+    }
+}
+
+pub struct SpeechDrop<'a> {
+    pub big_root: &'a std::path::Path,
+    pub character: &'a str,
+    pub rider: &'a ssx_assets::sfx::RiderAudioInfo,
+    pub track: &'a ssx_assets::sfx::TrackAudioInfo,
+    pub pilot: (i32, String),
+    pub session: &'a Session,
+    pub drop: Option<u32>,
+    pub deadly_descent: bool,
+    pub rng: ssx_assets::sfx::speech::context::SpeechRandom,
+    pub random: ssx_assets::career::random::Source,
+    pub lang: SpeechLanguage,
+}
+
+impl SpeechDrop<'_> {
+    pub fn setup(self) -> ssx_assets::sfx::speech::SpeechSetup {
+        let voice = ssx_assets::content::GameContent::of(self.big_root).voice_of(self.character);
+        let bank = match voice.as_str() {
+            "travisrice" => "travis",
+            "ty" => "tyler",
+            n => n,
+        };
+        let big_root = self.big_root;
+        ssx_assets::sfx::speech::SpeechSetup {
+            lang: self.lang.code().to_string(),
+            rider: bank.to_string(),
+            rider_id: self.rider.speech_id,
+            pilot_id: self.pilot.0,
+            pilot: self.pilot.1,
+            region_id: self.track.region_id,
+            kind: speech_kind(self.session),
+            deadly_descent: self.deadly_descent,
+            rng: self.rng,
+            random: self.random,
+            drop_info: self
+                .drop
+                .and_then(|k| ssx_assets::sfx::speech::drop_audio_game_info(big_root, k).ok().flatten()),
+        }
     }
 }
 
@@ -597,7 +640,6 @@ impl IntroAudio {
         })
     }
 
-    #[allow(dead_code)]
     pub fn heli(&self) -> Option<ssx_assets::sfx::heli::HeliTransform> {
         self.heli
     }
@@ -606,7 +648,6 @@ impl IntroAudio {
         self.reported
     }
 
-    #[allow(dead_code)]
     pub fn tags(&self) -> impl Iterator<Item = &ssx_assets::sfx::nis::NisAudioTag> {
         self.scenes.iter().flat_map(|s| s.tags.iter().flatten())
     }
@@ -670,10 +711,24 @@ impl IntroAudio {
     }
 }
 
-#[allow(dead_code)]
 pub fn nis_camera(s: &RiderState) -> Option<([f32; 3], [f32; 3])> {
     let intro = s.start.as_ref()?.intro.as_ref()?;
     let q = (s.traj_orientation * Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)).normalize();
     let v = intro.camera((q, s.traj))?;
     Some((v.position.to_array(), (v.rotation * ssx_physics::Vec3::X).to_array()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpeechStep;
+
+    #[test]
+    fn a_carried_step_merges_into_the_next() {
+        let carried = SpeechStep { race_start: true, death_timer_end: true, ..Default::default() };
+        let next = SpeechStep { ..Default::default() };
+        let m = SpeechStep::merge(Some(carried), Some(next)).expect("a step");
+        assert!(m.race_start && m.death_timer_end);
+        assert!(SpeechStep::merge(None, None).is_none());
+        assert!(SpeechStep::merge(Some(carried), None).is_some());
+    }
 }

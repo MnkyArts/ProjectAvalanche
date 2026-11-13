@@ -446,7 +446,7 @@ fn object_cost(
 }
 
 fn world_triangles(big_root: &Path, track: &str, objects: &TrackObjects, placements: &BTreeMap<usize, usize>) -> u64 {
-    let dir = big_root.join("data0/data/xenon/gameexplorer").join(track);
+    let Some(dir) = ssx_rules::data_roots::track_dir(big_root, track) else { return 0 };
     let terrain: u64 = crate::terrain::load_track(&dir)
         .map(|pieces| {
             pieces

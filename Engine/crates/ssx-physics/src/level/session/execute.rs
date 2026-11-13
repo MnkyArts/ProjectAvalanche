@@ -74,7 +74,8 @@ impl Session {
         let (input, tricks, r2, pad) =
             if self.pads_released { (&released.0, &released.1, 0.0, &released.2) } else { (input, tricks, r2, pad) };
         if self.pads_released {
-            (s.grind.pad_l2, s.wingsuit.pad_r1) = (false, false);
+            s.grind.release_l2();
+            s.wingsuit.pad_r1 = false;
         }
         let was_alive = s.death.is_alive();
         let in_gameplay = s.gameplay.is_some();
@@ -245,6 +246,11 @@ impl Session {
             && let Some(o) = self.objectives.as_mut()
         {
             o.runner.flags.set(&finish_flag, false, true);
+        }
+        if event.crossed
+            && let Some(o) = self.objectives.as_mut()
+        {
+            o.runner.flags.set(&crate::objectives::Name::new("FreerideFinish"), self.event.setup.free_ride, true);
         }
         if let Some(b) = self.bots.as_mut() {
             for (bot, r) in b.bots.iter_mut().zip(&self.event.racers) {

@@ -165,9 +165,9 @@ pub fn convert(bytes: &[u8], name: &str, limits: &Limits) -> Result<Converted, S
     info.mapped_glyphs = shapes.len();
     info.records = records;
     let metric = |v: i16| (f64::from(v) * scale).round();
-    // TODO(guess): a port choice — the line's metrics are hhea's ascender, descender and line gap (FreeType's and most
-    // engines' default; OS/2's typo metrics would differ for some fonts); the disc's fonts came through Adobe's exporter,
-    // whose mapping from a font file is not known; settle: none (a package font is the author's, not the disc's).
+    // PORT(choice): the line's metrics are hhea's ascender, descender and line gap (FreeType's and most engines'
+    // default; OS/2's typo metrics would differ for some fonts); the disc's fonts came through Adobe's exporter, whose
+    // mapping from a font file is not known; a package font is the author's, not the disc's.
     let ascent = metric(hhea.ascender().to_i16()).clamp(0.0, f64::from(u16::MAX)) as u16;
     let descent = (-metric(hhea.descender().to_i16())).clamp(0.0, f64::from(u16::MAX)) as u16;
     let leading = metric(hhea.line_gap().to_i16()).clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;

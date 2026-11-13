@@ -9,7 +9,6 @@ mod rider;
 #[cfg(feature = "scripts")]
 mod script;
 mod shell;
-#[allow(dead_code)]
 pub mod ui;
 
 pub use audio::{music, sfx, sfx_input};

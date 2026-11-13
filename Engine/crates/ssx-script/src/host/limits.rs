@@ -13,12 +13,12 @@ pub struct Budgets {
     pub chain_backstop: Duration,
 }
 
-// TODO(guess): the checkpoint budgets are port choices, not the game's: client 250 000 a call, 500 000 a chain, 50 000
-// a tick; server 1 250 000 / 2 500 000 / 100 000. They keep the plan's CPU budgets (client 10 ms a call, 20 ms a chain,
-// 2 ms a tick; server 50 / 100 / 4 ms) at 40 ns a checkpoint, a tight loop on the development machine's fastest core
-// at idle (measured: 38 ns; table writes 52, the string matcher 40, mixed handler code 77, GC churn 91); the chain is
-// twice a call so a callee's own runaway meets its own budget first. Settle: count the checkpoints of real gamemodes
-// and HUD packages (M7b / M8) per call and per tick.
+// PORT(choice): the checkpoint budgets: client 250 000 a call, 500 000 a chain, 50 000 a tick; server 1 250 000 / 2 500
+// 000 / 100 000. They keep the plan's CPU budgets (client 10 ms a call, 20 ms a chain, 2 ms a tick; server 50 / 100 / 4
+// ms) at 40 ns a checkpoint, a tight loop on the development machine's fastest core at idle (measured: 38 ns; table
+// writes 52, the string matcher 40, mixed handler code 77, GC churn 91); the chain is twice a call so a callee's own
+// runaway meets its own budget first; tuning: count the checkpoints of real gamemodes and HUD packages (M7b / M8) per
+// call and per tick; the game runs no mod scripts.
 const CLIENT_CALL: u64 = 250_000;
 const CLIENT_CHAIN: u64 = 500_000;
 const CLIENT_TICK: u64 = 50_000;
@@ -26,11 +26,11 @@ const SERVER_CALL: u64 = 1_250_000;
 const SERVER_CHAIN: u64 = 2_500_000;
 const SERVER_TICK: u64 = 100_000;
 
-// TODO(guess): each backstop is 8 times the plan's CPU budget (client 80 ms a call, 160 ms a chain, 16 ms a tick;
-// server 400 / 800 / 32 ms), a port choice: on the development machine (6 P, 8 E, 2 low-power cores) the same work
-// took up to 5.6 times its idle P-core CPU time (median of 30) on a low-power core with every core busy, 11.5 times
-// in one run; mixed handler code (77 ns a checkpoint) at a full call budget still meets the backstop first there.
-// Settle: the same measurement on the slowest machines the game supports, and on Windows.
+// PORT(choice): each backstop is 8 times the plan's CPU budget (client 80 ms a call, 160 ms a chain, 16 ms a tick;
+// server 400 / 800 / 32 ms): on the development machine (6 P, 8 E, 2 low-power cores) the same work took up to 5.6
+// times its idle P-core CPU time (median of 30) on a low-power core with every core busy, 11.5 times in one run; mixed
+// handler code (77 ns a checkpoint) at a full call budget still meets the backstop first there; tuning: the same
+// measurement on the slowest machines the game supports, and on Windows; the original runs no mod scripts.
 const K: u32 = 8;
 
 impl Budgets {

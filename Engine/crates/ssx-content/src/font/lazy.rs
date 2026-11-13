@@ -88,9 +88,9 @@ impl GlyphFont {
         }
         let scale = EM / f64::from(upem);
         let metric = |v: i16| (f64::from(v) * scale).round();
-        // TODO(guess): a port choice, as `convert`'s — the line metrics are hhea's ascender, descender and line gap
-        // (FreeType's and most engines' default; OS/2's typo metrics would differ for some fonts); settle: none (the
-        // shipped and the packages' fonts are not the disc's; the layout keeps the run font's line metrics anyway).
+        // PORT(choice): as `convert`'s — the line metrics are hhea's ascender, descender and line gap (FreeType's and
+        // most engines' default; OS/2's typo metrics would differ for some fonts); the layout keeps the run font's line
+        // metrics anyway; the shipped and the packages' fonts are not the disc's.
         let ascent = metric(hhea.ascender().to_i16()).clamp(0.0, f64::from(u16::MAX)) as u16;
         let descent = (-metric(hhea.descender().to_i16())).clamp(0.0, f64::from(u16::MAX)) as u16;
         let leading = metric(hhea.line_gap().to_i16()).clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;

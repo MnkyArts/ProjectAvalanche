@@ -164,6 +164,7 @@ pub struct EventSetup {
     pub objectives: Option<std::sync::Arc<crate::objectives::EventObjectives>>,
     pub message: crate::objectives::DropMessage,
     pub time_up_result: bool,
+    pub free_ride: bool,
 }
 
 impl EventSetup {
@@ -186,6 +187,7 @@ impl EventSetup {
             objectives: def.and_then(|d| d.objectives.clone()),
             message: def.map(|d| d.message.clone()).unwrap_or_default(),
             time_up_result: false,
+            free_ride: false,
         }
     }
 }

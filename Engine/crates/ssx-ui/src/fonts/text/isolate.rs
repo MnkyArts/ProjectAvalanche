@@ -1,6 +1,6 @@
-// TODO(guess): a port choice — two noncharacters as the layout's in-band isolate marks (Unicode reserves them for a
-// program's internal use; no text from outside reaches the layout with them, `shown` writes `?` for one); settle: none
-// (port feature).
+// PORT(choice): two noncharacters as the layout's in-band isolate marks (Unicode reserves them for a program's internal
+// use; no text from outside reaches the layout with them, `shown` writes `?` for one); the original has no fallback
+// fonts.
 pub const OPEN: char = '\u{FDD0}';
 pub const CLOSE: char = '\u{FDD1}';
 

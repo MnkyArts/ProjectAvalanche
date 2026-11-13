@@ -16,8 +16,8 @@ use crate::address::canonical;
 const TAG_DOMAIN: &[u8] = b"SSXA master challenge v1\0";
 const SECRET_DOMAIN: &[u8] = b"SSXA master one-time key v1\0";
 
-// TODO(guess): 65 536 (the global heartbeat rate, 500 a second, over a challenge's 30 s is 15 000); settle: a measured
-// heartbeat load of a public master.
+// PORT(choice): 65 536 (the global heartbeat rate, 500 a second, over a challenge's 30 s is 15 000); tuning: a measured
+// heartbeat load of a public master; the original has no master server.
 pub const MAX_USED: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

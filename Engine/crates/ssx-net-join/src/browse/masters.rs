@@ -21,7 +21,8 @@ use super::resolve::Lookup;
 pub type Roots = Option<Arc<Vec<ureq::tls::Certificate<'static>>>>;
 
 pub const STEP: Duration = Duration::from_millis(2500);
-// TODO(guess): 2 s for the lookup, 3 s to connect, 15 s in all; settle: the lists of real masters over real links.
+// PORT(choice): 2 s for the lookup, 3 s to connect, 15 s in all; tuning: the lists of real masters over real links; the
+// original has no server browser.
 pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(15);

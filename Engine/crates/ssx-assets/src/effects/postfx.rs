@@ -1,17 +1,17 @@
 mod cube;
-mod xml;
+pub(crate) mod xml;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use ssx_formats::attrib::collection::{self, Collection, DecodedCollection, Field, FieldData};
-use ssx_formats::attrib::{NameDict, Schema, Value, Vault};
+use ssx_formats::attrib::collection::Field;
+use ssx_formats::attrib::{FieldData, Value};
 
 pub use cube::{BlendMode, ColourCube, LayerKind, N as CUBE_SIZE, Stage, apply_stage, quantise};
 pub use xml::{XmlGroup, XmlLayer, XmlStack, parse_stack};
 
-use crate::vault_db::fnv1;
+use crate::vault_db::{Db, fnv1};
 
 pub const CLASS_POSTFX: u32 = fnv1("postfx");
 const CLASS_DROP: u32 = fnv1("ge_drop");
@@ -86,43 +86,6 @@ pub struct CubeBuild {
     pub needs_second_lut: bool,
 }
 
-struct VaultFiles {
-    vlt: Vec<u8>,
-    bin: Vec<u8>,
-}
-
-fn read_pair(vlt: &Path) -> Result<VaultFiles> {
-    let bin = vlt.with_extension("bin");
-    Ok(VaultFiles {
-        vlt: std::fs::read(vlt).with_context(|| format!("reading {}", vlt.display()))?,
-        bin: std::fs::read(&bin).with_context(|| format!("reading {}", bin.display()))?,
-    })
-}
-
-struct Decoded<'a> {
-    vault: Vault<'a>,
-    cols: Vec<Collection>,
-    decoded: Vec<DecodedCollection>,
-    index: HashMap<(u32, u32), usize>,
-    dict: NameDict,
-}
-
-fn with_vault<R>(big_root: &Path, name: &str, f: impl FnOnce(&Decoded<'_>) -> Result<R>) -> Result<R> {
-    let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let files = read_pair(&dir.join(name))?;
-    let schema_files = read_pair(&dir.join("attribdb_schema.vlt"))?;
-    let schema_vault = Vault::parse(&schema_files.vlt, &schema_files.bin)?;
-    let schema = Schema::from_vault(&schema_vault).context("reading the schema")?;
-    let vault = Vault::parse(&files.vlt, &files.bin).with_context(|| format!("parsing {name}"))?;
-    let cols = collection::collections(&vault)?;
-    let decoded = cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-    let index = collection::index(&cols);
-    let mut dict = NameDict::new();
-    dict.add_strings_from(&files.vlt);
-    dict.add_strings_from(&files.bin);
-    f(&Decoded { vault, cols, decoded, index, dict })
-}
-
 fn values(d: &FieldData) -> Vec<&Value> {
     match d {
         FieldData::Single(v) => vec![v],
@@ -134,126 +97,96 @@ fn be_u32(b: &[u8], at: usize) -> u32 {
     u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
 
-impl Decoded<'_> {
-    fn find(&self, class: u32, key: u32) -> Option<usize> {
-        self.index.get(&(class, key)).copied()
+fn colour_cube_blend(db: &Db, class: u32, source: u32, v: &Value) -> Result<ColourCubeBlend> {
+    let Value::Raw { bytes, .. } = v else { bail!("ColourCubeBlend is not a raw value") };
+    if bytes.len() != 16 || be_u32(bytes, 8) != 0 {
+        bail!("ColourCubeBlend: unexpected layout {bytes:02x?}");
     }
-
-    fn fields(&self, i: usize) -> Result<Vec<&Field>> {
-        Ok(collection::with_inherited(&self.cols, &self.decoded, &self.index, i)?.into_iter().map(|(_, f)| f).collect())
-    }
-
-    fn collection_name(&self, class_name: &str, i: usize) -> String {
-        let c = &self.cols[i];
-        match self.dict.get(c.key) {
-            Some(n) if fnv1(&format!("{class_name}/{n}")) == c.export_key => n.to_string(),
-            _ => format!("{:08x}", c.key),
-        }
-    }
-
-    fn raw_text(&self, v: &Value, offset: u32) -> Result<Option<String>> {
-        let Value::Raw { pointers, .. } = v else { bail!("not a raw value") };
-        match pointers.iter().find(|p| p.offset == offset) {
-            Some(p) => Ok(Some(self.vault.cstr(p.target)?)),
-            None => Ok(None),
-        }
-    }
-
-    fn colour_cube_blend(&self, v: &Value) -> Result<ColourCubeBlend> {
-        let Value::Raw { bytes, .. } = v else { bail!("ColourCubeBlend is not a raw value") };
-        if bytes.len() != 16 || be_u32(bytes, 8) != 0 {
-            bail!("ColourCubeBlend: unexpected layout {bytes:02x?}");
-        }
-        Ok(ColourCubeBlend {
-            stack: be_u32(bytes, 0),
-            mode: be_u32(bytes, 4),
-            group: self.raw_text(v, 8)?.context("ColourCubeBlend without a group name")?,
-            weight: f32::from_bits(be_u32(bytes, 12)),
-        })
-    }
-
-    fn preset(&self, name: &str) -> Result<PostFxPreset> {
-        self.preset_by_key(fnv1(name), name)
-    }
-
-    fn preset_by_key(&self, key: u32, name: &str) -> Result<PostFxPreset> {
-        let i = self.find(CLASS_POSTFX, key).with_context(|| format!("no postfx collection {name:?}"))?;
-        let mut p = PostFxPreset { name: name.to_string(), ..Default::default() };
-        let mut cur = Some(i);
-        while let Some(c) = cur {
-            p.chain.push(self.collection_name("postfx", c));
-            let parent = self.cols[c].parent;
-            cur = if parent == 0 { None } else { self.find(CLASS_POSTFX, parent) };
-            if p.chain.len() > self.cols.len() {
-                bail!("{name}: parent chain loops");
-            }
-        }
-        for f in self.fields(i)? {
-            let field = FIELD_NAMES
-                .iter()
-                .find(|n| fnv1(n) == f.key)
-                .map_or_else(|| format!("{:#010x}", f.key), |n| (*n).to_string());
-            let vals = values(&f.data);
-            match vals.first() {
-                Some(Value::Float(x)) => {
-                    p.floats.insert(field, *x);
-                }
-                Some(Value::Vector2(v)) => {
-                    p.vectors.insert(field, v.to_vec());
-                }
-                Some(Value::Vector3(v)) => {
-                    p.vectors.insert(field, v.to_vec());
-                }
-                Some(Value::Vector4(v)) => {
-                    p.vectors.insert(field, v.to_vec());
-                }
-                Some(Value::Ref(r)) if f.key == FIELD_LAYER && r.collection != 0 => {
-                    p.layer = Some(match self.find(r.class, r.collection) {
-                        Some(li) => self.collection_name("postfx_layers", li),
-                        None => format!("{:08x}", r.collection),
-                    });
-                }
-                Some(_) if f.key == FIELD_COLOUR_CUBE_BLEND => {
-                    p.colour_cubes = vals.into_iter().map(|v| self.colour_cube_blend(v)).collect::<Result<_>>()?;
-                }
-                _ => {}
-            }
-        }
-        Ok(p)
-    }
+    Ok(ColourCubeBlend {
+        stack: be_u32(bytes, 0),
+        mode: be_u32(bytes, 4),
+        group: db.value_text(class, source, v, 8)?.context("ColourCubeBlend without a group name")?,
+        weight: f32::from_bits(be_u32(bytes, 12)),
+    })
 }
 
-impl Decoded<'_> {
-    fn stacks(&self, big_root: &Path) -> Result<Vec<ColourStack>> {
-        let mut found = None;
-        for (i, c) in self.cols.iter().enumerate().filter(|(_, c)| c.class == CLASS_POSTFX) {
-            if let Some(f) = self.decoded[i].field(FIELD_COLOUR_CUBE_STACK) {
-                if found.is_some() {
-                    bail!("more than one postfx collection has a ColourCubeStack ({:08x})", c.key);
-                }
-                found = Some(f);
-            }
+fn preset(db: &Db, key: u32, name: &str) -> Result<PostFxPreset> {
+    db.find(CLASS_POSTFX, key).with_context(|| format!("no postfx collection {name:?}"))?;
+    let mut p = PostFxPreset { name: name.to_string(), ..Default::default() };
+    let mut cur = Some(key);
+    while let Some(k) = cur {
+        p.chain.push(db.collection_name(k));
+        let parent = db.parent(CLASS_POSTFX, k);
+        cur = (parent != 0).then_some(parent);
+        if p.chain.len() > db.vaults.iter().map(|v| v.cols.len()).sum() {
+            bail!("{name}: parent chain loops");
         }
-        let field = found.context("no postfx collection has a ColourCubeStack")?;
-        let dir = big_root.join("memresident/data/common/postfx/colourcube");
-        let mut out = Vec::new();
-        for v in values(&field.data) {
-            let Value::Raw { bytes, .. } = v else { bail!("ColourCubeStack is not a raw value") };
-            if bytes.len() != 8 {
-                bail!("ColourCubeStack entry of {} bytes", bytes.len());
-            }
-            let name = self.raw_text(v, 4)?.context("ColourCubeStack entry without a name")?;
-            let file = dir.join(format!("{name}.xml"));
-            let text = std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
-            let xml = parse_stack(&text).with_context(|| format!("parsing {}", file.display()))?;
-            if xml.name != name {
-                bail!("{} declares stack {:?}", file.display(), xml.name);
-            }
-            out.push(ColourStack { index: be_u32(bytes, 0), file, xml });
-        }
-        out.sort_by_key(|s| s.index);
-        Ok(out)
     }
+    for (source, f) in db.fields_with_source(CLASS_POSTFX, key)? {
+        let field = FIELD_NAMES
+            .iter()
+            .find(|n| fnv1(n) == f.key)
+            .map_or_else(|| format!("{:#010x}", f.key), |n| (*n).to_string());
+        let vals = values(&f.data);
+        match vals.first() {
+            Some(Value::Float(x)) => {
+                p.floats.insert(field, *x);
+            }
+            Some(Value::Vector2(v)) => {
+                p.vectors.insert(field, v.to_vec());
+            }
+            Some(Value::Vector3(v)) => {
+                p.vectors.insert(field, v.to_vec());
+            }
+            Some(Value::Vector4(v)) => {
+                p.vectors.insert(field, v.to_vec());
+            }
+            Some(Value::Ref(r)) if f.key == FIELD_LAYER && r.collection != 0 => {
+                p.layer = Some(match db.find(r.class, r.collection) {
+                    Some(_) => db.collection_name(r.collection),
+                    None => format!("{:08x}", r.collection),
+                });
+            }
+            Some(_) if f.key == FIELD_COLOUR_CUBE_BLEND => {
+                p.colour_cubes =
+                    vals.into_iter().map(|v| colour_cube_blend(db, CLASS_POSTFX, source, v)).collect::<Result<_>>()?;
+            }
+            _ => {}
+        }
+    }
+    Ok(p)
+}
+
+fn stacks(db: &Db, big_root: &Path) -> Result<Vec<ColourStack>> {
+    let mut found: Option<(u32, &Field)> = None;
+    for (key, _) in db.collections_of_all(CLASS_POSTFX) {
+        if let Some(f) = db.own_field(CLASS_POSTFX, key, FIELD_COLOUR_CUBE_STACK) {
+            if found.is_some() {
+                bail!("more than one postfx collection has a ColourCubeStack ({key:08x})");
+            }
+            found = Some((key, f));
+        }
+    }
+    let (source, field) = found.context("no postfx collection has a ColourCubeStack")?;
+    let fallback = big_root.join("memresident/data/common/postfx/colourcube");
+    let mut out = Vec::new();
+    for v in values(&field.data) {
+        let Value::Raw { bytes, .. } = v else { bail!("ColourCubeStack is not a raw value") };
+        if bytes.len() != 8 {
+            bail!("ColourCubeStack entry of {} bytes", bytes.len());
+        }
+        let name = db.value_text(CLASS_POSTFX, source, v, 4)?.context("ColourCubeStack entry without a name")?;
+        let rel = format!("data/common/postfx/colourcube/{name}.xml");
+        let file = crate::data_roots::find(big_root, &rel).unwrap_or_else(|| fallback.join(format!("{name}.xml")));
+        let text = std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
+        let xml = parse_stack(&text).with_context(|| format!("parsing {}", file.display()))?;
+        if xml.name != name {
+            bail!("{} declares stack {:?}", file.display(), xml.name);
+        }
+        out.push(ColourStack { index: be_u32(bytes, 0), file, xml });
+    }
+    out.sort_by_key(|s| s.index);
+    Ok(out)
 }
 
 pub fn build_cube(stacks: &[ColourStack], blends: &[ColourCubeBlend]) -> Result<CubeBuild> {
@@ -312,32 +245,30 @@ pub fn load_presets(big_root: &Path, names: &[&str]) -> Result<Vec<(PostFxPreset
 }
 
 fn disc_presets(big_root: &Path, names: &[&str]) -> Result<Vec<(PostFxPreset, CubeBuild)>> {
-    with_vault(big_root, "attribdb.vlt", |db| {
-        let stacks = db.stacks(big_root)?;
+    crate::vault_db::with_career_db(big_root, |db| {
+        let stacks = stacks(db, big_root)?;
         names
             .iter()
             .map(|name| {
-                let preset = db.preset(name)?;
-                let build =
-                    build_cube(&stacks, &preset.colour_cubes).with_context(|| format!("colour cube of {name}"))?;
-                Ok((preset, build))
+                let p = preset(db, fnv1(name), name)?;
+                let build = build_cube(&stacks, &p.colour_cubes).with_context(|| format!("colour cube of {name}"))?;
+                Ok((p, build))
             })
             .collect()
     })
 }
 
 pub fn load_preset_by_key(big_root: &Path, key: u32, name: &str) -> Result<PostFxPreset> {
-    with_vault(big_root, "attribdb.vlt", |db| db.preset_by_key(key, name))
+    crate::vault_db::with_career_db(big_root, |db| preset(db, key, name))
 }
 
 pub fn build_cube_for(big_root: &Path, blends: &[ColourCubeBlend]) -> Result<CubeBuild> {
-    with_vault(big_root, "attribdb.vlt", |db| build_cube(&db.stacks(big_root)?, blends))
+    crate::vault_db::with_career_db(big_root, |db| build_cube(&stacks(db, big_root)?, blends))
 }
 
 pub fn stack_groups(big_root: &Path) -> Result<Vec<(u32, String, Vec<String>)>> {
-    with_vault(big_root, "attribdb.vlt", |db| {
-        Ok(db
-            .stacks(big_root)?
+    crate::vault_db::with_career_db(big_root, |db| {
+        Ok(stacks(db, big_root)?
             .into_iter()
             .map(|s| (s.index, s.xml.name.clone(), s.xml.groups.iter().map(|g| g.name.clone()).collect()))
             .collect())
@@ -345,12 +276,14 @@ pub fn stack_groups(big_root: &Path) -> Result<Vec<(u32, String, Vec<String>)>> 
 }
 
 pub fn drop_postfx_names(big_root: &Path) -> Result<Vec<String>> {
-    with_vault(big_root, "ge_attribdb.vlt", |db| {
+    crate::vault_db::with_all_db(big_root, |db| {
         let mut out = Vec::new();
-        for (i, _) in db.cols.iter().enumerate().filter(|(_, c)| c.class == CLASS_DROP) {
-            let text = db.fields(i)?.into_iter().find(|f| f.key == FIELD_DROP_POSTFX).and_then(|f| match &f.data {
-                FieldData::Single(Value::Text(Some(t))) => Some(t.clone()),
-                _ => None,
+        for (key, _) in db.collections_of_all(CLASS_DROP) {
+            let text = db.fields(CLASS_DROP, key)?.into_iter().find(|f| f.key == FIELD_DROP_POSTFX).and_then(|f| {
+                match &f.data {
+                    FieldData::Single(Value::Text(Some(t))) => Some(t.clone()),
+                    _ => None,
+                }
             });
             out.extend(text);
         }

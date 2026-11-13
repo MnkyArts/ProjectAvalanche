@@ -87,6 +87,7 @@ pub struct VaultIndex {
     pub names: Names,
     pub vaults: Vec<VaultFile>,
     pub classes: HashMap<u32, String>,
+    pub unknown_classes: Vec<(u32, usize)>,
 }
 
 pub fn files_with_ext(root: &Path, ext: &str) -> Result<Vec<PathBuf>> {
@@ -139,16 +140,36 @@ impl VaultIndex {
         for t in &schema.types {
             names.insert(&t.name);
         }
+        let known: std::collections::HashSet<u32> = schema.classes.iter().map(|c| c.key).collect();
         let mut vaults = Vec::new();
+        let mut seen: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+        let mut unknown: BTreeMap<u32, usize> = BTreeMap::new();
         for vlt_path in files_with_ext(big, "vlt")? {
             let (vlt, bin) = (read(&vlt_path)?, read(&vlt_path.with_extension("bin"))?);
             names.add_strings_from(&vlt);
             names.add_strings_from(&bin);
             let v = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {}", vlt_path.display()))?;
             let cols = collection::collections(&v)?;
-            let decoded = cols.iter().map(|c| c.decode(&v, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-            let index = collection::index(&cols);
-            vaults.push(VaultFile { file: rel(big, &vlt_path), cols, decoded, index });
+            let mut kept_cols = Vec::with_capacity(cols.len());
+            let mut decoded = Vec::with_capacity(cols.len());
+            for c in cols {
+                if !seen.insert((c.class, c.key)) {
+                    continue;
+                }
+                if !known.contains(&c.class) {
+                    *unknown.entry(c.class).or_default() += 1;
+                    continue;
+                }
+                let d =
+                    c.decode(&v, &schema).with_context(|| format!("decoding {} of {}", c.key, vlt_path.display()))?;
+                kept_cols.push(c);
+                decoded.push(d);
+            }
+            if kept_cols.is_empty() {
+                continue;
+            }
+            let index = collection::index(&kept_cols);
+            vaults.push(VaultFile { file: rel(big, &vlt_path), cols: kept_cols, decoded, index });
         }
         for ext in ["fxo", "lua"] {
             for p in files_with_ext(big, ext)? {
@@ -160,7 +181,7 @@ impl VaultIndex {
                 classes.insert(c.key, n.to_string());
             }
         }
-        Ok(VaultIndex { names, vaults, classes })
+        Ok(VaultIndex { names, vaults, classes, unknown_classes: unknown.into_iter().collect() })
     }
 
     pub fn class_name(&self, class: u32) -> Option<&str> {

@@ -26,12 +26,29 @@ macro_rules! port_files {
 
 pub const FILES: &[(&str, &str)] = port_files![
     "views/ava_keyboard.json",
-    // TODO(guess): a port choice — the hub's rows show the item's name only, 60 px high: its cell plays `components.MainMenuCell`'s title-only frames (`Off->Highlight`, `Highlight`, `Unhighlight`: the bottom line at 53 px, 20 px above the `…Info` set's 73, a row of 60 where the `…Info` row is `DEFAULT_HEIGHT` 80) instead of the `…Info` set the class always plays; six rows make a panel of 6 · 60 − 5 · 10 + 5 − 14 = 301 px (421 with 80-px rows, to y 639 of 720); settle: none (the disc has no such menu: its main menu shows a description under each of its items).
+    // PORT(choice): the hub's rows show the item's name only, 60 px high: its cell plays `components.MainMenuCell`'s
+    // title-only frames (`Off->Highlight`, `Highlight`, `Unhighlight`: the bottom line at 53 px, 20 px above the
+    // `…Info` set's 73, a row of 60 where the `…Info` row is `DEFAULT_HEIGHT` 80) instead of the `…Info` set the class
+    // always plays; six rows make a panel of 6 · 60 − 5 · 10 + 5 − 14 = 301 px (421 with 80-px rows, to y 639 of 720);
+    // the disc has no such menu (its main menu shows a description under each of its items).
     "views/ava_hub.json",
-    // TODO(guess): a port choice — the maps' list (9 rows of 36 px, 2 apart, at (101, 252), 730 wide) gets the disc's scroll bar 1 px right of its rows as globaldrop places its own (views/globaldrop.gfx: `ListMenu` at x -110, `ROW_WIDTH` 220, the bar at x 111): x 832, from the rows' top for their height, 340 = 9 · 36 + 8 · 2 (the track listing's bar, views/activityfeedtracklisting.gfx, is 275 long beside 8 rows of 34); the bar runs over the table panel's edge (x 839) and ends 1 px before the details panel (x 849); settle: none (the disc has no such list).
+    // PORT(choice): the maps' list (9 rows of 36 px, 2 apart, at (101, 252), 730 wide) gets the disc's scroll bar 1 px
+    // right of its rows as globaldrop places its own (views/globaldrop.gfx: `ListMenu` at x -110, `ROW_WIDTH` 220, the
+    // bar at x 111): x 832, from the rows' top for their height, 340 = 9 · 36 + 8 · 2 (the track listing's bar,
+    // views/activityfeedtracklisting.gfx, is 275 long beside 8 rows of 34); the bar runs over the table panel's edge (x
+    // 839) and ends 1 px before the details panel (x 849); the disc has no such list.
     "views/ava_maps.json",
-    // TODO(guess): a port choice — the disc's `SettingsMenu` (5 rows, `MAX_VISIBLE_MENU_ROWS`) places no scroll bar, and the port's Options list has 7 rows (9 with the network); the bar (`components.ScrollBar`, 16 px wide) is placed as globaldrop places its own (views/globaldrop.gfx: 1 px right of its rows, `ListMenu` at x -110 with `ROW_WIDTH` 220, the bar at x 111) at x 571 (the menu's x 90 + its width 480 + 1), from the panel's top (y 190) for the panel's height, 251 = `ListMenu.RedrawPanel`'s 5 · 60 − 4 · 10 + 5 − 14; the menu is set up at the view's `Initialize` and shown at once, where `SettingsMenu` (0x05da…0x09be) hides it until `settings_init` is published and sets it up then (the provider answers that subscription in the same update); settle: none (the disc's list never scrolls).
-    // TODO(guess): a port choice — the rows are 480 wide where `SettingsMenu`'s are `MENU_WIDTH` 350: the cell's title fields (`components.ListMenuCellLarge`, edit texts 14 and 16: 394 px from x 20, the right edge at 414) run 64 px past a 350-px panel, under the bar, and the port's rows fill them ("Player Name: " and up to 20 characters; the disc's labels are short); at 480 the fields end 66 px inside the panel; a longer label is still cut at the field's edge; settle: none (the disc's labels fit its 350).
+    // PORT(choice): the port's Options list has 7 rows (9 with the network), where the disc's `SettingsMenu` (5 rows,
+    // `MAX_VISIBLE_MENU_ROWS`) places no scroll bar; the bar (`components.ScrollBar`, 16 px wide) is placed as
+    // globaldrop places its own (views/globaldrop.gfx: 1 px right of its rows, `ListMenu` at x -110 with `ROW_WIDTH`
+    // 220, the bar at x 111) at x 571 (the menu's x 90 + its width 480 + 1), from the panel's top (y 190) for the
+    // panel's height, 251 = `ListMenu.RedrawPanel`'s 5 · 60 − 4 · 10 + 5 − 14; the menu is set up at the view's
+    // `Initialize` and shown at once, where `SettingsMenu` (0x05da…0x09be) hides it until `settings_init` is published
+    // and sets it up then (the provider answers that subscription in the same update); the disc's list never scrolls.
+    // PORT(choice): the rows are 480 wide where `SettingsMenu`'s are `MENU_WIDTH` 350: the cell's title fields
+    // (`components.ListMenuCellLarge`, edit texts 14 and 16: 394 px from x 20, the right edge at 414) run 64 px past a
+    // 350-px panel, under the bar, and the port's rows fill them ("Player Name: " and up to 20 characters; the disc's
+    // labels are short); at 480 the fields end 66 px inside the panel. A longer label is still cut at the field's edge.
     "views/ava_options.json",
     "viewmodels/avakeyboard.vm",
     "viewmodels/avahub.vm",
@@ -61,7 +78,9 @@ pub const FILES: &[(&str, &str)] = port_files![
 
 #[cfg(feature = "net")]
 pub const NET_FILES: &[(&str, &str)] = port_files![
-    // TODO(guess): a port choice — the server browser's list (as the maps': 9 rows of 36 px at (101, 252), 730 wide) gets the disc's scroll bar 1 px right of its rows as globaldrop places its own (views/globaldrop.gfx: `ListMenu` at x -110, `ROW_WIDTH` 220, the bar at x 111): x 832, 340 long (9 · 36 + 8 · 2); settle: none (the disc has no such list).
+    // PORT(choice): the server browser's list (as the maps': 9 rows of 36 px at (101, 252), 730 wide) gets the disc's
+    // scroll bar 1 px right of its rows as globaldrop places its own (views/globaldrop.gfx: `ListMenu` at x -110,
+    // `ROW_WIDTH` 220, the bar at x 111): x 832, 340 long (9 · 36 + 8 · 2); the disc has no such list.
     "views/ava_browser.json",
     "viewmodels/avaserverbrowser.vm",
     "viewmodels/avabrowserfilters.vm",
@@ -75,7 +94,9 @@ pub const NET_FILES: &[(&str, &str)] = port_files![
     "popups/ava_options_message.pop",
     "popups/ava_name_refused.pop",
     "popups/ava_name_settings_broken.pop",
-    // TODO(guess): a port choice — the Players screen's list (9 rows of 34 px, 2 apart, at (190, 298), 900 wide) gets the disc's scroll bar 1 px right of its rows as globaldrop places its own (views/globaldrop.gfx: the bar 1 px right of `ROW_WIDTH` 220): x 1091, 322 long (9 · 34 + 8 · 2); settle: none (the disc has no such list).
+    // PORT(choice): the Players screen's list (9 rows of 34 px, 2 apart, at (190, 298), 900 wide) gets the disc's
+    // scroll bar 1 px right of its rows as globaldrop places its own (views/globaldrop.gfx: the bar 1 px right of
+    // `ROW_WIDTH` 220): x 1091, 322 long (9 · 34 + 8 · 2); the disc has no such list.
     "views/ava_players.json",
     "views/ava_chat.json",
     "views/ava_quickchat.json",

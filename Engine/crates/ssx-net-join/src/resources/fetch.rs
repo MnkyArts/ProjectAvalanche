@@ -11,15 +11,16 @@ use super::source::{Source, agent};
 
 pub const ATTEMPTS: u32 = 5;
 pub const FIRST_WAIT: Duration = Duration::from_millis(500);
-// TODO(guess): 64 MiB a request (a map's largest file is about 200 MiB of models); settle: downloads of players on
-// public servers.
+// PORT(choice): 64 MiB a request (a map's largest file is about 200 MiB of models); tuning: downloads of players on
+// public servers; the original has no dedicated server.
 pub const MAX_REQUEST_BYTES: u64 = 64 << 20;
-// TODO(guess): 32 KiB/s and 10 s (the server's `MIN_FILE_RATE` and connection time); settle: as the server's.
+// PORT(choice): 32 KiB/s and 10 s (the server's `MIN_FILE_RATE` and connection time); tuning: as the server's; the
+// original has no dedicated server.
 pub const MIN_RATE: u64 = 32 << 10;
 pub const BODY_GRACE: Duration = Duration::from_secs(10);
 const READ: usize = 64 << 10;
-// TODO(guess): 30 s (a source's five attempts wait 7.5 s in all, its connection 5 s, a request's body 10 s before its
-// rate counts); settle: two game processes joining on one line.
+// PORT(choice): 30 s (a source's five attempts wait 7.5 s in all, its connection 5 s, a request's body 10 s before its
+// rate counts); tuning: two game processes joining on one line; the original has no dedicated server.
 pub const OTHER_STALL: Duration = Duration::from_secs(30);
 const OTHER_POLL: Duration = Duration::from_millis(100);
 

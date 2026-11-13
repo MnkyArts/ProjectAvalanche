@@ -10,8 +10,8 @@ pub enum ResultsExit {
     Quit,
 }
 
-// TODO(guess): 10 s, a port choice well above the menu's activation (a few UI frames; the restart stage's own loading
-// screen comes after it); settle: the activation's frames measured in a window's rounds.
+// PORT(choice): 10 s, well above the menu's activation (a few UI frames; the restart stage's own loading screen comes
+// after it); tuning: the activation's frames measured in a window's rounds; the original has no real-time multiplayer.
 pub const RESULTS_EXIT_WAIT_S: f64 = 10.0;
 
 #[derive(Clone, Debug, PartialEq)]

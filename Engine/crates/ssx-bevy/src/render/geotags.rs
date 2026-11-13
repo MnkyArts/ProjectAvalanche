@@ -142,11 +142,8 @@ pub struct Geotags {
     profile: ssx_assets::career::Profile,
 }
 
-pub fn seed() -> u32 {
-    std::env::var("SSX_GEOTAG_SEED")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(ssx_physics::session::geotags::DEFAULT_GEOTAG_SEED)
+pub fn seed() -> Option<u32> {
+    std::env::var("SSX_GEOTAG_SEED").ok().and_then(|v| v.trim().parse().ok())
 }
 
 fn to_mesh(m: ssx_assets::object_mesh::ObjectMesh) -> Mesh {
@@ -183,7 +180,7 @@ fn load_all(root: &Path, track: &str, riding: bool) -> Result<Option<Loaded>> {
     let diffuse = texture_2d(&load_chain(root, &id, &ssx_content::texture::Want::PLANE)?, Texels::Linear, default());
     let track_key = data.track_key;
     let fly = (!riding)
-        .then(|| GeotagRun::new(Arc::new(data), |_| false, &mut ssx_physics::session::bots::Mt19937::seeded(seed())));
+        .then(|| GeotagRun::new(Arc::new(data), |_| false, &mut ssx_assets::career::random::Source::seeded(seed())));
     let (diffuse_id, root_dir) = (id, root.to_path_buf());
     Ok(Some(Loaded {
         assets,

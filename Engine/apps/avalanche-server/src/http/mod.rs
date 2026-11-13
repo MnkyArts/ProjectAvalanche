@@ -35,35 +35,38 @@ use limits::{AddressLimiter, Connections, Rate, Verdict};
 use crate::bridge::{JoinTask, Shared};
 use crate::config::Config;
 
-// TODO(guess): 256 overall and 8 per address (a browser's list refresh opens one per server; a join three in turn);
-// settle: phase 4's public servers under a measured connection flood.
+// PORT(choice): 256 overall and 8 per address (a browser's list refresh opens one per server; a join three in turn);
+// tuning: phase 4's public servers under a measured connection flood; the original has no dedicated server.
 pub const MAX_CONNECTIONS: usize = 256;
 pub const MAX_CONNECTIONS_PER_ADDRESS: u32 = 8;
-// TODO(guess): 5 s for the head, 10 s for the whole connection, 32 headers (a join's three requests carry a few
+// PORT(choice): 5 s for the head, 10 s for the whole connection, 32 headers (a join's three requests carry a few
 // hundred bytes and fewer than 10 headers from the client's ureq; the 8 KiB head is hyper's smallest buffer, a fact,
-// not a guess); settle: the slowest real client a public server must still serve (phase 4's links).
+// not a choice); tuning: the slowest real client a public server must still serve (phase 4's links); the original has
+// no dedicated server.
 pub const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_HEAD_BYTES: usize = 8192;
 pub const MAX_HEADERS: usize = 32;
 
-// TODO(guess): /info and /players 4 a second (burst 8), /challenge 2 (burst 4), /join 1 (burst 4), anything else 2
-// (burst 4); settle: the request rates of phase 5's server browser and of the master's reachability check.
+// PORT(choice): /info and /players 4 a second (burst 8), /challenge 2 (burst 4), /join 1 (burst 4), anything else 2
+// (burst 4); tuning: the request rates of phase 5's server browser and of the master's reachability check; the original
+// has no dedicated server.
 pub const INFO_RATE: Rate = Rate { per_second: 4.0, burst: 8.0 };
 pub const PLAYERS_RATE: Rate = INFO_RATE;
 pub const CHALLENGE_RATE: Rate = Rate { per_second: 2.0, burst: 4.0 };
 pub const JOIN_RATE: Rate = Rate { per_second: 1.0, burst: 4.0 };
 pub const OTHER_RATE: Rate = Rate { per_second: 2.0, burst: 4.0 };
-// TODO(guess): 64 file requests a second with a burst of 512, 1 report a second with a burst of 8; settle: joins of
-// real servers' resource sets (measured: M8a's template map and the alps0101 layout, 5 files each).
+// PORT(choice): 64 file requests a second with a burst of 512, 1 report a second with a burst of 8; tuning: joins of
+// real servers' resource sets (measured: M8a's template map and the alps0101 layout, 5 files each); the original has no
+// dedicated server.
 pub const RESOURCES_RATE: Rate = INFO_RATE;
 pub const FILES_RATE: Rate = Rate { per_second: 64.0, burst: 512.0 };
 pub const REPORT_RATE: Rate = Rate { per_second: 1.0, burst: 8.0 };
 pub const JOIN_FLOOD: Rate = Rate { per_second: 4.0 / 30.0, burst: 4.0 };
-// TODO(guess): 4 a second with a burst of 8 (four held joins' asks, and a slow request's ask arriving with the next);
-// settle: with `held::ASK_AFTER_MS` and `held::MAX_HELD_PER_ADDRESS`.
+// PORT(choice): 4 a second with a burst of 8 (four held joins' asks, and a slow request's ask arriving with the next);
+// tuned with `held::ASK_AFTER_MS` and `held::MAX_HELD_PER_ADDRESS`; the original has no dedicated server.
 pub const HELD_RATE: Rate = Rate { per_second: 4.0, burst: 8.0 };
-// TODO(guess): 4 096 addresses per limiter; settle: phase 4's public servers.
+// PORT(choice): 4 096 addresses per limiter; tuning: phase 4's public servers; the original has no dedicated server.
 pub const TRACKED_ADDRESSES: usize = 4096;
 
 pub struct HttpState {

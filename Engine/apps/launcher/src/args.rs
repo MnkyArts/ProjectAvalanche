@@ -16,10 +16,13 @@ pub struct Args {
     pub page: Option<Page>,
     pub tab: Option<String>,
     pub window: Option<[f32; 2]>,
+    pub scroll: f32,
     pub hover: Option<String>,
     pub dump_art: Option<PathBuf>,
     pub after_setup: bool,
     pub install: Option<PathBuf>,
+    pub dlc_install: Option<PathBuf>,
+    pub tuner_install: Option<PathBuf>,
     pub keys: Vec<(Key, bool)>,
     pub link: Option<String>,
     pub host: Vec<crate::host::Action>,
@@ -56,8 +59,11 @@ impl Args {
                     out.window = Some(window_size(v).ok_or(format!("--window {v}: a size like 1280x720"))?);
                 }
                 "--hover" => out.hover = Some(value()?.clone()),
+                "--scroll" => out.scroll = value()?.parse().map_err(|_| "--scroll N".to_string())?,
                 "--dump-art" => out.dump_art = Some(PathBuf::from(value()?)),
                 "--install" => out.install = Some(PathBuf::from(value()?)),
+                "--dlc-install" => out.dlc_install = Some(PathBuf::from(value()?)),
+                "--tuner-install" => out.tuner_install = Some(PathBuf::from(value()?)),
                 "--after-setup" => out.after_setup = true,
                 "--host" => {
                     let names = value()?;
@@ -75,6 +81,9 @@ impl Args {
                     let key = |name: &str| match name {
                         "up" => Ok(Key::ArrowUp),
                         "down" => Ok(Key::ArrowDown),
+                        "end" => Ok(Key::End),
+                        "pgdown" => Ok(Key::PageDown),
+                        "pgup" => Ok(Key::PageUp),
                         "enter" => Ok(Key::Enter),
                         "esc" => Ok(Key::Escape),
                         "tab" => Ok(Key::Tab),
@@ -129,6 +138,9 @@ mod tests {
         assert!(parse("--no-update-check").unwrap().no_update_check);
         assert_eq!(parse("").unwrap(), Args::default());
         assert_eq!(parse("--unknown x").unwrap(), Args::default());
+        assert_eq!(parse("--scroll 400").unwrap().scroll, 400.0);
+        assert_eq!(parse("--dlc-install dump.zip").unwrap().dlc_install, Some(PathBuf::from("dump.zip")));
+        assert_eq!(parse("--tuner-install ssxvprofile").unwrap().tuner_install, Some(PathBuf::from("ssxvprofile")));
     }
 
     #[test]

@@ -6,6 +6,8 @@ use glam::Vec3;
 use ssx_formats::attrib::collection::{self, FieldData};
 use ssx_formats::attrib::{Schema, Value, Vault, fnv1};
 
+use ssx_assets::career::random::GameRandom;
+
 use crate::event::Rival;
 
 pub const CLASS_BOT_CATCHUP: u32 = fnv1(b"bot_catchup");
@@ -250,53 +252,6 @@ pub fn character_name(key: u32) -> &'static str {
     CHARACTER_NAMES.iter().copied().find(|n| fnv1(n.as_bytes()) == key).unwrap_or("griff")
 }
 
-#[derive(Clone, Debug)]
-pub struct Mt19937 {
-    mt: Box<[u32; 624]>,
-    index: usize,
-}
-
-impl Mt19937 {
-    pub fn seeded(seed: u32) -> Self {
-        let mut mt = Box::new([0u32; 624]);
-        let mut s = seed | 1;
-        for w in mt.iter_mut() {
-            let m = s.wrapping_mul(69_069);
-            *w = (s & 0xFFFF_0000) | (m >> 16);
-            s = m.wrapping_mul(69_069).wrapping_add(69_070);
-        }
-        let mut g = Self { mt, index: 0 };
-        g.twist();
-        g
-    }
-
-    fn twist(&mut self) {
-        let mt = &mut self.mt;
-        for k in 0..624 {
-            let y = (mt[k] & 0x8000_0000) | (mt[(k + 1) % 624] & 0x7FFF_FFFF);
-            mt[k] = mt[(k + 397) % 624] ^ (y >> 1) ^ if y & 1 != 0 { 0x9908_B0DF } else { 0 };
-        }
-        self.index = 0;
-    }
-
-    pub fn next_u32(&mut self) -> u32 {
-        if self.index >= 624 {
-            self.twist();
-        }
-        let mut y = self.mt[self.index];
-        self.index += 1;
-        y ^= y >> 11;
-        y ^= (y << 7) & 0x9D2C_5680;
-        y ^= (y << 15) & 0xEFC6_0000;
-        y ^ (y >> 18)
-    }
-
-    pub fn below(&mut self, n: u32) -> u32 {
-        ((u64::from(self.next_u32()) * u64::from(n)) >> 32) as u32
-    }
-}
-
-// TODO(guess): the game seeds its generator from the CPU time base (`FUN_82FFCED0`, `FUN_831504C0`): the bot rows are random per play; the port seeds with 1 (`ride_sim --bot-seed`, `SSX_BOT_SEED`); settle: none — the game's choice is not reproducible.
 pub const DEFAULT_BOT_SEED: u32 = 1;
 
 #[derive(Clone, Debug)]
@@ -340,7 +295,7 @@ impl BotRace {
         big_root: &Path,
         def: &crate::event::EventDef,
         data: &BotData,
-        rng: &mut Mt19937,
+        rng: &mut dyn GameRandom,
         course: Option<crate::event::Course>,
     ) -> (Self, Vec<String>) {
         let chars = data.rival_characters.get(&def.key).cloned().unwrap_or_default();
@@ -354,7 +309,7 @@ impl BotRace {
         big_root: &Path,
         def: &crate::event::EventDef,
         data: &BotData,
-        rng: &mut Mt19937,
+        rng: &mut dyn GameRandom,
         course: Option<crate::event::Course>,
     ) -> Option<(Self, Vec<String>)> {
         use crate::event::EventType;

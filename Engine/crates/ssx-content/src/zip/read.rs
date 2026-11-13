@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use super::{
     CENTRAL_SIG, DESCRIPTOR_SIG, END_SIG, FLAG_DESCRIPTOR, KNOWN_FLAGS, LOCAL_SIG, MAX_COMMENT, MAX_EXTRA,
-    MAX_VERSION_NEEDED, Method, ZIP64_LOCATOR_SIG, ZipError, ZipLimits, method_name, refused, shown,
+    MAX_VERSION_NEEDED, Method, ZIP64_LOCATOR_SIG, ZipError, ZipLimits, ZipNames, method_name, refused, shown,
 };
 use crate::hash::ContentHash;
 use crate::path::{MAX_PACKAGE_DEPTH, MAX_PATH_LEN, check_package_path};
@@ -163,7 +163,11 @@ fn entry_of(c: &Central, limits: &ZipLimits) -> Result<ZipEntry, ZipError> {
     if path.len() > MAX_PATH_LEN {
         return Err(refused(format!("{what}: a name over {MAX_PATH_LEN} bytes")));
     }
-    check_package_path(path, false).map_err(|e| refused(format!("{what}: {e}")))?;
+    match limits.names {
+        ZipNames::Package => check_package_path(path, false),
+        ZipNames::PlayerDump => check_dump_path(path),
+    }
+    .map_err(|e| refused(format!("{what}: {e}")))?;
     if path.split('/').count() > MAX_PACKAGE_DEPTH {
         return Err(refused(format!("{what}: nested deeper than {MAX_PACKAGE_DEPTH} folders")));
     }
@@ -201,6 +205,18 @@ fn entry_of(c: &Central, limits: &ZipLimits) -> Result<ZipEntry, ZipError> {
         )));
     }
     Ok(ZipEntry { name: path.to_string(), folder, method, crc32: c.crc, stored, size, data_start: 0 })
+}
+
+fn check_dump_path(path: &str) -> Result<(), String> {
+    for seg in path.split('/') {
+        if seg.starts_with(' ') || seg.ends_with(' ') || seg.contains(" .") {
+            return Err(format!(
+                "{} has a segment with a space at its start, end or before a '.'",
+                ssx_core::text::quoted(path)
+            ));
+        }
+    }
+    check_package_path(&path.replace(' ', "_"), false)
 }
 
 fn check_names(entries: &[ZipEntry]) -> Result<(), ZipError> {

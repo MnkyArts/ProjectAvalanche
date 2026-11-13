@@ -112,8 +112,8 @@ pub fn render_height_valid(height: u32) -> bool {
     (MIN_RENDER_HEIGHT..=MAX_SIDE).contains(&height)
 }
 
-// TODO(guess): a port choice — the render resolution is a height in lines, the width following the window's shape
-// (1080p on 16:9 is 1920 x 1080, on 21:9 2560 x 1080); settle: none (the console had one output resolution).
+// PORT(choice): the render resolution is a height in lines, the width following the window's shape (1080p on 16:9 is
+// 1920 x 1080, on 21:9 2560 x 1080); the console had one output resolution.
 pub fn render_size(window: (u32, u32), height: Option<u32>) -> Option<(u32, u32)> {
     let height = height.filter(|&h| render_height_valid(h))?;
     let (w, h) = window;

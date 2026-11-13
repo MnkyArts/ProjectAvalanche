@@ -1,14 +1,14 @@
 use anyhow::{Context, Result, bail};
 
-struct Tag<'a> {
-    name: &'a str,
-    closing: bool,
-    self_closing: bool,
+pub(crate) struct Tag<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) closing: bool,
+    pub(crate) self_closing: bool,
     attrs: Vec<(&'a str, &'a str)>,
 }
 
 impl Tag<'_> {
-    fn attr(&self, key: &str) -> Option<&str> {
+    pub(crate) fn attr(&self, key: &str) -> Option<&str> {
         self.attrs.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
     }
 
@@ -46,7 +46,7 @@ fn parse_tag(body: &str) -> Result<Tag<'_>> {
     Ok(Tag { name, closing, self_closing, attrs })
 }
 
-fn tags(text: &str) -> Result<Vec<Tag<'_>>> {
+pub(crate) fn tags(text: &str) -> Result<Vec<Tag<'_>>> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(start) = rest.find('<') {

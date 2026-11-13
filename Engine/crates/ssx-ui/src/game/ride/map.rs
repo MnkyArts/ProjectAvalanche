@@ -19,7 +19,11 @@ impl MapRun<'_> {
     }
 }
 
-// TODO(guess): a port choice — a map's ride pays nothing into the career (the game's `Results_Process` 0x8251D5D8 pays the reward by `UiDrop_DropType` — 1 World Tour 0x8251CAB0, 0 Explore 0x8251D008, else 0 — and always the bonuses 0x825195A0, money (AddCredits) and XP 0x8238DC18, a map has no ui_drop): no reward, bonus, money, XP, badge or stats; its record is kept as `explore_scores` keeps a drop's (best, attempts, deaths, fewest rewinds) in the mod state; settle: the user's decision on career progress from maps.
+// PORT(choice): a map's ride pays nothing into the career: no reward, bonus, money, XP, badge or stats; its record is
+// kept as `explore_scores` keeps a drop's (best, attempts, deaths, fewest rewinds) in the mod state; career progress
+// from maps is the user's decision; the game's `Results_Process` 0x8251D5D8 pays the reward by `UiDrop_DropType` — 1
+// World Tour 0x8251CAB0, 0 Explore 0x8251D008, else 0 — and always the bonuses 0x825195A0, money (AddCredits) and XP
+// 0x8238DC18, and a map has no ui_drop.
 pub fn post_map_results(
     ui: &mut GameUi,
     event_type: i32,

@@ -8,7 +8,10 @@ pub struct NewGameHost {
 }
 
 pub fn signed_in(fe: &mut FrontEnd, env: &mut FeEnv, device: i32) {
-    // TODO(guess): a port choice — the gamertag (`USER_gamertag`, UI 0x22B; in the port this sign-in and a confirmed player name are its only writers) and picture come from Xbox Live; the port's sign-in writes the player name (the launcher's `settings.json` `player_name`, else `Player`), which the Options and the name prompt write again when it changes; settle: none (no Live in the port).
+    // PORT(choice): the port's sign-in writes the player name (the launcher's `settings.json` `player_name`, else
+    // `Player`), which the Options and the name prompt write again when it changes (in the port this sign-in and a
+    // confirmed player name are the only writers of `USER_gamertag`, UI 0x22B); no Live in the port: the game's
+    // gamertag and picture come from Xbox Live.
     env.values.set_str(0x22B, super::ava::profile_name(fe));
     env.values.set_bool(0x22D, false);
     env.values.set_bool(0x22E, false);
@@ -63,7 +66,16 @@ pub fn launch(fe: &mut FrontEnd, env: &mut FeEnv, drop: u32, direct: bool) {
     env.values.set_int(0xB4, drop as i32);
     let mut l: Launch = super::globe::launch_info(fe, drop);
     l.direct = direct;
+    if fe.free_ride_drop == Some(drop) {
+        fe.free_ride_drop = None;
+        l.free_ride = true;
+    }
     launch_with(fe, env, l);
+}
+
+pub fn launch_free_ride(fe: &mut FrontEnd, env: &mut FeEnv, drop: u32, direct: bool) {
+    fe.free_ride_drop = Some(drop);
+    launch(fe, env, drop, direct);
 }
 
 pub const MAP_GAME_MODE: i64 = 2;
@@ -99,6 +111,9 @@ fn launch_with(fe: &mut FrontEnd, env: &mut FeEnv, mut l: Launch) {
         rider,
         if direct { ", direct" } else { "" }
     ));
+    if l.free_ride {
+        fe.note("free ride: the drop's event with the Freeride flag (no explore ghosts or objective messages, a loop)");
+    }
     fe.in_drop = true;
     fe.game_pause.reset();
     fe.go_to_screen(env, screens::id::LOADING);
@@ -107,7 +122,8 @@ fn launch_with(fe: &mut FrontEnd, env: &mut FeEnv, mut l: Launch) {
 }
 
 fn commit_setup(fe: &mut FrontEnd, env: &mut FeEnv, l: &mut Launch) -> String {
-    let inv = fe.equipment.inv.take().unwrap_or_else(|| Box::new(super::inventory::Inventory::new(&fe.career)));
+    let mut inv = fe.equipment.inv.take().unwrap_or_else(|| Box::new(super::inventory::Inventory::new(&fe.career)));
+    inv.store.clear_shown_special();
     l.setup = super::setup::commit(&inv, &fe.career, &fe.profile, env.loc);
     fe.equipment.inv = Some(inv);
     l.rider = match fe.career.riders.iter().find(|r| r.key == l.setup.character && l.setup.character != 0) {
@@ -203,11 +219,12 @@ pub struct LevelStart {
     pub streamed: bool,
     pub countdown: i32,
     pub query: bool,
+    pub nis: bool,
 }
 
 impl Default for LevelStart {
     fn default() -> Self {
-        LevelStart { set_up: false, due: false, streamed: false, countdown: -1, query: false }
+        LevelStart { set_up: false, due: false, streamed: false, countdown: -1, query: false, nis: false }
     }
 }
 
@@ -298,8 +315,27 @@ pub fn do_continue(fe: &mut FrontEnd, _env: &mut FeEnv) {
     (fe.load_latches.quit_pending, fe.load_latches.screen_loaded) = (true, false);
 }
 
+fn consume_mods(fe: &mut FrontEnd, env: &mut FeEnv) {
+    use crate::game::values::{UiValue, id};
+    let mut inv = fe.equipment.inv.take().unwrap_or_else(|| Box::new(super::inventory::Inventory::new(&fe.career)));
+    let consumed = inv.consume_mods(&mut fe.profile);
+    if !inv.equipped[3].is_empty() && !inv.equipped[0].is_empty() {
+        let drop = super::inventory::DropInfo::of(&fe.career, &fe.profile, fe.equipment.drop);
+        inv.survival = inv.survival_score(&fe.career, &fe.profile, drop.as_ref());
+        env.values.set_int(0x6C, inv.survival);
+    }
+    env.values.set(id::BOOST_NOTIFICATION, UiValue::Boosts(Vec::new()));
+    if !consumed.is_empty() {
+        fe.note(format!("FUN_82493450: the mods {consumed:x?} consumed"));
+    }
+    fe.equipment.inv = Some(inv);
+    fe.equipment.rebuild("dp_equipment_items");
+    fe.publish.push("dp_equipment_items".into());
+}
+
 pub fn leave_level(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.load_latches.quit_pending = false;
+    consume_mods(fe, env);
     fe.level_start = LevelStart::default();
     fe.busy.add(env, super::busy::LEVEL);
     fe.requests.push(super::pause::GameRequest::Quit);
@@ -388,6 +424,7 @@ fn quit_or_quick_select(fe: &mut FrontEnd, env: &mut FeEnv) {
 
 pub fn game_quit(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.note("FE manager +0x40 (message 0xB0E2239A)");
+    consume_mods(fe, env);
     fe.level_start = LevelStart::default();
     fe.busy.add(env, super::busy::LEVEL);
     fe.requests.push(super::pause::GameRequest::Quit);

@@ -151,7 +151,10 @@ fn authors_line(authors: &[String]) -> String {
     names.join(", ")
 }
 
-// TODO(guess): a port choice — the authors' lines wrap at 60 characters, by count: the roll's two fields (`txtA` / `txtB` of `views/activityfeedcredits.gfx`, DefineEditText 5 / 6) are 21 365 twips (1 068 px) wide with a 30-px font (`h` 600), about 70 characters of DIN; settle: a wrap by the font's advances against the field's width.
+// PORT(choice): the authors' lines wrap at 60 characters, by count: the roll's two fields (`txtA` / `txtB` of
+// `views/activityfeedcredits.gfx`, DefineEditText 5 / 6) are 21 365 twips (1 068 px) wide with a 30-px font (`h` 600),
+// about 70 characters of DIN; a wrap by the font's advances against the field's width would replace the count; these
+// lines are the port's, the disc's `credits.txt` has none of them.
 const ROLL_LINE: usize = 60;
 
 fn wrap(text: &str) -> Vec<String> {

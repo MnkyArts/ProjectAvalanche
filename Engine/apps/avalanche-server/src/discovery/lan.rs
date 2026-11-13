@@ -12,8 +12,8 @@ use super::{GlobalLimiter, Stats};
 use crate::http::limits::{AddressLimiter, Rate, Verdict};
 
 pub const LAN_RATE: Rate = super::query::QUERY_RATE;
-// TODO(guess): 200 answers a second (a LAN of a few dozen browsers probing every 2 s), 1 024 addresses; settle: a LAN
-// party's measured probes.
+// PORT(choice): 200 answers a second (a LAN of a few dozen browsers probing every 2 s), 1 024 addresses; tuning: a LAN
+// party's measured probes; the original has no dedicated server.
 pub const GLOBAL_RATE: Rate = Rate { per_second: 200.0, burst: 400.0 };
 pub const TRACKED: usize = 1024;
 pub const INTERFACES_EVERY: Duration = Duration::from_secs(30);

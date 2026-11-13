@@ -107,6 +107,9 @@ pub trait World {
     fn ui_flag(&mut self, _id: u16) -> Option<bool> {
         None
     }
+    fn free_ride(&mut self) -> Option<bool> {
+        None
+    }
     fn drop_message(&mut self) -> Option<DropMessage> {
         None
     }

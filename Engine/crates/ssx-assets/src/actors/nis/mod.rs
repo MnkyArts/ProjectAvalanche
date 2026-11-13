@@ -243,6 +243,7 @@ pub struct GameStateTag {
     pub value: f32,
     pub mode: u32,
     pub reset_on_leave: bool,
+    pub default: f32,
     pub spline: Vec<f32>,
 }
 

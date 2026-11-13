@@ -1,6 +1,6 @@
 use super::{
     KIND_BOOST, KIND_GEAR, KIND_GEOTAG, KIND_SUIT, Request, SLOT_ANY, SLOT_SUIT_BOTTOM, SLOT_SUIT_TOP, Store,
-    StoreContext, StoreData, StoreItem, fits_rider, stat_gear_type,
+    StoreContext, StoreData, StoreDraws, StoreItem, fits_rider, stat_gear_type,
 };
 
 fn scale(value: i64, factor: f32) -> i64 {
@@ -85,7 +85,7 @@ impl Store {
             item.descriptions[0] = tops[self.rng.pick(tops.len())];
         }
         if item.slot == SLOT_SUIT_TOP && !bottoms.is_empty() {
-            if self.rng.below(100) < data.tables.suit_match_chance {
+            if self.rng.below_i(100) < data.tables.suit_match_chance {
                 let id = data.description(item.descriptions[0]).map(|d| d.id);
                 if let Some(b) = bottoms.iter().find(|&&b| data.description(b).map(|d| d.id) == id) {
                     item.descriptions[1] = *b;
@@ -111,7 +111,7 @@ impl Store {
             stats: [(-1, 0); 6],
             ..Default::default()
         };
-        let roll = self.rng.below(1000);
+        let roll = self.rng.below_i(1000);
         let mut cum = 0;
         for (i, w) in tb.rarity_weights.iter().enumerate() {
             cum += w;
@@ -129,10 +129,10 @@ impl Store {
         item.special = req.special;
         item.slot = t.slot;
         item.charlock = req.charlock;
-        if req.charlock == 0 && self.rng.below(100) < t.charlock_chance && ctx.rider != 0 {
+        if req.charlock == 0 && self.rng.below_i(100) < t.charlock_chance && ctx.rider != 0 {
             item.charlock = ctx.rider;
         }
-        item.mystery = req.special && self.rng.below(100) < tb.mystery_chance;
+        item.mystery = req.special && self.rng.below_i(100) < tb.mystery_chance;
         let n = tb.durations.len();
         let d = if req.special { self.rng.pick(n) } else { n.saturating_sub(1) };
         item.duration_ms = tb.durations.get(d).copied().unwrap_or(0) * 60_000;
@@ -158,7 +158,7 @@ impl Store {
         }
         let cap = tb.stat_cap.min(100);
         if n >= 1 {
-            let fav = self.rng.below(n as i64 + 1) as usize;
+            let fav = self.rng.below_i(n as i64 + 1) as usize;
             let bump = if fav != n { 5 } else { 0 };
             let per = (100 / n as i64 - bump).max(0);
             let mut w: Vec<i64> = (0..n).map(|i| if i == fav { per + n as i64 * bump } else { per }).collect();
@@ -173,7 +173,7 @@ impl Store {
             let mut full = 0;
             while points > 0 && full < n {
                 full = 0;
-                let r = if range > 0 { self.rng.below(range + 1) } else { 0 };
+                let r = if range > 0 { self.rng.below_i(range + 1) } else { 0 };
                 let mut acc = 0;
                 for (wi, stat) in w.iter_mut().zip(item.stats.iter_mut()) {
                     acc += *wi;
@@ -194,7 +194,7 @@ impl Store {
             }
         }
         let mut bonus = false;
-        if item.rarity >= tb.bonus_min_rarity && self.rng.below(100) < t.bonus_chance {
+        if item.rarity >= tb.bonus_min_rarity && self.rng.below_i(100) < t.bonus_chance {
             if !t.bonus_stats.is_empty() {
                 item.stats[5].0 = t.bonus_stats[self.rng.pick(t.bonus_stats.len())];
             }

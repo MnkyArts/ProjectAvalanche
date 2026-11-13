@@ -21,10 +21,10 @@ impl DisplayClass {
     pub const WIDESCREEN: DisplayClass = DisplayClass { widescreen: true };
 
     pub fn of_window(width: u32, height: u32) -> DisplayClass {
-        // Port feature: the console told the movies its video mode's widescreen flag (`XGetVideoMode` at 0x82FB57A0:
-        // 1280 × 720 or 960 × 720); a PC window has no such flag, so its shape is classed by the movies' own test
+        // PORT(choice): a PC window has no widescreen flag, so its shape is classed by the movies' own test
         // (`ViewUtil.IsWidescreen`: displayWidth / displayHeight > 1.55, classloader.gfx 0x0f9f): 16:10 (1.6) is
-        // widescreen, 3:2 (1.5) and 4:3 are not.
+        // widescreen, 3:2 (1.5) and 4:3 are not; the console told the movies its video mode's widescreen flag
+        // (`XGetVideoMode` at 0x82FB57A0: 1280 × 720 or 960 × 720).
         let widescreen = height == 0 || f64::from(width) / f64::from(height) > SD_PROPORTIONS_UPPER_BOUND;
         DisplayClass { widescreen }
     }
@@ -92,10 +92,11 @@ fn reposition_if_sd(cx: &mut Ctx, _this: Value, a: &[Value]) -> R {
     }
     if let Some(id) = cx.display_of(&clip) {
         keep(&mut cx.vm.natives.sd_moves, cx.player, id, anchored_left);
-        // Port feature for ultrawide windows: the HUD's side panels (its RepositionIfSD clips) move out to the
-        // window's edges; the game's HUD keeps to the 16:9 stage.
+        // PORT(choice): for windows wider than 16:9 — the HUD's `RepositionIfSD` clips (its side panels, under an
+        // `ssx_hud*` clip) move out by the window's extra stage width towards their side; the console's displays are
+        // 16:9 or 4:3.
         if in_hud(cx.player, id) {
-            let extra = cx.vm.natives.hud_extra;
+            let extra = cx.player.hud_extra;
             if extra > 0.0 {
                 let x = number(cx, &clip, "_x")?;
                 cx.set_member(&clip, "_x", Value::Number(if anchored_left { x - extra } else { x + extra }))?;
@@ -121,12 +122,6 @@ fn in_hud(player: &Player, id: InstanceId) -> bool {
         }
     }
     false
-}
-
-static HUD_EXTRA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-pub fn hud_extra() -> f32 {
-    f32::from_bits(HUD_EXTRA.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 pub fn hud_extra_for(width: u32, height: u32) -> f64 {
@@ -189,12 +184,11 @@ fn move_kept(cx: &mut Ctx, widescreen: bool) -> usize {
 
 impl GameUi {
     pub fn set_hud_extra(&mut self, vm: &mut Vm, lib: &mut Library, player: &mut Player, extra: f64) {
-        HUD_EXTRA.store((extra as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
-        if (extra - vm.natives.hud_extra).abs() < 0.5 {
+        if (extra - player.hud_extra).abs() < 0.5 {
             return;
         }
+        player.hud_extra = extra;
         let mut cx = vm.ctx(lib, player);
-        cx.vm.natives.hud_extra = extra;
         let mut kept = std::mem::take(&mut cx.vm.natives.hud_wide);
         kept.retain(|c, _| cx.player.get(*c).is_some());
         for (&id, (left, applied)) in kept.iter_mut() {
@@ -225,7 +219,12 @@ impl GameUi {
         if !changed {
             return;
         }
-        // TODO(guess): a port choice — the console's display never changed while the game ran (`XGetVideoMode` once, 0x82FB57A0); a window crossing the 1.55 bound gets the new display at once in `_global`, the UI values `FE_Display*` and `ViewUtil.mIsWidescreen` (the per-update readers), the kept `RepositionIfSD` clips (205 calls in 54 movies) moved by 136, the hint panel's places and the globe's peak shots for it, and every loaded view unloaded and loaded again at the front end's next rest (35 `IsWidescreen` reads in 27 movies, most at a view's initialisation); settle: none (the port's window).
+        // PORT(choice): a window crossing the 1.55 bound gets the new display at once in `_global`, the UI values
+        // `FE_Display*` and `ViewUtil.mIsWidescreen` (the per-update readers), the kept `RepositionIfSD` clips (205
+        // calls in 54 movies) moved by 136, the hint panel's places and the globe's peak shots for it, and every loaded
+        // view unloaded and loaded again at the front end's next rest (35 `IsWidescreen` reads in 27 movies, most at a
+        // view's initialisation); the port's window; the console's display never changed while the game ran
+        // (`XGetVideoMode` once, 0x82FB57A0).
         let moved = move_kept(&mut cx, class.widescreen);
         self.hud.hint.set_wide(&mut cx, class.widescreen);
         if let Some(fe) = self.fe.as_mut() {

@@ -4,7 +4,8 @@ use crate::vm::{Lua, LuaError};
 
 pub fn open(l: &mut Lua) {
     let t = l.lib_table("os");
-    // TODO(guess): the console runtime's clock / time / date cannot be reproduced; these give the host's time; settle: none needed — no game script reads them (only `navtester.lua` calls `os.exit`).
+    // PORT(choice): these give the host's time; no game script reads them (only `navtester.lua` calls `os.exit`); the
+    // console runtime's clock / time / date cannot be reproduced.
     let start = std::time::Instant::now();
     l.lib_fn(t, "clock", move |_, _| one(start.elapsed().as_secs_f64()));
     l.lib_fn(t, "time", |l, a| {

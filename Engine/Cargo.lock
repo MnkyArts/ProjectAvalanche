@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "asset-viewer"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bevy",
@@ -662,7 +662,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "avalanche-game"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bevy",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "avalanche-launcher"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "avalanche-master"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "clap",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "avalanche-server"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "avalanche-master",
@@ -4356,8 +4356,6 @@ dependencies = [
 [[package]]
 name = "gilrs-core"
 version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc7f0ce6237abcc0523f2a5502b1e3fe5802daaae47ac14e166fe49551301ea9"
 dependencies = [
  "inotify",
  "js-sys",
@@ -8906,7 +8904,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-assets"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -8927,7 +8925,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-bevy"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bevy",
@@ -8959,7 +8957,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-content"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "bcdec_rs",
  "bevy_mikktspace",
@@ -8992,7 +8990,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-core"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -9000,7 +8998,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-files"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -9012,7 +9010,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-formats"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "aes",
  "flate2",
@@ -9022,7 +9020,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-gameplay"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "glam",
  "ssx-formats",
@@ -9032,11 +9030,11 @@ dependencies = [
 
 [[package]]
 name = "ssx-lua"
-version = "0.3.3-dev"
+version = "0.4.0"
 
 [[package]]
 name = "ssx-movie"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "libc",
  "libtest-mimic",
@@ -9050,7 +9048,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -9074,7 +9072,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net-join"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "avalanche-master",
  "rcgen",
@@ -9095,7 +9093,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net-lan"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -9103,7 +9101,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net-ops"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "serde",
  "ssx-core",
@@ -9115,7 +9113,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net-portmap"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "getrandom 0.3.4",
  "quick-xml",
@@ -9126,7 +9124,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-net-proto"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "crypto_box",
  "ed25519-dalek",
@@ -9146,20 +9144,23 @@ dependencies = [
 
 [[package]]
 name = "ssx-physics"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "glam",
  "ssx-assets",
  "ssx-content",
+ "ssx-core",
  "ssx-formats",
+ "ssx-gameplay",
  "ssx-lua",
+ "ssx-net-proto",
  "ssx-rules",
 ]
 
 [[package]]
 name = "ssx-rules"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "glam",
@@ -9170,7 +9171,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-script"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "cap-fs-ext",
@@ -9187,7 +9188,7 @@ dependencies = [
 
 [[package]]
 name = "ssx-ui"
-version = "0.3.3-dev"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "harfrust",

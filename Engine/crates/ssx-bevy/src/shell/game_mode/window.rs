@@ -25,7 +25,13 @@ impl WindowHidden {
     }
 }
 
-// TODO(guess): a minimised or occluded window updates at most `HIDDEN_UPDATES` times a second and builds no UI render list (hidden: winit's `is_minimized`, a 0 × 0 size or `WindowOccluded`; measured minimised: 81–83 % of a core against 172 % before). Wayland reports none of them: winit 0.30.13 gets xdg_toplevel's `suspended` state from SCTK 0.19.2 but only uses it to spare a resize, answers `is_minimized` with None and emits no `Occluded`; its frame-callback pacing (`pre_present_notify`, which would leave a hidden window without redraws) is not called by Bevy 0.20.0 (nor 0.19.1) and would pace every unfocused frame too; settle: none for the port choice itself (the console has no window), a winit that reports `suspended` for Wayland.
+// PORT(choice): a minimised or occluded window updates at most `HIDDEN_UPDATES` times a second and builds no UI render
+// list (hidden: winit's `is_minimized`, a 0 × 0 size or `WindowOccluded`; measured minimised: 81–83 % of a core against
+// 172 % before). Wayland reports none of them: winit 0.30.13 gets xdg_toplevel's `suspended` state from SCTK 0.19.2 but
+// only uses it to spare a resize, answers `is_minimized` with None and emits no `Occluded`; its frame-callback pacing
+// (`pre_present_notify`, which would leave a hidden window without redraws) is not called by Bevy 0.20.0 (nor 0.19.1)
+// and would pace every unfocused frame too; a winit that reports `suspended` for Wayland would cover it there; the
+// console has no window.
 #[allow(clippy::too_many_arguments)]
 pub fn hidden_frame(
     _main_thread: bevy::ecs::system::NonSendMarker,

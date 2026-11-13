@@ -1,7 +1,7 @@
 use bevy::prelude::{Assets, Mat3, Mat4, Query, ResMut, Transform, Vec3, Visibility, debug, info};
+use ssx_assets::career::random::GameRandom;
 use ssx_assets::character::model_matrix;
 use ssx_assets::ghosts::GhostRig;
-use ssx_physics::session::bots::Mt19937;
 
 use super::{BotVisual, record_transform};
 use crate::rider::anim::JointRecord;
@@ -41,12 +41,9 @@ impl RacerDraw<'_, '_> {
         dt_s: f32,
         d2: f32,
         racers: usize,
-        rng: &mut Mt19937,
+        rng: &mut dyn GameRandom,
     ) {
-        let holo = v.fade.update(dt_s, d2, racers, |max| {
-            let u = (rng.next_u32() as i32) as f64 * 2f64.powi(-32) + 0.5;
-            (u * f64::from(max)) as f32
-        });
+        let holo = v.fade.update(dt_s, d2, racers, |max| rng.range_f(0.0, max));
         for m in &v.materials {
             if let Some(mut m) = self.characters.get_mut(m)
                 && m.extension.params.holo != holo
@@ -67,7 +64,13 @@ impl RacerDraw<'_, '_> {
         if let Ok(mut vis) = self.visibility.get_mut(v.root) {
             *vis = Visibility::Inherited;
         }
-        // TODO(guess): the bounds are the LOD-0 bind-pose box placed by the drawn `AITrajectory`; settle: the skinned racer's render entity's visibility registration (cf. 0x829C1438).
+        // TODO(guess): the bounds are the LOD-0 bind-pose box placed by the drawn `AITrajectory`. The game's (the
+        // render object's update 0x829CA1B8, `VisManager_SetBounds` 0x82D46048 type 1) are the min/max union of (a) the
+        // palette joints' world record positions over all LODs' meshes (0x829F2630) and (b) the game object's model box
+        // (its LOD set +0x40 centre, +0x50 half extents, +0x60 rotation) moved to (a)'s centre and placed by
+        // M(state +0x90 = entity +0x960, the transform the entity's +0x940 object gives, 0x829C83B0) · M(state +0x40 =
+        // the entity's own S/Q/P at +0x40/+0x30/+0x20, 0x829F06A0). Open: those two transforms for a racer's entity
+        // (`Racers_CreateEntity` 0x82503600) — with world joints, a non-identity one moves (b) away from the racer.
         let traj = v.rig.rig.find("AITrajectory").and_then(|i| records.get(i)).copied();
         let metric = facts.view.zip(traj).map(|((eye, tan_min), t)| {
             let (lo, hi) = v.bounds;
@@ -84,7 +87,7 @@ impl RacerDraw<'_, '_> {
         };
         let lod = lod.filter(|&k| k < v.lods.len());
         if lod != v.lod {
-            info!("{who} ({}): LOD {lod:?} (size metric {metric:.3?}) at {:.1?}", v.name, traj.map(|t| t.p));
+            debug!("{who} ({}): LOD {lod:?} (size metric {metric:.3?}) at {:.1?}", v.name, traj.map(|t| t.p));
             v.lod = lod;
         }
         for (i, &e) in v.lods.iter().enumerate() {

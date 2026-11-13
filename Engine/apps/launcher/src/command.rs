@@ -107,12 +107,24 @@ fn env(s: &Settings) -> Vec<(String, String)> {
 }
 
 pub fn save_path() -> PathBuf {
-    crate::settings::app_dir().join("Saves").join("ssxvprofile")
+    save_path_in(&crate::settings::app_dir())
+}
+
+pub fn save_path_in(app_dir: &Path) -> PathBuf {
+    app_dir.join("Saves").join("ssxvprofile")
 }
 
 pub fn game(s: &Settings, big_root: &Path) -> Invocation {
     let mut args: Vec<OsString> = vec!["--big-root".into(), big_root.into()];
     args.extend(["--save".into(), save_path().into()]);
+    args.extend(["--dlc-root".into(), crate::settings::app_dir().join("DLC").into()]);
+    args.extend(["--tuner".into(), crate::settings::app_dir().join("Tuner").into()]);
+    args.extend(["--tu-root".into(), crate::settings::app_dir().join("DLC").join("Title Updates").into()]);
+    if let Some(lang) =
+        s.language.as_deref().filter(|l| crate::language::available(big_root).iter().any(|(c, _)| *c == *l))
+    {
+        args.extend(["--lang".into(), lang.into()]);
+    }
     let mut push = |list: &[&str]| args.extend(list.iter().map(OsString::from));
     push(&["--subdivide", &s.subdivide.to_string()]);
     match s.shading {
@@ -202,6 +214,8 @@ mod tests {
         let args: Vec<_> = game.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args[..2], ["--big-root", "data/big"]);
         assert_eq!(args[2..4], ["--save".to_string(), save_path().to_string_lossy().into_owned()]);
+        assert!(args.windows(2).any(|w| w[0] == "--dlc-root" && w[1].ends_with("DLC")), "{args:?}");
+        assert!(args.windows(2).any(|w| w[0] == "--tuner" && w[1].ends_with("Tuner")), "{args:?}");
         assert!(args.iter().any(|a| a == "--no-vsync"));
         assert!(!args.iter().any(|a| a == "--game" || a == "--character" || a == "--ride"));
         assert!(game.env.contains(&("SSX_MUSIC".to_string(), "off".to_string())));
@@ -246,5 +260,24 @@ mod tests {
         assert!(args(&last).windows(2).any(|w| w[0] == "--menu-focus" && w[1] == "last-item"));
         assert!(!args(&Settings::default()).iter().any(|a| a == "--menu-focus"));
         assert!(!viewer(&last, big).args.iter().any(|a| a == "--menu-focus"));
+    }
+
+    #[test]
+    fn the_chosen_language_starts_the_game_in_it() {
+        let root = std::env::temp_dir().join(format!("pa-command-lang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let loc = root.join("bootcache/data/xenon/loc");
+        std::fs::create_dir_all(&loc).unwrap();
+        std::fs::write(loc.join("fre_fr.db"), b"").unwrap();
+        let args = |s: &Settings| -> Vec<String> {
+            game(s, &root).args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        };
+        let chosen = args(&Settings { language: Some("fre_fr".into()), ..Settings::default() });
+        assert!(chosen.windows(2).any(|w| w[0] == "--lang" && w[1] == "fre_fr"), "{chosen:?}");
+        let missing = args(&Settings { language: Some("xx_yy".into()), ..Settings::default() });
+        assert!(!missing.iter().any(|a| a == "--lang"), "{missing:?}");
+        let none = args(&Settings::default());
+        assert!(!none.iter().any(|a| a == "--lang"), "{none:?}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

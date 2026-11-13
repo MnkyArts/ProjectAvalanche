@@ -20,6 +20,7 @@ impl Controller for MirroredInst {
         let mut m = mirrored_state(gs, &self.list, env);
         self.sub.update(env, &mut m, dt);
         gs.merge_from(&m, &self.list);
+        gs.audio_tags.append(&mut m.audio_tags);
     }
     fn pose(&self, env: &Env, gs: &GameState, out: &mut AnimPose) {
         let m = mirrored_state(gs, &self.list, env);
@@ -205,5 +206,39 @@ impl Controller for AutoMirrorInst {
 impl MirroredInst {
     pub fn new(sub: Box<dyn Controller>, list: Vec<SigId>) -> Self {
         MirroredInst { sub, list }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::anim_graph::{AudioTag, Graph};
+
+    #[test]
+    fn a_mirrored_sequences_audio_tags_reach_the_outer_state() {
+        let mut g = Graph::default();
+        g.ctrls.push(("mirror".into(), Ctrl::Mirror { subject: Some(1), phase_offset: 0.0 }));
+        let tag =
+            AudioTag { name: "trigger_F_Board_Release".into(), time: 3.0, duration: 0.0, system: 4139, event: 17014 };
+        let seq = Ctrl::Sequence {
+            anims: Vec::new(),
+            length: 10.0,
+            windows: Vec::new(),
+            start_tick: 0.0,
+            audio_tags: vec![tag],
+            game_tags: Vec::new(),
+        };
+        g.ctrls.push(("seq".into(), seq));
+        let rig = crate::anim_pose::PoseRig::new(&ssx_formats::crsf::SceneGraph { nodes: Vec::new() }, &[], &[]);
+        let bind = crate::rig_anim::RigPose { nodes: Vec::new(), floats: Vec::new() };
+        let clip_index = std::collections::HashMap::new();
+        let env = Env { g: &g, clips: &[], clip_index: &clip_index, bind: &bind, rig: &rig, physics: None };
+        let mut gs = GameState::new(&g);
+        let mut mirror = instantiate(&env, &gs, 0);
+        mirror.update(&env, &mut gs, 2.0);
+        assert!(gs.audio_tags.is_empty(), "tick 2: before the tag");
+        mirror.update(&env, &mut gs, 2.0);
+        let names: Vec<&str> = gs.audio_tags.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["trigger_F_Board_Release"], "tick 4: the window (2, 4] holds the tag");
     }
 }

@@ -1,9 +1,10 @@
+use std::path::Path;
+
 use eframe::egui::{self, RichText, Ui};
 use ssx_assets::content::mods::{MODS_DIR, ModFolder};
 
 use crate::app::Launcher;
 use crate::mod_list::{self, Confirm};
-use crate::settings;
 use crate::ui::layout::Layout;
 use crate::ui::theme::{self, Face, size};
 use crate::ui::widgets::{self, Kind};
@@ -29,12 +30,12 @@ impl Launcher {
 
     pub fn refresh_mods(&mut self, ctx: &egui::Context) {
         let big = self.data_ready.then(|| self.settings.big_root());
-        self.mods.refresh(ctx, settings::app_dir(), big);
+        self.mods.refresh(ctx, self.app_dir.clone(), big);
     }
 
     fn mods_installed(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        let app = settings::app_dir();
+        let app = self.app_dir.clone();
         let installing = self.mods.install.is_some();
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.horizontal(|ui| {
@@ -114,7 +115,7 @@ impl Launcher {
         let mut action = None;
         for (i, row) in snapshot.rows.iter().enumerate() {
             let reason = if row.enabled { skipped(&row.folder) } else { None };
-            if let Some(a) = ui.push_id(&row.folder, |ui| mod_row(ui, i, n, row, reason, installing)).inner {
+            if let Some(a) = ui.push_id(&row.folder, |ui| mod_row(ui, &app, i, n, row, reason, installing)).inner {
                 action = Some(a);
             }
         }
@@ -143,7 +144,7 @@ impl Launcher {
         });
         let ctx = ui.ctx().clone();
         let Some(yes) = widgets::question(&ctx, egui::Id::new("mods-confirm"), asked) else { return false };
-        let app = settings::app_dir();
+        let app = self.app_dir.clone();
         match self.mods.confirm.take().filter(|_| yes) {
             Some(Confirm::Remove { folder, .. }) => self.mods.remove(&app, &folder, false),
             Some(Confirm::Delete { folder, .. }) => self.mods.remove(&app, &folder, true),
@@ -194,12 +195,20 @@ fn remarks(ui: &mut Ui, remarks: &mod_list::Remarks) {
     );
 }
 
-pub(super) fn below_mods(text: &str) -> String {
-    let mods = format!("{}{}", settings::app_dir().join(MODS_DIR).display(), std::path::MAIN_SEPARATOR);
+pub(super) fn below_mods(app: &Path, text: &str) -> String {
+    let mods = format!("{}{}", app.join(MODS_DIR).display(), std::path::MAIN_SEPARATOR);
     text.replace(&mods, "")
 }
 
-fn mod_row(ui: &mut Ui, i: usize, n: usize, row: &ModFolder, skipped: Option<String>, busy: bool) -> Option<RowAction> {
+fn mod_row(
+    ui: &mut Ui,
+    app: &Path,
+    i: usize,
+    n: usize,
+    row: &ModFolder,
+    skipped: Option<String>,
+    busy: bool,
+) -> Option<RowAction> {
     let mut action = None;
     let line = if row.enabled { theme::LINE } else { theme::LINE_FAINT };
     egui::Frame::new().fill(theme::PANEL).stroke(egui::Stroke::new(1.0, line)).inner_margin(6.0).show(ui, |ui| {
@@ -305,10 +314,10 @@ fn mod_row(ui: &mut Ui, i: usize, n: usize, row: &ModFolder, skipped: Option<Str
                     );
                 }
             }
-            Err(e) => widgets::status(ui, theme::ERROR, format!("cannot be used: {}", below_mods(e))),
+            Err(e) => widgets::status(ui, theme::ERROR, format!("cannot be used: {}", below_mods(app, e))),
         }
         if let Some(reason) = skipped.filter(|_| row.package.is_ok()) {
-            widgets::status(ui, theme::WARN, format!("skipped by the game: {}", below_mods(&reason)));
+            widgets::status(ui, theme::WARN, format!("skipped by the game: {}", below_mods(app, &reason)));
         }
     });
     action

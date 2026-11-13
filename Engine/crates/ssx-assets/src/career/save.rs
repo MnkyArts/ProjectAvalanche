@@ -58,8 +58,47 @@ impl SaveSchema {
     }
 
     fn short(&self, table: &str, field: &str) -> Result<String> {
+        self.field(table, field).map(|f| f.short.clone())
+    }
+
+    pub fn coded(&self, table: &str, field: &str) -> Result<(String, bool)> {
+        let f = self.field(table, field)?;
+        Ok((f.short.clone(), stored_offset_binary(f)))
+    }
+
+    fn field<'a>(&'a self, table: &str, field: &str) -> Result<&'a ssx_formats::t3db::MetaField> {
         let t = self.meta.table(table).ok_or_else(|| anyhow!("schema has no table {table}"))?;
-        t.fields.iter().find(|f| f.name == field).map(|f| f.short.clone()).ok_or_else(|| anyhow!("no {table}.{field}"))
+        t.fields.iter().find(|f| f.name == field).ok_or_else(|| anyhow!("no {table}.{field}"))
+    }
+
+    fn offset_binary(&self, db: &ssx_formats::t3db::Database) -> bool {
+        let known: [u32; 7] = [
+            crate::career::profile::ATTRIB_CREDITS,
+            crate::career::profile::ATTRIB_EARNED,
+            crate::career::profile::ATTRIB_MPUR,
+            crate::career::profile::ATTRIB_CPRO,
+            crate::career::profile::ATTRIB_CTYP,
+            crate::career::profile::ATTRIB_LAST_RIDER,
+            crate::career::profile::ATTRIB_FLAGS,
+        ];
+        let vote = |table: &str, field: &str, keys: &dyn Fn(u32) -> bool| -> (usize, usize) {
+            let Ok(short_table) = self.table_short(table) else { return (0, 0) };
+            let Some(t) = db.table(&short_table) else { return (0, 0) };
+            let Ok(name) = self.short(table, field) else { return (0, 0) };
+            let mut raw = 0;
+            let mut coded = 0;
+            for row in t.live_rows() {
+                if let Some(v) = t.get(row, &name) {
+                    raw += usize::from(keys(v));
+                    coded += usize::from(keys(v ^ 0x8000_0000));
+                }
+            }
+            (raw, coded)
+        };
+        let (ra, ca) = vote("attribs", "NAME", &|v| known.contains(&v));
+        let (rc, cc) = vote("character_stats", "CHARID", &|v| self.riders.iter().any(|r| r.0 == v));
+        let (raw, coded) = (ra + rc, ca + cc);
+        if raw == coded { true } else { coded > raw }
     }
 
     fn table_short(&self, table: &str) -> Result<String> {
@@ -127,6 +166,16 @@ impl SaveExtras {
 
 const RIDER_SLOTS: [&str; 10] =
     ["SUIT", "BOARD", "GEAR0", "GEAR1", "GEAR2", "GEAR3", "GEOTAG0", "GEOTAG1", "GEOTAG2", "GEOTAG3"];
+
+// TODO(guess): the flip's place in the game is not found, so the rule is generalised from those values to every
+// signed 32-bit field; tried: `T3db_PutField` 0x830161C8 and the getter 0x830160F0 move the bits unchanged, the
+// profile getter 0x824A8A28 -> 0x83030A38 -> 0x8302B6A8 returns the query's 4-byte cell (+0x28) unchanged, the
+// insert 0x8301DC50 passes the caller's values through, and an `xoris 0x8000` scan of the image found no flip; not
+// traced: the lazy cell fill (0x8302B6A8 calls the column's +0x10 for a type-3 or 0xDEAD cell). It is not
+// `value − rangelow`: the 7-bit `STATTYPE1…6` (`rangelow` −1) hold a real 33 raw. Settle: that callback's conversion.
+fn stored_offset_binary(f: &ssx_formats::t3db::MetaField) -> bool {
+    f.depth == 32 && f.range.0 < 0
+}
 
 fn stat(key: u32, value: u32) -> StatRecord {
     StatRecord { key, value, key_again: key, scope: 2, kind: 0, initial: 0 }
@@ -214,8 +263,22 @@ impl Profile {
         }
         let cap = |s: &str| group_tables.iter().find(|(n, _)| n == s).map_or(0, |(_, c)| *c);
         let f = |t: &str, n: &str| schema.short(t, n);
-        let mut put_table = |name: &str, rows: Vec<Vec<(String, u32)>>| -> Result<()> {
+        let coded: std::collections::BTreeMap<(String, String), bool> = schema
+            .meta
+            .tables
+            .iter()
+            .flat_map(|t| t.fields.iter().map(move |f| ((t.short.clone(), f.short.clone()), stored_offset_binary(f))))
+            .filter(|(_, signed)| *signed)
+            .collect();
+        let mut put_table = |name: &str, mut rows: Vec<Vec<(String, u32)>>| -> Result<()> {
             let short = schema.table_short(name)?;
+            for row in &mut rows {
+                for (field, value) in row {
+                    if coded.contains_key(&(short.clone(), field.clone())) {
+                        *value ^= 0x8000_0000;
+                    }
+                }
+            }
             let t = db.table_mut(&short).ok_or_else(|| anyhow!("ssxv.db has no {short}"))?;
             fill(t, cap(&short), &rows)
         };
@@ -225,8 +288,14 @@ impl Profile {
             .map(|(&k, &v)| Ok(vec![(f("attribs", "NAME")?, k), (f("attribs", "VALUE")?, v as u32)]))
             .collect::<Result<Vec<_>>>()?;
         put_table("attribs", rows)?;
+        let mut riders = schema.riders.clone();
+        for &key in self.riders.keys() {
+            if !riders.iter().any(|(k, _)| *k == key) {
+                riders.push((key, String::new()));
+            }
+        }
         let mut rows = Vec::new();
-        for (key, name) in &schema.riders {
+        for (key, name) in &riders {
             let created = RiderStats::created(name, |k| schema.items.contains(&k));
             let mut s = self.riders.get(key).cloned().unwrap_or_else(|| created.clone());
             if s.last_suit == RiderStats::default().last_suit {
@@ -333,13 +402,15 @@ impl Profile {
         let c = &file.chunks;
         let mut p = Profile::default();
         let db = DatabaseChunk::parse(&c[0])?.database()?;
-        let f = |t: &str, n: &str| schema.short(t, n);
+        let coded = schema.offset_binary(&db);
         let table = |name: &str| -> Result<&Table> {
             let s = schema.table_short(name)?;
             db.table(&s).ok_or_else(|| anyhow!("the save has no table {name}"))
         };
         let get = |t: &Table, row: usize, name: &str, field: &str| -> Result<u32> {
-            t.get(row, &f(name, field)?).ok_or_else(|| anyhow!("{name}.{field} row {row}"))
+            let (short, flip) = schema.coded(name, field)?;
+            let v = t.get(row, &short).ok_or_else(|| anyhow!("{name}.{field} row {row}"))?;
+            Ok(if coded && flip { v ^ 0x8000_0000 } else { v })
         };
         let t = table("attribs")?;
         for r in t.live_rows() {
@@ -532,7 +603,7 @@ mod tests {
 
     type TestTable = (&'static str, &'static str, i64, &'static str, Vec<(String, u32)>);
 
-    fn schema() -> SaveSchema {
+    fn schema_with(signed: bool) -> SaveSchema {
         let slots = RIDER_SLOTS
             .iter()
             .flat_map(|s| [(format!("LASTEQUIPPED_{s}_ID"), 32), (format!("LASTEQUIPPED_{s}_SRC"), 2)]);
@@ -600,8 +671,9 @@ mod tests {
             );
             for (f, d) in fields {
                 n += 1;
+                let (low, high) = if signed && *d == 32 { ("-2147483648", "2147483647") } else { ("0", "1") };
                 xml += &format!(
-                    "<field name=\"{f}\" shortname=\"f{n:03}\" type=\"FIELDTYPE_INTEGER\" depth=\"{d}\" rangelow=\"0\" rangehigh=\"1\" />"
+                    "<field name=\"{f}\" shortname=\"f{n:03}\" type=\"FIELDTYPE_INTEGER\" depth=\"{d}\" rangelow=\"{low}\" rangehigh=\"{high}\" />"
                 );
             }
             xml += "</fields></table>";
@@ -618,6 +690,49 @@ mod tests {
             drops: vec![77],
             audio: None,
         }
+    }
+
+    fn schema() -> SaveSchema {
+        schema_with(true)
+    }
+
+    #[test]
+    fn a_signed_32_bit_field_is_stored_offset_binary() {
+        let s = schema();
+        let p = Profile::new();
+        let file = p.to_save(&s, &SaveExtras::fresh()).unwrap();
+        let db = DatabaseChunk::parse(&file.chunks[0]).unwrap().database().unwrap();
+        let t = db.table("taaa").unwrap();
+        let name = s.short("attribs", "NAME").unwrap();
+        let mut found = false;
+        for row in t.live_rows() {
+            let v = t.get(row, &name).unwrap();
+            assert_ne!(v, crate::career::profile::ATTRIB_CREDITS, "a console save's BILL is not stored raw");
+            if v == crate::career::profile::ATTRIB_CREDITS ^ 0x8000_0000 {
+                found = true;
+            }
+        }
+        assert!(found, "the BILL row is stored with its sign bit flipped");
+        let (q, _) = Profile::from_save(&ProfileFile::parse(&file.write()).unwrap(), &s).unwrap();
+        assert_eq!((q.credits(), q.earned()), (p.credits(), p.earned()));
+    }
+
+    #[test]
+    fn an_old_raw_save_still_reads() {
+        let raw = schema_with(false);
+        let signed = schema();
+        let mut p = Profile::new();
+        p.add_credits(12_345, true);
+        let bytes = p.to_save(&raw, &SaveExtras::fresh()).unwrap().write();
+        let (q, _) = Profile::from_save(&ProfileFile::parse(&bytes).unwrap(), &signed).unwrap();
+        assert_eq!((q.credits(), q.earned()), (p.credits(), p.earned()));
+        let again = q.to_save(&signed, &SaveExtras::fresh()).unwrap();
+        let db = DatabaseChunk::parse(&again.chunks[0]).unwrap().database().unwrap();
+        let name = signed.short("attribs", "NAME").unwrap();
+        assert!(
+            db.table("taaa").unwrap().live_rows().any(|r| db.table("taaa").unwrap().get(r, &name)
+                == Some(crate::career::profile::ATTRIB_CREDITS ^ 0x8000_0000))
+        );
     }
 
     #[test]

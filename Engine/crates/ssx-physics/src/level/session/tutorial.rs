@@ -84,7 +84,8 @@ pub struct Tutorial {
     pub events: Vec<TutorialEvent>,
 }
 
-// TODO(guess): the bound is the port's (the game hands each call to the UI at once, 0x824D5F40 / 0x824D32B0); settle: nothing to decode — drop it once every caller of `Session::execute` takes the events.
+// PORT(choice): the bound is the port's, to drop once every caller of `Session::execute` takes the events; nothing to
+// decode: the game hands each call to the UI at once (0x824D5F40 / 0x824D32B0).
 pub const MAX_EVENTS: usize = 256;
 
 impl Default for Tutorial {

@@ -100,8 +100,9 @@ struct Cli {
     launch_map: Option<String>,
 
     /// A test option: the mode `--launch-map` rides — a built-in mode (`race`, `trick`, `survive`, `death`,
-    /// `freeride`) or an installed gamemode's id (`<namespace>:gamemode/<name>`); default the map's first mode.
-    #[arg(long, value_name = "MODE", requires = "launch_map")]
+    /// `freeride`) or an installed gamemode's id (`<namespace>:gamemode/<name>`); default the map's first mode. With
+    /// `--launch`, only `freeride`: the drop's world without its event (the TU's mode).
+    #[arg(long, value_name = "MODE")]
     launch_mode: Option<String>,
 
     /// A test option: the drops are ridden by the HUD tools' scripted player.
@@ -132,6 +133,22 @@ struct Cli {
     /// conflicts.
     #[arg(long, value_name = "DIR")]
     mod_dev: Option<PathBuf>,
+
+    /// The installed DLC packages' folder (`<app dir>/DLC`): its enabled packages are mounted as the game's own base
+    /// content above the disc (`dlc.toml`; the launcher's Downloadable Content section writes it).
+    #[arg(long, value_name = "DIR")]
+    dlc_root: Option<PathBuf>,
+
+    /// The player's level-15 data: a level-15 save (`ssxvprofile`, the console file or its 0x57800 buffer), a tuner
+    /// pack (the chunk-7 EB) or the launcher's folder holding `tuner.bin`. Without it the profile's own chunk 7 is used;
+    /// without either the game keeps the disc's 10 levels.
+    #[arg(long, value_name = "FILE|DIR")]
+    tuner: Option<PathBuf>,
+
+    /// The installed title updates' folder (`<app dir>/DLC/Title Updates`): one update (the newest enabled) is applied
+    /// above the disc and the DLC packages (`tu.toml`; the launcher's Title Update section writes it).
+    #[arg(long, value_name = "DIR")]
+    tu_root: Option<PathBuf>,
 
     /// A test option: screenshots across the screen fades — every third frame while the fade is up (its alpha above
     /// 0) and the frame it ends, at most N (`fade_<FE seconds>_<alpha>.png` in the shot folder).
@@ -244,6 +261,9 @@ fn game_args(cli: Cli) -> Result<game_mode::GameArgs> {
         open_view: cli.open_view,
         play_movie: cli.play_movie,
         mod_dev: cli.mod_dev,
+        dlc_root: cli.dlc_root,
+        tuner: cli.tuner,
+        tu_root: cli.tu_root,
         link: match &cli.link {
             Some(l) => Some(ssx_ui_link(l).with_context(|| format!("--link {l:?}"))?),
             None => None,
@@ -274,7 +294,15 @@ fn game_args(cli: Cli) -> Result<game_mode::GameArgs> {
             }),
             None => None,
         },
-        launch_mode: cli.launch_mode.clone(),
+        launch_mode: match cli.launch_mode.clone() {
+            Some(m) if cli.launch.is_none() && cli.launch_map.is_none() => {
+                anyhow::bail!("--launch-mode {m}: needs --launch (freeride) or --launch-map")
+            }
+            Some(m) if cli.launch.is_some() && m != "freeride" => {
+                anyhow::bail!("--launch-mode {m}: a drop's direct launch rides only freeride")
+            }
+            m => m,
+        },
     })
 }
 

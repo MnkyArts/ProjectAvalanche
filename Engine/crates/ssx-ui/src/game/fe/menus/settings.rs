@@ -356,7 +356,8 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, values: &UiValues, loc: &mut Localizat
         "dp_settings_menu_index" => {
             let index = match fe.menu_focus {
                 MenuFocus::FirstItem => 0,
-                // TODO(guess): a port choice — the option "Menus: the last item picked" focuses the page last opened from the menu (its items 0 … 2 are the pages 1 … 3); settle: none (the game's publisher 0x825C3580 always publishes 0).
+                // PORT(choice): the option "Menus: the last item picked" focuses the page last opened from the menu
+                // (its items 0 … 2 are the pages 1 … 3); the game's publisher 0x825C3580 always publishes 0.
                 MenuFocus::LastItem => fe.settings.last_category.map_or(0, |c| c - 1),
             };
             Some(Value::Number(f64::from(index)))

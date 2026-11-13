@@ -15,10 +15,11 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 
-// TODO(guess): 16 MiB per file, the server's; settle: a public master's log volume over a week.
+// PORT(choice): 16 MiB per file, the server's; tuning: a public master's log volume over a week; the original has no
+// master server.
 pub const MAX_LOG_BYTES: u64 = 16 * 1024 * 1024;
-// TODO(guess): 20 a second with a burst of 100 per call site, the server's; settle: the busiest legitimate call site
-// of a public master (listings and checks of servers starting at once).
+// PORT(choice): 20 a second with a burst of 100 per call site, the server's; tuning: the busiest legitimate call site
+// of a public master (listings and checks of servers starting at once); the original has no master server.
 pub const LINES_PER_SECOND: f64 = 20.0;
 pub const LINE_BURST: f64 = 100.0;
 

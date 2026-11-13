@@ -210,3 +210,32 @@ fn laced_frames_come_one_by_one() {
     let g = element(0xA0, &group);
     assert!(refused(&movie(good_tracks(), vec![g])).contains("discard padding"));
 }
+
+#[test]
+fn a_restart_reads_the_same_packets_again() {
+    let m = file(&[
+        info(1000.0),
+        good_tracks(),
+        cluster(0, &good_blocks()),
+        cluster(500, &[simple_block(1, 0, 0, &unit()), simple_block(2, 0, 0x80, &[3, 4])]),
+    ]);
+    let mut d = Demuxer::open(Cursor::new(&m[..]), m.len() as u64, &Limits::default()).unwrap();
+    let pass = |d: &mut Demuxer<Cursor<&[u8]>>| {
+        let mut out = Vec::new();
+        while let Some(p) = d.next_packet().unwrap() {
+            out.push(p);
+        }
+        out
+    };
+    let first = pass(&mut d);
+    assert_eq!(first.iter().filter(|p| p.track == Track::Video).count(), 3);
+    assert_eq!(d.counts(), (3, 2));
+    d.restart().unwrap();
+    assert_eq!(d.counts(), (0, 0));
+    assert_eq!(pass(&mut d), first);
+    d.restart().unwrap();
+    let head = d.next_packet().unwrap().unwrap();
+    d.restart().unwrap();
+    assert_eq!(head, first[0]);
+    assert_eq!(pass(&mut d), first, "a restart from the middle of a pass");
+}

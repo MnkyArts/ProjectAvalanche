@@ -14,5 +14,7 @@ game: the drop, the menu, the steps. -->
       pass
 - [ ] Guesses that remain carry a `TODO(guess):` marker that says what is guessed, what is known and what would
       settle it; markers this change settles are removed
+- [ ] Decisions of the port's own (PC input and windows, the launcher, mods, online play) carry a `PORT(choice):`
+      marker that says the choice and what the console had instead
 - [ ] No game data, extracted files or other copyrighted material in the change
 - [ ] I agree that my contribution is licensed under the project's MIT License

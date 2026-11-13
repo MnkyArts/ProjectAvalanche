@@ -14,7 +14,8 @@ use vp6::Vp6Movie;
 pub use vp6::movie_language;
 use webm::WebmMovie;
 
-// TODO(guess): a voice waits this long for its first block before the movie runs on its stopwatch (an app without an output never runs the voice); settle: none needed while the output runs (the voice then starts within one output pull, ~21 ms).
+// PORT(choice): a voice waits this long for its first block before the movie runs on its stopwatch (an app without an
+// output never runs the voice; while the output runs the voice starts within one output pull, ~21 ms).
 const VOICE_WAIT: f64 = 0.5;
 
 enum Inner {
@@ -114,5 +115,39 @@ impl MoviePlayback {
             Inner::Package(m) => Some(m.picture_counts()),
             Inner::Disc(_) => None,
         }
+    }
+}
+
+pub struct LoopingMovie(Box<WebmMovie>);
+
+pub struct LoopingStart(webm::Started);
+
+impl LoopingMovie {
+    pub fn start(fmv: &Fmv, content: &GameContent) -> Result<LoopingStart> {
+        WebmMovie::start_looping(fmv, content).map(LoopingStart)
+    }
+
+    pub fn show(start: LoopingStart, images: &mut Assets<Image>) -> Self {
+        Self(Box::new(WebmMovie::looping(start.0, images)))
+    }
+
+    pub fn picture(&self) -> Option<&Handle<Image>> {
+        self.0.frame().map(|_| &self.0.image)
+    }
+
+    pub fn advance(&mut self, dt: f64, images: &mut Assets<Image>) -> bool {
+        self.0.advance(dt, images)
+    }
+
+    pub fn failure(&self) -> Option<(&ssx_content::ContentId, &str, &str)> {
+        self.0.failure.as_deref().map(|f| (&self.0.id, self.0.source.as_str(), f))
+    }
+
+    pub fn describe(&self) -> String {
+        self.0.describe()
+    }
+
+    pub fn picture_counts(&self) -> String {
+        self.0.picture_counts()
     }
 }

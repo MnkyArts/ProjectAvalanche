@@ -148,7 +148,8 @@ fn load_stacks(big_root: &Path) -> Result<Vec<ColourStack>> {
         }
         let p = pointers.iter().find(|p| p.offset == 4).context("ColourCubeStack entry without a name")?;
         let name = vault.cstr(p.target)?;
-        let file = files.join(format!("{name}.xml"));
+        let rel = format!("data/common/postfx/colourcube/{name}.xml");
+        let file = crate::data_roots::find(big_root, &rel).unwrap_or_else(|| files.join(format!("{name}.xml")));
         let text = std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
         let xml = parse_stack(&text).with_context(|| format!("parsing {}", file.display()))?;
         let index = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);

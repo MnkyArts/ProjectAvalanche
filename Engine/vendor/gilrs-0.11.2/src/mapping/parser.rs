@@ -87,6 +87,13 @@ static AXES: [AxisOrBtn; 35] = [
     AxisOrBtn::Btn(Button::Z),
 ];
 
+/// Project Avalanche patch T23: the gilrs element an SDL mapping element name stands for, as this parser reads it
+/// (`None` for a name it does not know).
+#[cfg(target_os = "linux")]
+pub(crate) fn sdl_element(name: &str) -> Option<AxisOrBtn> {
+    AXES_SDL.binary_search(&name).ok().map(|idx| AXES[idx])
+}
+
 pub struct Parser<'a> {
     data: &'a str,
     pos: usize,

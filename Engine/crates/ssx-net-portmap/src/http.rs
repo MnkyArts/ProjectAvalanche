@@ -6,13 +6,14 @@ use socket2::{Domain, Protocol as SockProtocol, Socket, Type};
 
 use crate::Error;
 
-// TODO(guess): 8 KiB of head (hyper's smallest read buffer, the server's own limit), 64 KiB of body (a gateway's
-// description is 2 to 10 KiB, a SOAP answer under 1 KiB), 32 header lines; settle: the largest real gateways' answers.
+// PORT(choice): 8 KiB of head (hyper's smallest read buffer, the server's own limit), 64 KiB of body (a gateway's
+// description is 2 to 10 KiB, a SOAP answer under 1 KiB), 32 header lines; tuning: the largest real gateways' answers;
+// the original has no dedicated server.
 pub const MAX_HEAD: usize = 8 * 1024;
 pub const MAX_BODY: usize = 64 * 1024;
 const MAX_HEADERS: usize = 32;
-// TODO(guess): 2 s to connect, 5 s in all (a gateway on the LAN answers in milliseconds; a busy one in a second or
-// two); settle: the times of real gateways under load.
+// PORT(choice): 2 s to connect, 5 s in all (a gateway on the LAN answers in milliseconds; a busy one in a second or
+// two); tuning: the times of real gateways under load; the original has no dedicated server.
 pub const CONNECT: Duration = Duration::from_secs(2);
 pub const EXCHANGE: Duration = Duration::from_secs(5);
 

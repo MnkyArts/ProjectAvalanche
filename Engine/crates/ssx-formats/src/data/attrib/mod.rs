@@ -24,8 +24,11 @@ pub const EXPORT_DATABASE: u32 = fnv1(b"Attrib::DatabaseLoadData");
 pub const EXPORT_CLASS: u32 = fnv1(b"Attrib::ClassLoadData");
 pub const EXPORT_COLLECTION: u32 = fnv1(b"Attrib::CollectionLoadData");
 
+#[cfg(any(test, feature = "test-fixtures"))]
+#[doc(hidden)]
+pub mod fixtures;
 #[cfg(test)]
-mod tests_synthetic;
+pub(crate) mod tests_synthetic;
 
 #[cfg(test)]
 mod tests {

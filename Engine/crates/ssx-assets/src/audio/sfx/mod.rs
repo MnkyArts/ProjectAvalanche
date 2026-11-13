@@ -34,9 +34,9 @@ pub const SCRIPT_BUSES: [&str; 8] = [
     "Script_3D_7_BUS",
 ];
 pub const SCRIPT_ORIGIN: u32 = 0xFFFF_FF00;
-// TODO(guess): a script's positioned sound is heard with the board centre's 3-D rules (`boarder_board_center`: rolloff
-// 0.0115, 1–200 m, cut at 200 m, centre level 0.5) at the script's point (its offset 0): the game has no script sounds;
-// settle: an `audio_3d_settings` collection a package names (M8's gamemodes), or measured with real packages.
+// PORT(choice): a script's positioned sound is heard with the board centre's 3-D rules (`boarder_board_center`: rolloff
+// 0.0115, 1–200 m, cut at 200 m, centre level 0.5) at the script's point (its offset 0); tuning: an `audio_3d_settings`
+// collection a package names (M8's gamemodes), or measured with real packages; the game has no script sounds.
 pub const SCRIPT_EMITTER: crate::sfx_dsp::sound3d::EmitterSettings =
     crate::sfx_dsp::sound3d::EmitterSettings { offset: [0.0; 3], ..crate::sfx_dsp::sound3d::BOARD_CENTER };
 
@@ -51,7 +51,6 @@ pub struct SfxEngine {
     since_update: f32,
     pace: f32,
     remix_clock: f32,
-    pub script_song: bool,
     audio_ms: f64,
     update_period: f32,
     block6: Vec<f32>,
@@ -63,6 +62,7 @@ pub struct SfxEngine {
     pub speech: Option<speech::Speech>,
     pub ui_goals: [i32; 2],
     pub launch_block: Option<speech::launch::LaunchBlock>,
+    pub script_song: bool,
     pub settings: settings::AudioSettings,
     pub ranges: settings::FeRanges,
     faders: settings::FeFaders,
@@ -505,6 +505,10 @@ impl SfxEngine {
             if let Some(on) = ducker {
                 r.inputs.music_ducker(on);
             }
+            // PORT(choice): for music mods — while a client script's song plays the remix is held off (`remix_setting`
+            // false), since the remix patches re-mix the level's own stems and doubled the song when Super Tricky ended
+            // (PR #53's report); the game ships no script songs, so the executable has no case to compare with (the mod
+            // music contract).
             r.remix_setting = self.settings.get(settings::MUSIC_REMIX) != 0 && !self.script_song;
         }
         let ms = self.aems.now_ms;

@@ -259,8 +259,6 @@ fn advance_catches_up_at_most_two_frames() {
     assert_eq!(p.frames(root), Some((6, 8)));
 }
 
-/// `Sprite::SetVisible` 0x8268CEA0 copies the flag to the children (0x8268C160) while the parent is visible; the play
-/// list (0x82644CF8) advances each listed clip on its own, so a child set visible again runs while its parent holds.
 #[test]
 fn no_invisible_advance_freezes_the_hidden_clip_but_not_a_child_shown_again() {
     let mut lib = empty_lib();
@@ -276,9 +274,11 @@ fn no_invisible_advance_freezes_the_hidden_clip_but_not_a_child_shown_again() {
     }
     p.set_visible(buffer, false);
     assert!(!p.get(buffer).unwrap().visible);
-    assert!(!p.get(loader).unwrap().visible, "hiding the buffer copied its flag to the loader");
+    assert!(p.get(buffer).unwrap().advance_hidden);
+    assert!(p.get(loader).unwrap().visible, "hiding the buffer leaves the loader's _visible alone");
+    assert!(p.get(loader).unwrap().advance_hidden, "hiding the buffer copied its no-advance flag to the loader");
     p.set_visible(loader, true);
-    assert!(p.get(loader).unwrap().visible, "the loader's own _visible clears its flag again");
+    assert!(!p.get(loader).unwrap().advance_hidden, "the loader's own _visible clears its flag again");
     p.advance_frame(&lib);
     p.take_actions();
     p.advance_frame(&lib);
@@ -293,4 +293,30 @@ fn no_invisible_advance_freezes_the_hidden_clip_but_not_a_child_shown_again() {
     assert_eq!(entered, vec![loader], "the hidden clip's child still gets onEnterFrame");
     assert_eq!(p.frames(buffer), Some((1, 3)), "the hidden clip's timeline holds");
     assert_eq!(p.frames(loader), Some((3, 3)), "its visible child plays on");
+}
+
+#[test]
+fn a_parent_hide_and_show_keeps_a_hidden_childs_visible_flag() {
+    let mut lib = empty_lib();
+    let m = movie(&mut lib, vec![vec![]]);
+    let mut p = Player::new();
+    p.no_invisible_advance = true;
+    let root = p.load_level(&lib, m, 0);
+    let panel = p.attach_movie(&lib, root, "Clip", "mcPanel", 1).unwrap();
+    let icon = p.attach_movie(&lib, panel, "Clip", "mcIcon", 2).unwrap();
+    let glow = p.attach_movie(&lib, icon, "Clip", "mcGlow", 3).unwrap();
+    p.set_visible(icon, false);
+    assert!(p.get(icon).unwrap().advance_hidden);
+    assert!(p.get(glow).unwrap().advance_hidden, "the copy reaches the whole sprite subtree");
+    p.set_visible(panel, false);
+    p.set_visible(panel, true);
+    assert!(p.get(panel).unwrap().visible);
+    assert!(!p.get(icon).unwrap().visible, "the script's hide of the icon survives the panel's hide and show");
+    assert!(!p.get(icon).unwrap().advance_hidden, "the panel's show copied its cleared flag down");
+    assert!(!p.get(glow).unwrap().advance_hidden);
+    let mut q = Player::new();
+    let root = q.load_level(&lib, m, 0);
+    let clip = q.attach_movie(&lib, root, "Clip", "mcClip", 1).unwrap();
+    q.set_visible(clip, false);
+    assert!(!q.get(clip).unwrap().visible && !q.get(clip).unwrap().advance_hidden);
 }

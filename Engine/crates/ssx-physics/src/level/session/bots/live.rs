@@ -5,18 +5,20 @@ use ssx_assets::ghosts::GhostPose;
 
 pub const S02_EXTRAPOLATION_S: f64 = 0.2;
 
-// TODO(guess): two intervals (one lost sample), a port choice measured over 8 network bots at 50 ms ± 20 ms per hop and
-// 2 % loss (round net3): the drawn root's mean error near / middle / far 0.92 / 1.90 / 3.05 m, against 0.94 / 1.98 /
-// 3.07 m with one interval, 1.18 / 4.84 / 5.73 m with phase 2's fixed 200 ms and 0.91 / 1.90 / 3.04 m with a fixed
-// 550 ms; settle: the arrival gaps of real links over the internet (bursts of loss longer than one sample).
+// PORT(choice): two intervals (one lost sample), measured over 8 network bots at 50 ms ± 20 ms per hop and 2 % loss
+// (round net3): the drawn root's mean error near / middle / far 0.92 / 1.90 / 3.05 m, against 0.94 / 1.98 / 3.07 m with
+// one interval, 1.18 / 4.84 / 5.73 m with phase 2's fixed 200 ms and 0.91 / 1.90 / 3.04 m with a fixed 550 ms; tuning:
+// the arrival gaps of real links over the internet (bursts of loss longer than one sample); the original has no live
+// racers.
 pub const CAP_INTERVALS: f64 = 2.0;
 
-// TODO(guess): 64 (4 s at the near tier's 15 Hz, 22 s at the far tier's 2.86 Hz): the bracket needs the samples of one
-// send interval plus the arrival delay; settle: the arrival delays of phase 2's sessions on real links.
+// PORT(choice): 64 (4 s at the near tier's 15 Hz, 22 s at the far tier's 2.86 Hz): the bracket needs the samples of one
+// send interval plus the arrival delay; tuning: the arrival delays of phase 2's sessions on real links; the original
+// has no live racers.
 pub const MAX_SAMPLES: usize = 64;
 
-// TODO(guess): the largest of the last 30 arrivals (2 s at 15 Hz) — a buffer deep enough for the jitter of the newest
-// arrivals; settle: the arrival jitter of real links over the internet.
+// PORT(choice): the largest of the last 30 arrivals (2 s at 15 Hz) — a buffer deep enough for the jitter of the newest
+// arrivals; tuning: the arrival jitter of real links over the internet; the original has no live racers.
 const DELAY_WINDOW: usize = 30;
 
 const TICK_HZ: f64 = 30.0;
@@ -215,11 +217,11 @@ impl LivePose {
         p + Vec3::from_array(newest.pose.velocity) * VELOCITY_TICKS_PER_TICK * age as f32
     }
 
-    // TODO(guess): the turn rate of the newest two samples, a port choice (the game has no live racers) measured over 8
-    // network bots at 50 ms ± 20 ms per hop and 2 % loss (round net3): the drawn rotation's mean error near / middle /
-    // far 13.4 / 24.2 / 53.4° against 24.0 / 30.6 / 53.1° for the bracket's (phase 2's, one interval late) and 20.7 /
-    // 27.9 / 49.9° for the newest sample's not turned; settle: the trajectory rotation's own predictability at the
-    // samples' ages on recorded rides (a carve's turn reverses within the far tier's interval).
+    // PORT(choice): the turn rate of the newest two samples, measured over 8 network bots at 50 ms ± 20 ms per hop and
+    // 2 % loss (round net3): the drawn rotation's mean error near / middle / far 13.4 / 24.2 / 53.4° against 24.0 /
+    // 30.6 / 53.1° for the bracket's (phase 2's, one interval late) and 20.7 / 27.9 / 49.9° for the newest sample's not
+    // turned; tuning: the trajectory rotation's own predictability at the samples' ages on recorded rides (a carve's
+    // turn reverses within the far tier's interval); the game has no live racers.
     fn rotation_at(&self, now: f64) -> Quat {
         let n = self.samples.len();
         let Some(newest) = self.samples.back() else { return Quat::IDENTITY };
@@ -294,10 +296,10 @@ pub struct LiveSlots {
     order: Option<Vec<u16>>,
 }
 
-// TODO(guess): the occupants re-chosen at most once a second (the ranking's neighbours in a round, else the nearest
-// live racers), a port choice: the game's events have at most six rivals and no live riders, and the HUD's race
-// leaderboard reorders its rows with an animation (`MovingUp` / `MovingDown`) that a faster choice would restart;
-// settle: the leaderboard's rows watched over a window's round with 16 riders.
+// PORT(choice): the occupants re-chosen at most once a second (the ranking's neighbours in a round, else the nearest
+// live racers): the HUD's race leaderboard reorders its rows with an animation (`MovingUp` / `MovingDown`) that a
+// faster choice would restart; tuning: the leaderboard's rows watched over a window's round with 16 riders; the game's
+// events have at most six rivals and no live riders.
 const RECHOOSE_TICKS: f64 = TICK_HZ;
 
 impl LiveSlots {

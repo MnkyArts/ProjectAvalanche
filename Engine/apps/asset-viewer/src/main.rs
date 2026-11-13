@@ -92,9 +92,15 @@ struct Cli {
     #[arg(long, value_name = "DIR", value_enum, requires = "ride_input")]
     ride_grab: Option<GrabDir>,
 
-    /// With --ride-input: hold R2 in the air (the tweak; with --ride-grab).
+    /// With --ride-input: hold R2 in the air (the tweak; with --ride-grab); with --ride-classic, X (the classic
+    /// tweak, `BLN_Pad_X_Hold`).
     #[arg(long, requires = "ride_input")]
     ride_tweak: bool,
+
+    /// With --ride-input and --ride-classic: hold this set of shoulder buttons in the air (a classic grab: `rb`,
+    /// `lb+lt`, … — the classic tables' button sets).
+    #[arg(long, value_name = "SET", value_parser = parse_shoulders, requires = "ride_classic")]
+    ride_shoulders: Option<[bool; 4]>,
 
     /// With --ride-input: hold R2 fully on the ground (boost; needs a filled meter).
     #[arg(long, requires = "ride_input")]
@@ -116,6 +122,11 @@ struct Cli {
     /// Mount the client mods the enabled list (`<app dir>/mods.toml`) names, as the game does.
     #[arg(long)]
     mods: bool,
+
+    /// Mount the installed DLC packages below this folder (the game's `--dlc-root`): a DLC track's vaults, objects and
+    /// materials are read through them.
+    #[arg(long, value_name = "DIR")]
+    dlc: Option<PathBuf>,
 }
 
 /// A right-stick grab direction (`--ride-grab`).
@@ -167,6 +178,7 @@ fn run(cli: Cli) -> Result<AppExit> {
         air_input: cli.ride_air,
         grab: cli.ride_grab.map(GrabDir::stick),
         tweak: cli.ride_tweak,
+        shoulders: cli.ride_shoulders,
         boost: cli.ride_boost,
         boost_meter: cli.ride_boost_meter,
         classic: cli.ride_classic,
@@ -179,6 +191,12 @@ fn run(cli: Cli) -> Result<AppExit> {
         let big = big.context("--mods needs the extracted archive root (--big-root)")?;
         ssx_assets::content::data::tuning::set_bundle_reader(ssx_physics::tuning::read_check);
         let report = ssx_assets::content::GameContent::of(&big).mount_client_mods(&ssx_assets::setup::app_dir());
+        report.lines().iter().for_each(|l| ssx_core::eprintln!("{l}"));
+    }
+    if let Some(root) = &cli.dlc {
+        let big = cli.big_root.clone().or_else(|| ssx_bevy::terrain_look::find_big_root(&track_dir));
+        let big = big.context("--dlc needs the extracted archive root (--big-root)")?;
+        let report = ssx_assets::content::GameContent::of(&big).mount_dlc(root);
         report.lines().iter().for_each(|l| ssx_core::eprintln!("{l}"));
     }
     let spec = level::LevelSpec {
@@ -231,6 +249,21 @@ fn run(cli: Cli) -> Result<AppExit> {
         app.add_plugins(screenshot::AutoScreenshotPlugin { path, frames: cli.frames });
     }
     Ok(app.run())
+}
+
+fn parse_shoulders(s: &str) -> Result<[bool; 4], String> {
+    let mut held = [false; 4];
+    for b in s.split('+') {
+        let i = match b.trim() {
+            "lb" => 0,
+            "rb" => 1,
+            "lt" => 2,
+            "rt" => 3,
+            other => return Err(format!("{other:?}: one of lb, rb, lt, rt")),
+        };
+        held[i] = true;
+    }
+    Ok(held)
 }
 
 fn parse_vec2(s: &str) -> Result<Vec2, String> {

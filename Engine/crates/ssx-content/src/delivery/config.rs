@@ -9,9 +9,11 @@ use super::mirror::MAX_MIRRORS;
 use crate::id::valid_namespace;
 use crate::policy::ClientMods;
 
-// TODO(guess): "resources" below `--data`, a port choice (FiveM's `resources/` beside its config); settle: none needed.
+// PORT(choice): "resources" below `--data` (FiveM's `resources/` beside its config); the original has no dedicated
+// server.
 pub const DEFAULT_FOLDER: &str = "resources";
-// TODO(guess): 256 resources (`delivery::MAX_RESOURCES`) and 64-byte names, port caps; settle: real servers.
+// PORT(choice): 256 resources (`delivery::MAX_RESOURCES`) and 64-byte names, port caps; tuning: real servers; the
+// original has no dedicated server.
 pub const MAX_START: usize = super::MAX_RESOURCES;
 pub const MAX_NAME: usize = super::MAX_NAME;
 pub const MAX_FOLDER_PATH: usize = 4096;
@@ -36,8 +38,8 @@ pub struct Mods {
 }
 
 impl Default for Mods {
-    // TODO(guess): `client_scripts = true` by default (the plan's example; the scripts draw and read only, locally);
-    // settle: what operators of race servers set once servers are public.
+    // PORT(choice): `client_scripts = true` by default (the plan's example; the scripts draw and read only, locally);
+    // tuning: what operators of race servers set once servers are public; the original has no dedicated server.
     fn default() -> Self {
         Mods { client_mods: ClientMods::Presentation, client_scripts: true }
     }

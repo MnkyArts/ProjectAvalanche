@@ -362,7 +362,8 @@ impl HudProvider {
                 self.sent[k] = false;
             }
         }
-        // TODO(guess): 0x825E05A8 (a live event ended while paused → action 0x22) is not ported; settle: none (no live events in the port).
+        // PORT(choice): 0x825E05A8 (a live event ended while paused → action 0x22) is not ported; no live events in the
+        // port (EA's online live events).
         for m in std::mem::take(&mut self.messages) {
             match m {
                 HudMessage::BanksFlushed { captured } => self.trick.banks_flushed(cx, env, captured),
@@ -424,23 +425,28 @@ pub fn elements_off(values: &mut UiValues) {
     }
 }
 
-pub fn set_hud_shown(values: &mut UiValues, show: bool, nis_active: bool, drop_key: u32) {
+pub fn set_hud_shown(values: &mut UiValues, show: bool, nis_active: bool, drop_key: u32, free_ride: bool) {
     if !show || nis_active {
         elements_off(values);
         return;
     }
-    show_drop_elements(values, drop_key);
+    show_drop_elements(values, drop_key, free_ride);
 }
 
-// TODO(guess): the game's first score-manager update of a level comes before the nav's `showHUD`; settle: the order of the level's first frame and `go_to_hud` (0x8259BCF8 on, `FENotificationRestartGameplay` 0x5A5A5C39).
-pub fn level_start(values: &mut UiValues) {
-    values.set_bool(id::NIS_IS_ACTIVE, true);
+pub fn level_start(values: &mut UiValues, nis_active: bool) {
+    values.set_bool(id::NIS_IS_ACTIVE, nis_active);
+    values.set_bool(id::EXPLORE_LEADERBOARD_IS_ACTIVE, false);
     values.set(id::LEADERBOARD, UiValue::Rows(Vec::new()));
+    values.set_bool(id::PAUSE_MENU_DISABLE, false);
 }
 
-pub fn show_drop_elements(values: &mut UiValues, drop_key: u32) {
+pub fn show_drop_elements(values: &mut UiValues, drop_key: u32, free_ride: bool) {
+    values.set_bool(id::RACE_STARTED, true);
+    values.set_bool(id::METERS_ACTIVE, true);
+    if free_ride {
+        return;
+    }
     for (i, b) in [
-        (id::RACE_STARTED, true),
         (id::IS_ENABLED, true),
         (id::DESCENT_ACTIVE, false),
         (id::SPEED_ACTIVE, false),
@@ -450,11 +456,11 @@ pub fn show_drop_elements(values: &mut UiValues, drop_key: u32) {
         (id::COMBO_INDICATOR_ACTIVE, false),
         (id::SCORE_TIMER_ACTIVE, false),
         (id::DYNAMIC_LEADERBOARD_ENABLED, true),
-        (id::METERS_ACTIVE, true),
     ] {
         values.set_bool(i, b);
     }
-    // TODO(guess): live / global events (0x82577E78 true: the event's +0x4C flags) are not in the port, every drop takes the World Tour / Explore branch; settle: none (no live events in the port).
+    // PORT(choice): every drop takes the World Tour / Explore branch; no live events in the port: live / global events
+    // (0x82577E78 true: the event's +0x4C flags) are EA's online events.
     match drop_key {
         0xC145_699A => {
             for (i, b) in [
@@ -496,16 +502,28 @@ mod tests {
     #[test]
     fn the_hud_shown_under_an_nis_has_no_element() {
         let mut v = UiValues::new();
-        show_drop_elements(&mut v, 0x1234_5678);
+        show_drop_elements(&mut v, 0x1234_5678, false);
         assert!(v.bool(id::TIME_ACTIVE) && v.bool(id::SCORE_ACTIVE) && v.bool(id::RACE_STARTED));
-        set_hud_shown(&mut v, true, true, 0x1234_5678);
+        set_hud_shown(&mut v, true, true, 0x1234_5678, false);
         for i in [id::RACE_STARTED, id::TIME_ACTIVE, id::SCORE_ACTIVE, id::METERS_ACTIVE, id::IS_ENABLED] {
             assert!(!v.bool(i), "{i:#x} stays off under the NIS");
         }
-        set_hud_shown(&mut v, true, false, 0x1234_5678);
+        set_hud_shown(&mut v, true, false, 0x1234_5678, false);
         assert!(v.bool(id::TIME_ACTIVE) && v.bool(id::SPEED_ACTIVE) && v.bool(id::DESCENT_ACTIVE));
-        set_hud_shown(&mut v, false, false, 0x1234_5678);
+        set_hud_shown(&mut v, false, false, 0x1234_5678, false);
         assert!(!v.bool(id::TIME_ACTIVE) && !v.bool(id::IS_ENABLED));
+    }
+
+    #[test]
+    fn a_new_level_sets_the_nis_flag_for_the_hud_state() {
+        let mut v = UiValues::new();
+        level_start(&mut v, true);
+        assert!(v.bool(id::NIS_IS_ACTIVE));
+        level_start(&mut v, false);
+        assert!(!v.bool(id::NIS_IS_ACTIVE), "a level starting outside its NIS: the start state's value");
+        level_start(&mut v, true);
+        set_hud_shown(&mut v, true, true, 0x1234_5678, false);
+        assert!(!v.bool(id::METERS_ACTIVE) && !v.bool(id::WINGSUIT_ACTIVE));
     }
 
     #[test]
@@ -518,22 +536,60 @@ mod tests {
         let player = RaceEntrant { name: "elise".into(), ..Default::default() };
         let griff = TrickBot { name: "griff".into(), live: 1_210_877.0, recorded: 1_210_877, ..Default::default() };
         let mut trick = TrickStandings::default();
-        trick.update(&mut v, &mut loc, EventType::TrickBots, &player, 19_667_448.0, 1.0, true, &[griff]);
+        let bots = [griff];
+        let f = crate::game::leaderboard::TrickFrame {
+            event_type: EventType::TrickBots,
+            player: &player,
+            points: 19_667_448.0,
+            progress: 1.0,
+            world_tour: true,
+            bots: &bots,
+        };
+        trick.update(&mut v, &mut loc, f);
         assert_eq!(v.rows(id::LEADERBOARD).len(), 2);
-        level_start(&mut v);
-        show_drop_elements(&mut v, 0x1234_5678);
+        assert!(v.bool(id::EXPLORE_LEADERBOARD_IS_ACTIVE));
+        v.set_bool(id::PAUSE_MENU_DISABLE, true);
+        level_start(&mut v, true);
+        show_drop_elements(&mut v, 0x1234_5678, false);
         assert!(v.bool(id::DYNAMIC_LEADERBOARD_ENABLED));
         assert!(v.rows(id::LEADERBOARD).is_empty(), "the trick event's standings stay off the next drop");
+        assert!(!v.bool(id::EXPLORE_LEADERBOARD_IS_ACTIVE), "0x824C9DB0 writes 0xEC false");
+        assert!(!v.bool(id::PAUSE_MENU_DISABLE), "0x824C9DB0 writes 0x1BB false");
+    }
+
+    #[test]
+    fn a_free_ride_writes_only_race_started_and_the_meters() {
+        let elements = [
+            id::IS_ENABLED,
+            id::DESCENT_ACTIVE,
+            id::SPEED_ACTIVE,
+            id::SCORE_ACTIVE,
+            id::TRICK_INDICATOR_ACTIVE,
+            id::COMBO_INDICATOR_ACTIVE,
+            id::SCORE_TIMER_ACTIVE,
+            id::TIME_ACTIVE,
+            id::DYNAMIC_LEADERBOARD_ENABLED,
+        ];
+        let mut v = UiValues::new();
+        show_drop_elements(&mut v, 0x1234_5678, true);
+        assert!(v.bool(id::RACE_STARTED) && v.bool(id::METERS_ACTIVE));
+        for i in elements {
+            assert!(v.get(i).is_none(), "{i:#x} not written in a free ride");
+        }
+        let mut v = UiValues::new();
+        set_hud_shown(&mut v, true, true, 0x1234_5678, true);
+        set_hud_shown(&mut v, true, false, 0x1234_5678, true);
+        assert!(v.bool(id::METERS_ACTIVE) && !v.bool(id::TIME_ACTIVE) && !v.bool(id::SCORE_ACTIVE));
     }
 
     #[test]
     fn the_first_drops_elements() {
         let mut v = UiValues::new();
-        show_drop_elements(&mut v, 0xC145_699A);
+        show_drop_elements(&mut v, 0xC145_699A, false);
         assert!(v.bool(id::SCORE_ACTIVE) && v.bool(id::TUTORIAL_HUD_IS_ENABLED));
         assert!(!v.bool(id::TIME_ACTIVE) && !v.bool(id::SPEED_ACTIVE) && !v.bool(id::DESCENT_ACTIVE));
         let mut v = UiValues::new();
-        show_drop_elements(&mut v, 0xE389_832F);
+        show_drop_elements(&mut v, 0xE389_832F, false);
         assert!(v.bool(id::RACE_STARTED) && v.bool(id::METERS_ACTIVE));
         assert!(!v.bool(id::SCORE_ACTIVE) && !v.bool(id::TIME_ACTIVE));
     }

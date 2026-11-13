@@ -24,6 +24,7 @@ pub struct Hub {
 pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.game_mode = -1;
     fe.screen = screens::id::MAIN_MENU;
+    env.values.set_bool(crate::game::values::id::FLOW_RECEIVE_NOTIFICATIONS, true);
     let title = env.loc.text("TXT_AVA_HUB_TITLE");
     env.values.set_str(0x32, title);
     env.values.set_str(0x33, "");
@@ -47,7 +48,7 @@ pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
         item(loc, "TXT_AVA_HUB_CREDITS", true, "A_AvaCredits"),
         item(loc, "TXT_AVA_HUB_EXIT", true, "A_AvaExit"),
     ];
-    // TODO(guess): a port choice — the port's menu follows the game's menus' option; settle: none (the original has no such menu).
+    // PORT(choice): the port's menu follows the game's menus' option; the original has no such menu.
     let last = match fe.menu_focus {
         MenuFocus::FirstItem => None,
         MenuFocus::LastItem => {

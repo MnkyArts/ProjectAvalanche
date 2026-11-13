@@ -37,13 +37,14 @@ impl ViewClock {
     }
 }
 
-// TODO(guess): every half second (15 ticks), a port choice: 64 offsets over the window; settle: the display error
-// through the stalls (net_bot's trace, round net3d's display runs) with a quarter and a whole second.
+// PORT(choice): every half second (15 ticks): 64 offsets over the window; tuning: the display error through the stalls
+// (net_bot's trace, round net3d's display runs) with a quarter and a whole second; the original has no real-time
+// multiplayer.
 pub const VIEW_MAP_EVERY_TICKS: f64 = 15.0;
-// TODO(guess): 32 s (960 ticks), a port choice: a server's stall of 2 s moved the clients' estimates for about 6 s
-// (round net3c: the senders' stamps jumped back 9 to 10 ticks at a time, the receiver's estimate slewed), 8 s of
-// offsets off in 32 s leave the median on the settled ones; the clocks' rates move the true offset by at most
-// 2e-4 × 960 = 0.2 ticks over it; settle: the display error through stalls of 2, 5 and 10 s.
+// PORT(choice): 32 s (960 ticks): a server's stall of 2 s moved the clients' estimates for about 6 s (round net3c: the
+// senders' stamps jumped back 9 to 10 ticks at a time, the receiver's estimate slewed), 8 s of offsets off in 32 s
+// leave the median on the settled ones; the clocks' rates move the true offset by at most 2e-4 × 960 = 0.2 ticks over
+// it; tuning: the display error through stalls of 2, 5 and 10 s; the original has no real-time multiplayer.
 pub const VIEW_MAP_WINDOW_TICKS: f64 = 960.0;
 const VIEW_MAP_KEPT: usize = (VIEW_MAP_WINDOW_TICKS / VIEW_MAP_EVERY_TICKS) as usize + 1;
 pub const VIEW_MAP_MAX_AGE_TICKS: f64 = crate::limits::POSE_TICK_WINDOW as f64 / 2.0;
@@ -147,9 +148,10 @@ pub(super) fn pending_taken(mut clock: ResMut<ServerClock>) {
 
 const GRID_EPSILON: f64 = 1e-6;
 
-// TODO(guess): one second, a port choice (the 50-race runs with the alignment at the start's arrival measured a first
-// round's skew of 0.62–1.50 ticks against 0.1–0.6 in the later rounds, the estimate a second or two old); settle: the
-// start's skew of the first rounds after the joins with this alignment over the 50-race runs.
+// PORT(choice): one second (the 50-race runs with the alignment at the start's arrival measured a first round's skew of
+// 0.62–1.50 ticks against 0.1–0.6 in the later rounds, the estimate a second or two old); tuning: the start's skew of
+// the first rounds after the joins with this alignment over the 50-race runs; the original has no real-time
+// multiplayer.
 pub const ALIGN_BEFORE_START_TICKS: f64 = 30.0;
 
 pub fn align_due(clock: &ServerClock, timeline: &LocalTimeline, fixed: &Time<Fixed>, start: u32) -> bool {

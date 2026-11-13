@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use super::http::OperationHttp;
 use crate::http::HttpState;
 
-// TODO(guess): the buckets around phase 2's measured 4–12 kB/s per rider and loopback-to-intercontinental round trips;
-// settle: the distributions of public servers.
+// PORT(choice): the buckets around phase 2's measured 4–12 kB/s per rider and loopback-to-intercontinental round trips;
+// tuning: the distributions of public servers; the original has no dedicated server.
 pub const RATE_BOUNDS: [f64; 9] = [1e3, 2e3, 4e3, 8e3, 16e3, 32e3, 64e3, 128e3, 256e3];
 pub const RTT_BOUNDS: [f64; 10] = [0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0];
 pub const JITTER_BOUNDS: [f64; 8] = [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25];

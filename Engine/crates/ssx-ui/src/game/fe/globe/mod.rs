@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod clouds;
 pub mod levels;
 pub mod look;

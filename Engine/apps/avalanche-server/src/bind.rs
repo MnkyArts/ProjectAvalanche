@@ -33,10 +33,11 @@ pub fn udp_socket(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     Ok(s.into())
 }
 
-// TODO(guess): 8 picks, a port bound — a pick fails only when another process holds UDP on the number the system gave
-// the TCP listener (two of the test servers' starts in the full test runs of 2026-10-31, each passing on its next
-// run); the system's picks of a free port are spread over its ephemeral range, so eight fail together only on a host
-// that holds most of that range's UDP ports; settle: the picks a start needed, logged over the servers' starts.
+// PORT(choice): 8 picks, a port bound — a pick fails only when another process holds UDP on the number the system gave
+// the TCP listener (two of the test servers' starts in the full test runs of 2026-10-31, each passing on its next run);
+// the system's picks of a free port are spread over its ephemeral range, so eight fail together only on a host that
+// holds most of that range's UDP ports; tuning: the picks a start needed, logged over the servers' starts; the original
+// has no dedicated server.
 pub const PORT_PICKS: usize = 8;
 
 #[derive(Debug)]

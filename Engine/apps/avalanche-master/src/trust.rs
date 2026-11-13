@@ -9,15 +9,16 @@ use crate::address::canonical;
 use crate::forwarded::{Network, TrustsPeer};
 use crate::names::{Answer, HostName, Resolve, addresses, judge};
 
-// TODO(guess): every 2 s (one query to Docker's DNS, 127.0.0.11 inside the container, per name and family; a
-// Traefik stand-in recreated at a new address was trusted 0.40 s after its start, round net4d); settle: a proxy
-// restart on Coolify measured (how long its requests reach the master untrusted).
+// PORT(choice): every 2 s (one query to Docker's DNS, 127.0.0.11 inside the container, per name and family; a Traefik
+// stand-in recreated at a new address was trusted 0.40 s after its start, round net4d); tuning: a proxy restart on
+// Coolify measured (how long its requests reach the master untrusted); the original has no master server.
 pub const REFRESH: Duration = Duration::from_secs(2);
-// TODO(guess): 2 s (Docker's DNS answers from the container's own loopback; glibc's default is 5 s per try and
-// server); settle: none (a resolver that does not answer within it is treated as failed).
+// PORT(choice): 2 s (Docker's DNS answers from the container's own loopback; glibc's default is 5 s per try and server;
+// a resolver that does not answer within it is treated as failed); the original has no master server.
 pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
-// TODO(guess): 10 s (five refreshes: a resolver's hiccup costs no trust, a proxy gone and its address given to
-// another container is trusted at most this long); settle: Docker's DNS failures measured on a busy Coolify host.
+// PORT(choice): 10 s (five refreshes: a resolver's hiccup costs no trust, a proxy gone and its address given to another
+// container is trusted at most this long); tuning: Docker's DNS failures measured on a busy Coolify host; the original
+// has no master server.
 pub const STALE_AFTER: Duration = Duration::from_secs(10);
 const ERROR_CHARS: usize = 160;
 

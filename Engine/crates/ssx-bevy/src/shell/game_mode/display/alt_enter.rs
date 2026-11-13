@@ -23,7 +23,8 @@ impl AltEnter {
         messages.filter(|(_, id)| !self.toggles.contains(&id.id)).map(|(m, _)| m)
     }
 
-    // TODO(guess): a port choice — Alt+Enter toggles the window and fullscreen: the PC convention (DXGI's own default, which wgpu-hal 30's DX12 swap chain turns off with `DXGI_MWA_NO_ALT_ENTER`; the console has no window); Enter alone stays START / A; settle: none (no window on the 360).
+    // PORT(choice): Alt+Enter toggles the window and fullscreen: the PC convention (DXGI's own default, which wgpu-hal
+    // 30's DX12 swap chain turns off with `DXGI_MWA_NO_ALT_ENTER`); Enter alone stays START / A; the 360 has no window.
     pub fn key(&mut self, key: KeyCode, state: ButtonState, repeat: bool) -> bool {
         let down = state == ButtonState::Pressed;
         match key {

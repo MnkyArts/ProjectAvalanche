@@ -114,7 +114,10 @@ fn sd_layout(cx: &mut Ctx, this: &Value, sd: &crate::author::SdDef) -> R {
         call_method(cx, &view_util, "RepositionIfSD", &[clip, Value::Bool(*left)])?;
     }
     if let Some(k) = sd.scale {
-        // TODO(guess): a port choice — a port screen wider than the 4:3 picture (the server browser, the maps: 93 … 1209 of the 1280 stage pixels, where the 4:3 display keeps 160 … 1120) is scaled about the stage's middle there instead of an own 4:3 layout (the disc's screens move their edge clips by 136, `RepositionIfSD`, and the badges' panel scales `SECONDARY_MENU_SD_XSCALE`); settle: none (the port's screens).
+        // PORT(choice): a port screen wider than the 4:3 picture (the server browser, the maps: 93 … 1209 of the 1280
+        // stage pixels, where the 4:3 display keeps 160 … 1120) is scaled about the stage's middle there instead of an
+        // own 4:3 layout (the port's screens); the disc's screens move their edge clips by 136 (`RepositionIfSD`), and
+        // the badges' panel scales `SECONDARY_MENU_SD_XSCALE`.
         let centre = (f64::from(sd.centre.0), f64::from(sd.centre.1));
         crate::game::display_class::scale_if_sd(cx, this, f64::from(k), centre)?;
     }
@@ -235,7 +238,11 @@ pub fn view_initialize(cx: &mut Ctx, this: Value, args: &[Value]) -> R {
     if let Some(sound) = logic.on_enter.sound {
         play_sound(cx, sound)?;
     }
-    // TODO(guess): a port choice — `unselectableData` is the window's last row (a step down moves the focus to the last row, then the window); the inventory's own grid (`EnabledPagedData`, views/equipmentinventory.gfx 0x0ae1) sends `{maxData: columns × rows, unselectableData: mNumUnselectableGridsTop}` for a carousel whose end columns cannot be selected (`INVENTORY_GRID_NUM_UNSELECTABLE_COLUMNS_LEFT` / `_RIGHT`), which a vertical list has none of; settle: none (the port's list).
+    // PORT(choice): `unselectableData` is the window's last row (a step down moves the focus to the last row, then the
+    // window) in the port's list; the inventory's own grid (`EnabledPagedData`, views/equipmentinventory.gfx 0x0ae1)
+    // sends `{maxData: columns × rows, unselectableData: mNumUnselectableGridsTop}` for a carousel whose end columns
+    // cannot be selected (`INVENTORY_GRID_NUM_UNSELECTABLE_COLUMNS_LEFT` / `_RIGHT`), which a vertical list has none
+    // of.
     if let Some(p) = &logic.paging
         && let Some(MenuKind::List { rows, .. }) = logic.menus.iter().find(|m| m.target == p.menu).map(|m| m.kind)
     {
@@ -485,7 +492,8 @@ pub fn cell_ctor(cx: &mut Ctx, this: Value, _: &[Value]) -> R {
 const PENDING: &str = "__avaPending";
 const ENABLED: &str = "__avaEnabled";
 const IMAGE_PATH: &str = "__avaImage_";
-// TODO(guess): a port choice — an own cell dims as the disc's small text cell (100 / 50 %; `MainMenuCell` uses 100 / 10, `ListMenuCellLarge` 100 / 10); settle: none (the cell is the port's).
+// PORT(choice): an own cell (the port's) dims as the disc's small text cell (100 / 50 %); the disc's `MainMenuCell`
+// uses 100 / 10, `ListMenuCellLarge` 100 / 10.
 const ALPHA_ENABLED: f64 = 100.0;
 const ALPHA_DISABLED: f64 = 50.0;
 

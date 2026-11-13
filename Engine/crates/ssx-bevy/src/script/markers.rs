@@ -233,10 +233,10 @@ fn next_gate(ride: &crate::ride::Ride) -> Option<GateAt> {
     m.gates.finish.map(|_| GateAt::Finish)
 }
 
-// TODO(guess): port choice (the game has no checkpoint): the base set's gate look at the volume's bottom centre, as
-// wide as the volume (a box's X extent, a sphere's diameter; the look scales uniformly, so as tall), facing a box's
-// +Z or, for a sphere, the way from the gate before it (else to the one after it, else +Z); settle: how map authors
-// want their gates shown (a marker look per map or gamemode would be the user's call).
+// PORT(choice): the base set's gate look at the volume's bottom centre, as wide as the volume (a box's X extent, a
+// sphere's diameter; the look scales uniformly, so as tall), facing a box's +Z or, for a sphere, the way from the gate
+// before it (else to the one after it, else +Z); tuning: how map authors want their gates shown (a marker look per map
+// or gamemode would be the user's call); the game has no checkpoint.
 fn gate_view(ride: &crate::ride::Ride, at: GateAt) -> Option<MarkerView> {
     use ssx_physics::triggers::VolumeShape;
     let m = ride.map.as_ref()?;

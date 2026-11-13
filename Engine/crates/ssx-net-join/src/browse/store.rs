@@ -10,8 +10,9 @@ use super::address::ServerAddress;
 use super::files::{move_aside, write_whole};
 
 pub const SERVERS_FILE: &str = "servers.json";
-// TODO(guess): 256 KiB, 100 favourites, 30 recent (MTA keeps its recent list short and its favourites unbounded; a
-// favourite here is about 90 bytes); settle: the lists players keep once servers are public (phase 5).
+// PORT(choice): 256 KiB, 100 favourites, 30 recent (MTA keeps its recent list short and its favourites unbounded; a
+// favourite here is about 90 bytes); tuning: the lists players keep once servers are public (phase 5); the original has
+// no server browser.
 pub const MAX_FILE: u64 = 256 * 1024;
 pub const MAX_FAVOURITES: usize = 100;
 pub const MAX_RECENT: usize = 30;

@@ -42,8 +42,8 @@ pub struct Policy {
 }
 
 impl Default for Policy {
-    // TODO(guess): the defaults are a port choice (the game has no validation): invalidate for every check; settle: the
-    // operators' experience with kicks against invalidations on public servers.
+    // PORT(choice): the defaults: invalidate for every check; tuning: the operators' experience with kicks against
+    // invalidations on public servers; the game has no validation.
     fn default() -> Self {
         Self { actions: [Action::Invalidate; 6] }
     }

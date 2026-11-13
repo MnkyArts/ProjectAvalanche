@@ -226,10 +226,20 @@ pub struct GrindRider {
     pub debug: Option<state::MachineDebug>,
     pub pad_l2: bool,
     pub button: bool,
+    pub pad_l2_hold: bool,
+    pub l2_hold: bool,
     pub stick: (f32, f32),
 }
 
 impl GrindRider {
+    pub fn set_l2(&mut self, held: bool) {
+        (self.pad_l2, self.pad_l2_hold) = (held, held);
+    }
+
+    pub fn release_l2(&mut self) {
+        self.set_l2(false);
+    }
+
     pub fn is_grinding(&self) -> bool {
         self.carving.is_grinding
     }

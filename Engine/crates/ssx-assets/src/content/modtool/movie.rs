@@ -79,6 +79,11 @@ What the game plays: one AV1 video track (Main profile, 8-bit 4:2:0, one operati
 most 30 minutes and 512 MiB. `ssx-assets mod check` reads and decodes it to its end and tells how fast it decodes on
 your machine; slower than real time, the game drops pictures to keep the sound's time.
 
+The port's movie slot `ava:movie/fe_background` is empty by default: a movie your package gives it with
+`[override]` plays on the front end behind the globe, in place of the game's backdrop picture, while the globe
+shows. It covers the screen at its own aspect (centred; what lies past the edges is left out), loops and plays
+without its sound (a sound track is allowed and left silent).
+
 Ids: `ssx-assets content ids --kind movie` lists the game's movies; `ssx-assets content export ssx:movie/<name>`
 writes one from your own disc as a WebM, for your own use only: exported files may not be shipped (`mod check` and
 `mod pack` refuse them). A package's movie must be its author's own work, or material whose licence lets them share it.
@@ -124,6 +129,9 @@ pub fn template(root: &Path, name: &str) -> Result<()> {
 # with Vorbis sound (README.txt: how to make one with FFmpeg, and what the game plays).
 [override]
 "ssx:movie/boot_movie_eng" = "movies/intro.webm"
+# The port's movie slot behind the globe (empty by default): a movie in place of the front end's backdrop picture
+# while the globe shows, covering the screen at its own aspect, looping, without its sound.
+# "ava:movie/fe_background" = "movies/intro.webm"
 
 # A movie the package adds ("<package>:movie/<path>"): played by its id where the game takes one (the test option
 # `avalanche-game --play-movie <id>`; scripts and maps name movies from phases M7 and M8).

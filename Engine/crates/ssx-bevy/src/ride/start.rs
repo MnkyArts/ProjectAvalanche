@@ -56,7 +56,9 @@ impl Ride {
                 warn!("survival: the loadout failed ({e:#}); default gear");
             }
         }
-        // TODO(guess): without a game setup each equipped item is drawn as its first variant (`equipment_description.id` 0) and the head lamp unscaled (factor 1); settle: none (the look is the player's choice, which only a front end's setup carries).
+        // PORT(choice): without a game setup each equipped item is drawn as its first variant
+        // (`equipment_description.id` 0) and the head lamp unscaled (factor 1); the look is the player's choice, which
+        // only a front end's setup carries; the game always has that setup.
         let loadout = match &game_setup {
             Some(s) => {
                 let entries: Vec<(usize, u32)> = s
@@ -144,7 +146,9 @@ impl Ride {
         let course = setup.world.end_locator.map(|e| Course { start_y: setup.spawn.0.y, end_y: e.y });
         let event = match &setup.map {
             Some(m) => EventManager::new(m.setup.clone()),
-            None => EventManager::new(EventSetup::new(def.as_ref(), course)),
+            None => {
+                EventManager::new(EventSetup { free_ride: setup.free_ride, ..EventSetup::new(def.as_ref(), course) })
+            }
         };
         let mut session = Session { event, ..Session::default() };
         if let Some(m) = setup.map.as_mut() {
@@ -184,11 +188,8 @@ impl Ride {
         }) {
             match ssx_physics::session::bots::BotData::load(&setup.big_root) {
                 Ok(data) => {
-                    let seed = std::env::var("SSX_BOT_SEED")
-                        .ok()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(ssx_physics::session::bots::DEFAULT_BOT_SEED);
-                    let mut rng = ssx_physics::session::bots::Mt19937::seeded(seed);
+                    let seed: Option<u32> = std::env::var("SSX_BOT_SEED").ok().and_then(|v| v.parse().ok());
+                    let mut rng = ssx_assets::career::random::Source::seeded(seed);
                     let course = session.event.setup.course;
                     if let Some((race, problems)) =
                         ssx_physics::session::bots::BotRace::for_event(&setup.big_root, d, &data, &mut rng, course)
@@ -196,7 +197,7 @@ impl Ride {
                         for p in problems {
                             warn!("bots: {p}");
                         }
-                        info!("bots: {} for {} (GlobalRandom_Below seed {seed})", race.bots.len(), d.name);
+                        info!("bots: {} for {} (GlobalRandom_Below, seed {seed:?})", race.bots.len(), d.name);
                         session.bots = Some(race);
                     }
                 }
@@ -239,6 +240,22 @@ impl Ride {
                     session.survive = Some(ssx_physics::session::survive::SurviveLoop::new(later, Some(outro), at, q));
                 }
                 Err(e) => warn!("survive-to-death loop unavailable: {e:#}"),
+            }
+        }
+        if let Some(d) = def.as_ref().filter(|d| {
+            setup.free_ride
+                && ssx_physics::outro::outro_of_scripts(&d.scripts) == Some(ssx_physics::outro::OutroScript::Standard)
+                && !crate::render::post::env_is("SSX_OUTRO", "off")
+        }) {
+            match ssx_physics::outro::prepare_heli_pickup(&setup.big_root, &d.name, &setup.character) {
+                Ok(outro) => {
+                    let (at, heading) = setup.spawn;
+                    let q = ssx_physics::spawn::level_start_orientation(&setup.world, at, heading);
+                    info!("free ride: {} after the finish, then the level start again", outro.nis.binding);
+                    let later = intro_short.clone().or_else(|| intro.clone());
+                    session.survive = Some(ssx_physics::session::survive::SurviveLoop::new(later, Some(outro), at, q));
+                }
+                Err(e) => warn!("free ride: the heli pickup is unavailable: {e:#}"),
             }
         }
         if let Some(m) = setup.map.as_ref().filter(|_| !crate::render::post::env_is("SSX_OUTRO", "off"))
@@ -298,7 +315,7 @@ impl Ride {
             match ssx_physics::session::geotags::GeotagData::load(&setup.big_root, &setup.track) {
                 Ok(Some(data)) => {
                     let seed = crate::render::geotags::seed();
-                    let mut rng = ssx_physics::session::bots::Mt19937::seeded(seed);
+                    let mut rng = ssx_assets::career::random::Source::seeded(seed);
                     let collected = &setup.collected_geotags;
                     let run = ssx_physics::session::geotags::GeotagRun::new(
                         std::sync::Arc::new(data),
@@ -306,7 +323,7 @@ impl Ride {
                         &mut rng,
                     );
                     let ids: Vec<u32> = run.entities.iter().map(|e| e.record.row.id).collect();
-                    info!("geotags: {} of {} rows placed (seed {seed}): {ids:?}", ids.len(), run.data.rows.len());
+                    info!("geotags: {} of {} rows placed (seed {seed:?}): {ids:?}", ids.len(), run.data.rows.len());
                     session.geotags = Some(run);
                 }
                 Ok(None) => info!("geotags: {} has none", setup.track),
@@ -445,6 +462,7 @@ impl Ride {
             render: pose,
             render_time: 0.0,
             steps: 0,
+            audio_tag_log: Default::default(),
             distance: 0.0,
             input: setup.fixed_input.unwrap_or_default(),
             tricks: TrickInput::default(),
@@ -453,6 +471,7 @@ impl Ride {
             air_input: setup.air_input,
             grab: setup.grab,
             tweak: setup.tweak,
+            shoulders: setup.shoulders,
             boost: setup.boost,
             boost_meter: setup.boost_meter,
             r2: 0.0,
@@ -464,11 +483,17 @@ impl Ride {
             rewinding: false,
             auto_rewind: AutoRewind::default(),
             autoplay_waited: 0,
+            autoplay_sat_out: false,
+            numpad_held: Vec::new(),
+            key_rewind: Default::default(),
+            key_rewind_state: ssx_physics::rewind::RewindState::Idle,
+            key_holds: Default::default(),
             course,
             course_logged: 0,
             course_start_at: 0.0,
             flare_pushes: 0,
             l2: false,
+            l2_hold: false,
             grind_fixed: env_flag("SSX_RIDE_GRIND"),
             rail_debug: env_flag("SSX_RIDE_RAIL_DEBUG"),
             last_grind_capture: 0.0,
@@ -488,9 +513,6 @@ impl Ride {
             back_press: false,
             autoplay: setup.autoplay || env_flag("SSX_RIDE_AUTOPLAY"),
             classic: setup.classic,
-            classic_grind_ticks: 0.0,
-            classic_rewind_ticks: 0.0,
-            classic_wingsuit_ticks: 0.0,
             viewer_keys: !setup.game,
             a_lock: PadLock::default(),
             grind_since: None,

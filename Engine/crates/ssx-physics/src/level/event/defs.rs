@@ -163,36 +163,79 @@ pub fn load_events(big_root: &Path) -> Result<Vec<EventDef>> {
         ssx_assets::content::data::events::ghost_db_text(big_root).map(|t| parse_ghost_db(&t)).unwrap_or_default();
     let mut out = Vec::new();
     for r in ssx_rules::events::ui_drop_records(&cols, &decoded, &index)? {
-        let rivals = ghosts.iter().filter(|(id, _)| *id == r.key).map(|(_, rival)| *rival).collect();
-        let forced_rider = r.forced[5];
-        let forced_items: crate::gear::ForcedItems = std::array::from_fn(|k| r.forced[k]);
-        let loadout = match (r.key == crate::gear::FINAL_DROP, r.slot_counts) {
-            (true, Some(slots)) => gear.equipped_loadout(forced_rider, &crate::gear::FINAL_DROP_EQUIPS, slots),
-            _ => (forced_rider != 0)
-                .then(|| gear.fresh_profile_loadout(forced_rider, &forced_items, &r.required_equipment))
-                .flatten(),
-        };
-        let message =
-            crate::objectives::DropMessage { title: r.title, body: r.body, parameter: r.parameter, kind: r.kind };
-        out.push(EventDef {
-            name: r.name,
-            key: r.key,
-            drop_key: r.drop_key,
-            event_type: r.event_type,
-            scripts: r.scripts,
-            rivals,
-            required_equipment: r.required_equipment,
-            avalanche_scripts: r.avalanche_scripts,
-            forced_rider,
-            forced_items,
-            loadout,
-            objectives: None,
-            message,
-            places: r.places,
-            goal: r.goal,
-        });
+        out.push(event_def(r, &gear, &ghosts));
+    }
+    for e in dlc_events(big_root, &gear, &ghosts)? {
+        if !out.iter().any(|b| b.key == e.key) {
+            out.push(e);
+        }
     }
     Ok(out)
+}
+
+fn dlc_events(big_root: &Path, gear: &GearDb, ghosts: &[(u32, Rival)]) -> Result<Vec<EventDef>> {
+    let paths = ssx_assets::vault_db::dlc_delta_vaults();
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = big_root.join("bootcache/data/xenon/attribdb");
+    let (svlt, sbin) = read_pair(&dir.join("attribdb_schema.vlt"))?;
+    let schema = Schema::from_vault(&Vault::parse(&svlt, &sbin)?).context("reading the schema")?;
+    let known: std::collections::HashSet<u32> = schema.classes.iter().map(|c| c.key).collect();
+    let mut out = Vec::new();
+    for path in paths {
+        let (vlt, bin) = read_pair(&path)?;
+        let vault = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {}", path.display()))?;
+        let mut cols = Vec::new();
+        let mut decoded = Vec::new();
+        for c in collection::collections(&vault)? {
+            if !known.contains(&c.class) {
+                continue;
+            }
+            decoded.push(c.decode(&vault, &schema).with_context(|| format!("collection {:#010x}", c.key))?);
+            cols.push(c);
+        }
+        let index = collection::index(&cols);
+        for r in ssx_rules::events::ui_drop_records(&cols, &decoded, &index)? {
+            if r.drop_key == 0 || r.name.is_empty() {
+                continue;
+            }
+            if !out.iter().any(|e: &EventDef| e.key == r.key) {
+                out.push(event_def(r, gear, ghosts));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn event_def(r: ssx_rules::events::UiDropRecord, gear: &GearDb, ghosts: &[(u32, Rival)]) -> EventDef {
+    let rivals = ghosts.iter().filter(|(id, _)| *id == r.key).map(|(_, rival)| *rival).collect();
+    let forced_rider = r.forced[5];
+    let forced_items: crate::gear::ForcedItems = std::array::from_fn(|k| r.forced[k]);
+    let loadout = match (r.key == crate::gear::FINAL_DROP, r.slot_counts) {
+        (true, Some(slots)) => gear.equipped_loadout(forced_rider, &crate::gear::FINAL_DROP_EQUIPS, slots),
+        _ => (forced_rider != 0)
+            .then(|| gear.fresh_profile_loadout(forced_rider, &forced_items, &r.required_equipment))
+            .flatten(),
+    };
+    let message = crate::objectives::DropMessage { title: r.title, body: r.body, parameter: r.parameter, kind: r.kind };
+    EventDef {
+        name: r.name,
+        key: r.key,
+        drop_key: r.drop_key,
+        event_type: r.event_type,
+        scripts: r.scripts,
+        rivals,
+        required_equipment: r.required_equipment,
+        avalanche_scripts: r.avalanche_scripts,
+        forced_rider,
+        forced_items,
+        loadout,
+        objectives: None,
+        message,
+        places: r.places,
+        goal: r.goal,
+    }
 }
 
 pub fn pick_event<'a>(events: &'a [EventDef], drop_key: u32, want: &str) -> Option<&'a EventDef> {
@@ -200,7 +243,9 @@ pub fn pick_event<'a>(events: &'a [EventDef], drop_key: u32, want: &str) -> Opti
 }
 
 pub fn choose_event<'a>(events: impl Iterator<Item = &'a EventDef>, want: &str) -> Option<&'a EventDef> {
-    // TODO(guess): which of a drop's events plays without a front end (by type, one with `ghostdb.csv` rows of starting index 0 first: the Explore events') is a port choice; settle: the front end's selection once ported (the player picks a `ui_drop`).
+    // PORT(choice): which of a drop's events plays without a front end (by type, one with `ghostdb.csv` rows of
+    // starting index 0 first: the Explore events'), the port hosts' choice; the game's front end has the player pick a
+    // `ui_drop`.
     let fits = |e: &EventDef| match (want, e.event_type) {
         (_, None) => false,
         ("race", Some(t)) => t.is_race(),

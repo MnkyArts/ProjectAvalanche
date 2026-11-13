@@ -21,9 +21,10 @@ use crate::policy::ClientMods;
 use crate::version::Version;
 
 pub const FORMAT: u32 = 1;
-// TODO(guess): 8 MiB, 256 resources and 65 536 files a server, 2 048 rows a level, 64 levels: port caps far above the
+// PORT(choice): 8 MiB, 256 resources and 65 536 files a server, 2 048 rows a level, 64 levels: port caps far above the
 // measured packages (M8a's template map as a resource 5 files and 16 132 bytes, the alps0101 layout 5 files and 4 503
-// bytes; their manifest 2 resources, 3 levels); settle: the manifests of real servers.
+// bytes; their manifest 2 resources, 3 levels); tuning: the manifests of real servers; the original has no dedicated
+// server.
 pub const MAX_BODY: usize = 8 << 20;
 pub const MAX_RESOURCES: usize = 256;
 pub const MAX_FILES: usize = 65_536;
@@ -33,8 +34,9 @@ pub const MAX_NAME: usize = 64;
 pub const MAX_TITLE: usize = 256;
 pub const MAX_ROW_ID: usize = 512;
 pub const MAX_CLASS: usize = 32;
-// TODO(guess): 8 GiB a server, a port cap (M8b's level budget holds 512 MiB of models and 1 GiB of decoded images, so a
-// map's files are far below one package's 2 GiB); settle: the sizes real servers ship.
+// PORT(choice): 8 GiB a server, a port cap (M8b's level budget holds 512 MiB of models and 1 GiB of decoded images, so
+// a map's files are far below one package's 2 GiB); tuning: the sizes real servers ship; the original has no dedicated
+// server.
 pub const MAX_SERVER_BYTES: u64 = 8 << 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

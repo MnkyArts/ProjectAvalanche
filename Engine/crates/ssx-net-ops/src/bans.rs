@@ -9,8 +9,8 @@ use crate::rules::FileError;
 
 mod file;
 
-// TODO(guess): 65 536 of each, far above MTA's ban lists of public servers as recalled; settle: the ban lists of
-// long-running public servers.
+// PORT(choice): 65 536 of each, far above MTA's ban lists of public servers as recalled; tuning: the ban lists of
+// long-running public servers; the original has no dedicated server.
 pub const MAX_ENTRIES: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -9,8 +9,8 @@ use ssx_net_proto::{ChatRefusal, ClientChat, RiderId, ServerChat};
 use super::{ClientRoster, Connection, RemotePoses};
 use crate::protocol::{ChatChannel, Wire};
 
-// TODO(guess): 64 lines, ten times the chat layer's rows (a game takes them every frame; a test client may not);
-// settle: none (a bound on what a server can make a client hold).
+// PORT(choice): 64 lines, ten times the chat layer's rows (a game takes them every frame; a test client may not), a
+// bound on what a server can make a client hold; the original has no chat.
 pub const KEPT_LINES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

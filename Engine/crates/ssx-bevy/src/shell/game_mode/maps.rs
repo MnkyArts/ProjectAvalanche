@@ -92,7 +92,10 @@ impl Shell {
         let id: ssx_content::ContentId = map.id.parse().map_err(|e| anyhow::anyhow!("{}: {e}", map.id))?;
         info!("shell: game setup (0x82498BA0): {}", l.setup.describe(&fe.career));
         let n = self.rides + 1;
-        // TODO(guess): a map's intro path counts the map's rides in this game (the first Long, later Medium) as a drop's counts its range's visits (`NumTimesVisitedRange_<range><Rider>`, FUN_82385F28, persisted in the profile); a map has no range and the profile no record for it, so the count is not saved and starts again with the game; settle: none on the disc (maps are not the game's) — a profile record per map would keep it.
+        // PORT(choice): a map's intro path counts the map's rides in this game (the first Long, later Medium) as a
+        // drop's counts its range's visits (`NumTimesVisitedRange_<range><Rider>`, FUN_82385F28, persisted in the
+        // profile); a map has no range and the profile no record for it, so the count is not saved and starts again
+        // with the game; a profile record per map would keep it; maps are not the game's.
         let visits = {
             let c = self.map_rides.entry(map.id.clone()).or_insert(0);
             *c = c.saturating_add(1);
@@ -144,6 +147,7 @@ impl Shell {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let big_root = self.big_root.clone();
+        let speech_lang = self.speech_lang;
         let song_flags = fe.music.switches();
         let event_type = l.event_type;
         std::thread::Builder::new()
@@ -164,6 +168,7 @@ impl Shell {
                         &spec.character,
                         data.max_boost(),
                         None,
+                        speech_lang,
                         false,
                     );
                     let game = game_level::LevelLoad::load(opts, &data)?;

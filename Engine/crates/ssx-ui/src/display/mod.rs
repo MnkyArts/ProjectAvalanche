@@ -188,6 +188,7 @@ pub struct Instance {
     pub blend: BlendMode,
     pub filter: Option<TextFilter>,
     pub visible: bool,
+    pub advance_hidden: bool,
     pub cache_as_bitmap: bool,
     pub placed_frame: Option<u16>,
     pub transformed_by_script: bool,
@@ -304,11 +305,8 @@ pub struct Player {
     pub unresolved: Vec<(MovieId, u16)>,
     instance_names: u32,
     pub script_events: bool,
-    /// Scaleform's `_global.noInvisibleAdvance` (the FE sets it, 0x82594A68): a sprite whose own `_visible` is false
-    /// is not advanced and gets no enter-frame events (`Sprite::SetVisible` 0x8268CEA0 drops it from the play list,
-    /// 0x82644CF8). Its children are listed on their own and advance unless the hide copied the flag onto them
-    /// (0x8268C160; [`Player::set_visible`]).
     pub no_invisible_advance: bool,
+    pub hud_extra: f64,
     live: usize,
     pub peak_instances: usize,
     pub peak_nesting: usize,
@@ -343,6 +341,7 @@ impl Player {
             instance_names: 0,
             script_events: false,
             no_invisible_advance: false,
+            hud_extra: 0.0,
             live: 0,
             peak_instances: 0,
             peak_nesting: 0,
@@ -505,6 +504,7 @@ impl Player {
             blend: BlendMode::Normal,
             filter: None,
             visible: true,
+            advance_hidden: false,
             cache_as_bitmap: false,
             placed_frame: None,
             transformed_by_script: false,

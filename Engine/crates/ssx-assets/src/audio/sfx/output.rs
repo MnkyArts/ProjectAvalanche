@@ -17,8 +17,11 @@ pub mod stats;
 pub const MIX_FRAMES: usize = FRAME_SAMPLES;
 pub const RATE: u32 = MIXER_RATE;
 
-// TODO(guess): a port choice without counterpart in the game (its Dac keeps three 256-sample frames queued, +0xF4 = 3, 0x82A504E8, on time-critical hardware threads); eight frames (42.7 ms) plus the growth (to `MARGIN_MAX`) cover the stalls measured on the development machine
-// (Linux, ALSA → PipeWire, 2 048-frame device pulls: no underrun in two five-minute sessions, also beside 8 busy loops; WASAPI only simulated, Windows not run); settle: the player logs' `audio:` lines from more machines.
+// PORT(choice): eight frames (42.7 ms) plus the growth (to `MARGIN_MAX`) cover the stalls measured on the development
+// machine (Linux, ALSA → PipeWire, 2 048-frame device pulls: no underrun in two five-minute sessions, also beside 8
+// busy loops; WASAPI only simulated, Windows not run); tuning: the player logs' `audio:` lines from more machines; no
+// counterpart in the game (its Dac keeps three 256-sample frames queued, +0xF4 = 3, 0x82A504E8, on time-critical
+// hardware threads).
 pub const MARGIN: usize = 8 * MIX_FRAMES;
 pub const MARGIN_MAX: usize = 64 * MIX_FRAMES;
 pub const GUARD: usize = 2 * MIX_FRAMES;
@@ -306,7 +309,9 @@ fn declick(queued: &mut VecDeque<f32>, next: &mut [f32], ch: usize) {
     }
 }
 
-// TODO(guess): a port choice — the game also pins the thread to hardware thread 4 (System +0x14E, `XSetThreadProcessor` 0x82351550; XAudio2 on 4 / 5, mask 0x30), which a PC has no counterpart of — the port leaves the placement to the system; settle: none possible (not run on Windows here, cross-checked only).
+// PORT(choice): the port leaves the thread's placement to the system (not run on Windows here, cross-checked only); the
+// game also pins the thread to hardware thread 4 (System +0x14E, `XSetThreadProcessor` 0x82351550; XAudio2 on 4 / 5,
+// mask 0x30), which a PC has no counterpart of.
 fn raise_priority() {
     #[cfg(windows)]
     {

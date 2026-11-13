@@ -426,10 +426,9 @@ impl MaterialSpec {
     pub(super) fn standard_material(&self, images: &[Handle<Image>]) -> StandardMaterial {
         let cutout = self.kind == EffectKind::Cutout;
         StandardMaterial {
-            base_color: match (self.base_colour, self.base_color.is_some()) {
-                (Some([r, g, b, a]), _) => Color::linear_rgba(r, g, b, a),
-                (None, true) => Color::WHITE,
-                (None, false) => Color::linear_rgb(0.6, 0.6, 0.6),
+            base_color: match self.base_colour {
+                Some([r, g, b, a]) => Color::linear_rgba(r, g, b, a),
+                None => Color::WHITE,
             },
             base_color_texture: self.base_color.map(|i| images[i].clone()),
             alpha_mode: if cutout { AlphaMode::Mask(ALPHA_CUTOFF) } else { AlphaMode::Opaque },

@@ -65,7 +65,7 @@ pub fn place_entities(
 
 fn place_with(
     set: &mut TriggerSet,
-    db: Option<&ssx_assets::vault_db::Db<'_>>,
+    db: Option<&ssx_assets::vault_db::Db>,
     big_root: &Path,
     def: &MapDefinition,
     objects: &BTreeMap<ContentId, MapObject>,

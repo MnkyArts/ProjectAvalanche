@@ -23,8 +23,9 @@ pub const MISSED_HEARTBEATS: u32 = 3;
 pub const EXPIRE_AFTER: Duration = Duration::from_secs(60 * MISSED_HEARTBEATS as u64);
 
 pub const MASTER_CHALLENGE_SIZE: usize = 8 + 16 + KEY_SIZE + 16;
-// TODO(guess): 30 s, the join challenge's lifetime (a heartbeat posts its challenge within a second); settle: the
-// heartbeats of real servers over slow links (the master's log of expired challenges).
+// PORT(choice): 30 s, the join challenge's lifetime (a heartbeat posts its challenge within a second); tuning: the
+// heartbeats of real servers over slow links (the master's log of expired challenges); the original has no master
+// server.
 pub const CHALLENGE_LIFETIME: Duration = Duration::from_secs(30);
 
 const HEARTBEAT_MAGIC: [u8; 4] = *b"SSXH";
@@ -174,9 +175,9 @@ pub struct Heartbeat {
     pub resources: crate::resources::ResourceSummary,
 }
 
-// TODO(guess): a region of 1 to 32 and up to 8 tags of 1 to 24 characters of a-z, 0-9 and `-` (FiveM's tags are free
-// text; MTA has none), a contact of 128 printable ASCII characters; settle: the regions and tags operators use, and the
-// browser's region and tag filters for them.
+// PORT(choice): a region of 1 to 32 and up to 8 tags of 1 to 24 characters of a-z, 0-9 and `-` (FiveM's tags are free
+// text; MTA has none), a contact of 128 printable ASCII characters; tuning: the regions and tags operators use, and the
+// browser's region and tag filters for them; the original has no master server.
 pub const MAX_REGION_CHARS: usize = 32;
 pub const MAX_TAGS: usize = 8;
 pub const MAX_TAG_CHARS: usize = 24;
@@ -380,8 +381,8 @@ pub fn address_text(ip: IpAddr) -> String {
     }
 }
 
-// TODO(guess): 10 000 servers (MTA's master lists a few thousand servers, FiveM's up to about 30 000); settle: the size
-// of real masters' lists.
+// PORT(choice): 10 000 servers (MTA's master lists a few thousand servers, FiveM's up to about 30 000); tuning: the
+// size of real masters' lists; the original has no master server.
 pub const MAX_LIST_SERVERS: usize = 10_000;
 pub const MAX_LIST_ENTRY_BYTES: usize = 2304;
 pub const MAX_LIST_BYTES: usize = 64 + MAX_LIST_SERVERS * (MAX_LIST_ENTRY_BYTES + 1);

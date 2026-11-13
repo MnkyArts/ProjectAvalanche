@@ -66,12 +66,15 @@ pub fn drop_fields(fe: &FrontEnd, loc: &mut crate::game::loc::Localization, drop
     let mut p = DropPanel { drop_name, ..DropPanel::default() };
     let (peak, _) = fe.career.peak_and_range(e);
     p.peak_name = fe.career.peak(peak).map(|pk| loc.text(&pk.title)).unwrap_or_default();
-    let type_key = if crate::game::fe::globe::TUTORIAL_DROPS.contains(&drop) {
+    let type_key = if fe.free_ride_drop.is_some() {
+        "TXT_EVENTTYPE_FREERIDE"
+    } else if crate::game::fe::globe::TUTORIAL_DROPS.contains(&drop) {
         "TXT_EVENTTYPE_TUTORIAL"
     } else {
         crate::game::hud::results::EVENT_TYPE_NAMES.get(e.event_type as usize).copied().unwrap_or("")
     };
     p.event_type = if type_key.is_empty() { String::new() } else { loc.text(type_key) };
+    p.event_type_raw = e.event_type as i32;
     p.difficulty = e.difficulty as i32;
     p.difficulty_text = DIFFICULTY_NAMES.get(e.difficulty as usize).map(|k| loc.text(k)).unwrap_or_default();
     p.requirements = requirements_text(fe, loc, drop);
@@ -123,6 +126,9 @@ pub fn write(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
         }
         _ => {}
     }
+    if !fe.profile.purchased.contains(&drop) {
+        p.cost = p.cost.max(e.cost as i32);
+    }
     env.values.set(DROP_PANEL, UiValue::Panel(Box::new(p)));
 }
 
@@ -170,6 +176,7 @@ pub fn object(cx: &mut Ctx, p: &DropPanel) -> Value {
         ("iNumFriendsInGlobalEvent", n(p.friends_in_event)),
         ("iDifficulty", n(p.difficulty)),
         ("iDropCost", n(p.cost)),
+        ("eEventType", n(p.event_type_raw)),
         ("ePanelType", n(p.panel_type)),
         ("bIsCustomSeed", Value::Bool(p.custom_seed)),
         ("strCustomEventsTitle", s(&p.custom_events_title)),

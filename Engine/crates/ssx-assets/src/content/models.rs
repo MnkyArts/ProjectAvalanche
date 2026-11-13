@@ -23,8 +23,16 @@ pub struct DiscModels {
 
 impl DiscModels {
     pub fn index(big_root: &Path) -> Result<Self> {
+        Self::index_roots(game_archives(big_root)?)
+    }
+
+    pub fn index_archive(root: &Path) -> Result<Self> {
+        Self::index_roots(vec![root.to_path_buf()])
+    }
+
+    fn index_roots(roots: Vec<PathBuf>) -> Result<Self> {
         let mut found: BTreeMap<ContentId, BTreeMap<String, PathBuf>> = BTreeMap::new();
-        for a in game_archives(big_root)? {
+        for a in roots {
             let ge = a.join(GAME_EXPLORER);
             for f in game_files(&ge, "geom")? {
                 let below = rel(&ge, &f);

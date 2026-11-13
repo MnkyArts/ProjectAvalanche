@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use crate::session::{self, Made, Session};
 use crate::{Config, Status, Targets, gateway};
 
-// TODO(guess): 5 minutes (a gateway that comes up after the server, an operator who turns UPnP on); settle: operators'
-// reports.
+// PORT(choice): 5 minutes (a gateway that comes up after the server, an operator who turns UPnP on); tuning: operators'
+// reports; the original has no dedicated server.
 pub const RETRY: Duration = Duration::from_secs(300);
-// TODO(guess): 3 s for every removal (one UPnP request takes milliseconds on a LAN; NAT-PMP and PCP get two quick
-// tries each); settle: real gateways' times.
+// PORT(choice): 3 s for every removal (one UPnP request takes milliseconds on a LAN; NAT-PMP and PCP get two quick
+// tries each); tuning: real gateways' times; the original has no dedicated server.
 pub const STOP_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

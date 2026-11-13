@@ -18,12 +18,17 @@ fn accessor(b: &mut Builder, target: ObjId, name: &str, get: NativeFn, set: Nati
     }
 }
 
-#[allow(clippy::type_complexity)]
-pub(crate) fn install(
-    b: &mut Builder,
-    global: ObjId,
-    flash: ObjId,
-) -> (ObjId, ObjId, ObjId, ObjId, ObjId, ObjId, ObjId) {
+pub(crate) struct GeomClasses {
+    pub color: ObjId,
+    pub color_transform: ObjId,
+    pub transform: ObjId,
+    pub matrix: ObjId,
+    pub point: ObjId,
+    pub rectangle: ObjId,
+    pub filter: ObjId,
+}
+
+pub(crate) fn install(b: &mut Builder, global: ObjId, flash: ObjId) -> GeomClasses {
     let color = b.obj();
     b.class(global, "Color", color_ctor, color);
     b.methods(
@@ -65,7 +70,7 @@ pub(crate) fn install(
     b.value(flash, "filters", Value::Object(filters));
     let filter = b.obj();
     b.class(filters, "BitmapFilter", |_, t, _| Ok(t), filter);
-    (color, ct, transform, matrix, point, rect, filter)
+    GeomClasses { color, color_transform: ct, transform, matrix, point, rectangle: rect, filter }
 }
 
 fn color_ctor(cx: &mut Ctx, this: Value, a: &[Value]) -> R {

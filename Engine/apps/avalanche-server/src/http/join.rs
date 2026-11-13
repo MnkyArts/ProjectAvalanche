@@ -19,8 +19,9 @@ use super::{HttpState, Reply};
 use crate::bridge::{JoinTask, JoinVerdict, Shared};
 use ssx_net_proto::join::HeldAsk;
 
-// TODO(guess): 2 s, 60 ticks of the world at 30 Hz; settle: the world's tick under phase 3's load (instances,
-// validation), where a decision must still come within the client's 10 s request time.
+// PORT(choice): 2 s, 60 ticks of the world at 30 Hz; tuning: the world's tick under phase 3's load (instances,
+// validation), where a decision must still come within the client's 10 s request time; the original has no dedicated
+// server.
 const WORLD_ANSWER: Duration = Duration::from_secs(2);
 
 fn sealed(reply: &ReplyKey, answer: &JoinAnswer) -> Reply {

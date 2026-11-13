@@ -71,8 +71,8 @@ pub(super) fn build(
         let n = world.bot_sprays[0].effects.len();
         info!("particles: {} bots' lod_snowspray ({n} effects each)", world.bot_sprays.len());
     }
-    // TODO(guess): a live racer has the bots' `lod_snowspray` (every `BotSnowboarderRef`'s component) because it is
-    // drawn as a bot (racer kind 1 or 2); the original has no live racers; settle: none (a port feature).
+    // PORT(choice): a live racer has the bots' `lod_snowspray` (every `BotSnowboarderRef`'s component) because it is
+    // drawn as a bot (racer kind 1 or 2); a port feature: the original has no live racers.
     if ride.is_some_and(|r| r.live.is_some()) && !crate::render::post::env_is("SSX_SNOW_SPRAY", "off") {
         let built = particles::load_snow_spray_files(root, LOD_SNOW_SPRAY).and_then(|loaded| {
             let spray = spray_of(&loaded.set, root, &mut world.arena, &mut defs, &mut names, true)?;

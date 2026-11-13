@@ -4,7 +4,9 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct WarmUp(u32);
 
-// TODO(guess): a port choice — a warm-up draw stays 5 frames (a material's pipeline is queued at the first frame the render world sees the entity in a view, the compile then runs on Bevy's background tasks) and sits beyond every far plane; settle: none (the game compiles its effects offline, the `.fxo` files).
+// PORT(choice): a warm-up draw stays 5 frames (a material's pipeline is queued at the first frame the render world sees
+// the entity in a view, the compile then runs on Bevy's background tasks) and sits beyond every far plane; the game
+// compiles its effects offline (the `.fxo` files).
 const FRAMES: u32 = 5;
 
 const NOWHERE: Vec3 = Vec3::splat(-1.0e6);

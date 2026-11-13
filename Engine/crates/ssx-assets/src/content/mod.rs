@@ -5,6 +5,7 @@ pub mod blocklist;
 pub mod characters;
 pub mod data;
 pub mod dev;
+pub mod dlc;
 pub mod export;
 pub mod export_audio;
 pub mod export_m4;
@@ -30,8 +31,10 @@ mod script_audio;
 pub mod server;
 pub mod store;
 pub mod textures;
+pub mod title_update;
 pub mod track_packages;
 pub mod tricks;
+pub mod tuner;
 pub mod vaults;
 
 pub use store::GameContent;

@@ -98,7 +98,7 @@ pub struct PresetCache {
 fn lighting_schema(big_root: &Path) -> Result<BTreeMap<String, FieldType>> {
     with_attribdb(big_root, |db| {
         let mut out = BTreeMap::new();
-        let keys: Vec<u32> = db.collections_of(0, CLASS_LIGHTING).map(|(k, _)| k).collect();
+        let keys: Vec<u32> = db.collections_of_all(CLASS_LIGHTING).into_iter().map(|(k, _)| k).collect();
         for key in keys {
             let p = crate::track_lighting::preset(db, key, None)?;
             for k in p.floats.keys() {

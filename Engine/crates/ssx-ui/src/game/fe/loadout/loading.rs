@@ -193,7 +193,7 @@ fn filler(tips: &Tips, chooser: u32) -> Option<String> {
     if list.is_empty() {
         return None;
     }
-    list.get(random::below(list.len() as i64) as usize).cloned()
+    list.get(random::below(list.len() as u32) as usize).cloned()
 }
 
 fn tip(tips: &Tips, key: u32, chooser: u32) -> TipEntry {
@@ -206,7 +206,7 @@ fn of_chooser(tips: &Tips, chooser: u32) -> Option<TipEntry> {
     if list.is_empty() {
         return None;
     }
-    let key = list[random::below(list.len() as i64) as usize];
+    let key = list[random::below(list.len() as u32) as usize];
     Some(tip(tips, key, chooser))
 }
 

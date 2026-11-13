@@ -71,6 +71,8 @@ pub struct Settings {
     pub menu_focus: MenuFocus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     #[serde(rename = "masters", deserialize_with = "crate::masters::present", skip_serializing)]
     pub old_masters: bool,
     #[serde(deserialize_with = "host_leniently", skip_serializing_if = "host_is_default")]
@@ -160,6 +162,7 @@ impl Default for Settings {
             boot_movie: BootMovie::EveryStart,
             menu_focus: MenuFocus::FirstItem,
             player_name: None,
+            language: None,
             old_masters: false,
             resources: None,
             host: crate::host::HostSettings::default(),
@@ -227,10 +230,6 @@ impl Settings {
         }
     }
 
-    pub fn save(&self, base: &Settings) -> Result<Settings, UpdateError> {
-        self.save_to(&Self::path(), base)
-    }
-
     pub fn save_to(&self, path: &Path, base: &Settings) -> Result<Settings, UpdateError> {
         let (ours, base) = (self.object()?, base.object()?);
         let written = settings_file::update_object(path, |m| {
@@ -255,15 +254,21 @@ impl Settings {
         Ok(())
     }
 
-    pub fn replace_unreadable(&self) -> anyhow::Result<(PathBuf, Settings)> {
-        self.replace_unreadable_at(&Self::path())
-    }
-
     pub fn replace_unreadable_at(&self, path: &Path) -> anyhow::Result<(PathBuf, Settings)> {
         let members = self.object().map_err(|e| anyhow::anyhow!("{e}"))?;
         let aside = settings_file::replace_unreadable(path, members)?;
         let written = settings_file::read_object(path)?;
         Ok((aside, Self::from_object(&written)))
+    }
+
+    pub fn rebased(&self, written: &Settings, snapshot: &Settings) -> Settings {
+        match (written.object(), snapshot.object(), self.object()) {
+            (Ok(mut merged), Ok(base), Ok(ours)) => {
+                settings_file::merge_changes(&mut merged, &base, &ours, MERGE_LEVELS);
+                Self::from_object(&merged)
+            }
+            _ => self.clone(),
+        }
     }
 
     pub fn data_state(&self) -> ssx_assets::folder::State {
@@ -289,12 +294,22 @@ mod tests {
 
     #[test]
     fn the_games_player_name_survives_the_launchers_save() {
-        let s: Settings = serde_json::from_str(r#"{"vsync": false, "player_name": "Elise", "language": "x"}"#).unwrap();
+        let s: Settings =
+            serde_json::from_str(r#"{"vsync": false, "player_name": "Elise", "unknown_member": "x"}"#).unwrap();
         assert_eq!(s.player_name.as_deref(), Some("Elise"));
         let back = serde_json::to_string(&s).unwrap();
         assert!(back.contains(r#""player_name":"Elise""#), "{back}");
         let none = serde_json::to_string(&Settings::default()).unwrap();
         assert!(!none.contains("player_name"), "no member written when the game set none");
+    }
+
+    #[test]
+    fn the_language_survives_the_launchers_save() {
+        let s: Settings = serde_json::from_str(r#"{"language": "fre_fr"}"#).unwrap();
+        assert_eq!(s.language.as_deref(), Some("fre_fr"));
+        let back = serde_json::to_string(&s).unwrap();
+        assert!(back.contains(r#""language":"fre_fr""#), "{back}");
+        assert!(!serde_json::to_string(&Settings::default()).unwrap().contains("language"));
     }
 
     #[test]

@@ -125,7 +125,7 @@ impl EventManager {
         if self.finish_message.is_some() {
             return;
         }
-        if self.setup.event_type != Some(EventType::SurviveToDeath) {
+        if !self.loops_after_finish() {
             self.allow_outro = true;
             self.state = EventState::Results;
             self.result = Some(self.build_result(i, false));
@@ -143,6 +143,10 @@ impl EventManager {
             EventState::LoopOutro if !i.nis_outro_active => self.count_loop(out),
             _ => {}
         }
+    }
+
+    pub fn loops_after_finish(&self) -> bool {
+        self.setup.event_type == Some(EventType::SurviveToDeath) || self.setup.free_ride
     }
 
     fn count_loop(&mut self, out: &mut EventUpdate) {
@@ -170,9 +174,7 @@ impl EventManager {
     fn on_at_round_end(&self) -> bool {
         match self.state {
             EventState::Running => true,
-            EventState::Finished | EventState::LoopOutro | EventState::LoopRestart => {
-                self.setup.event_type == Some(EventType::SurviveToDeath)
-            }
+            EventState::Finished | EventState::LoopOutro | EventState::LoopRestart => self.loops_after_finish(),
             EventState::Idle | EventState::DelayedFinish | EventState::Results => false,
         }
     }

@@ -288,11 +288,19 @@ impl Gilrs {
                         RawEventType::AxisValueChanged(val, nec) => {
                             // Let's trust at least our backend code
                             let axis_info = *self.gamepad(id).inner.axis_info(nec).unwrap();
+                            // Project Avalanche patch T23: an axis SDL's automatic mapping reads as a digital hat.
+                            #[cfg(target_os = "linux")]
+                            let hat = self
+                                .gamepads_data
+                                .get_mut(id.0)
+                                .and_then(|data| data.mapping.digital_hat_value(nec, val));
+                            #[cfg(not(target_os = "linux"))]
+                            let hat: Option<f32> = None;
                             let nec = Code(nec);
 
                             match self.gamepad(id).axis_or_btn_name(nec) {
                                 Some(AxisOrBtn::Btn(b)) => {
-                                    let val = btn_value(&axis_info, val);
+                                    let val = hat.unwrap_or_else(|| btn_value(&axis_info, val));
 
                                     if val >= self.axis_to_btn_pressed
                                         && !self.gamepad(id).state().is_pressed(nec)
@@ -318,9 +326,14 @@ impl Gilrs {
                                         EventType::ButtonChanged(b, val, nec)
                                     }
                                 }
-                                Some(AxisOrBtn::Axis(a)) => {
-                                    EventType::AxisChanged(a, axis_value(&axis_info, val, a), nec)
-                                }
+                                Some(AxisOrBtn::Axis(a)) => EventType::AxisChanged(
+                                    a,
+                                    match hat {
+                                        Some(position) => hat_axis_value(position, a),
+                                        None => axis_value(&axis_info, val, a),
+                                    },
+                                    nec,
+                                ),
                                 None => EventType::AxisChanged(
                                     Axis::Unknown,
                                     axis_value(&axis_info, val, Axis::Unknown),
@@ -907,6 +920,11 @@ impl Gamepad<'_> {
     /// }
     /// ```
     pub fn mapping_source(&self) -> MappingSource {
+        // Project Avalanche patch T23: SDL's automatic mapping is no row of SDL's mappings.
+        #[cfg(target_os = "linux")]
+        if self.data.mapping.is_automatic() {
+            return MappingSource::Automatic;
+        }
         if self.data.mapping.is_default() {
             // TODO: check if it's Driver or None
             MappingSource::Driver
@@ -1008,7 +1026,13 @@ impl GamepadData {
         gamepad: &gilrs_core::Gamepad,
         db: &MappingDb,
     ) -> Self {
+        // Project Avalanche patches T22 / T23: on Linux the mapping is chosen in SDL's order, SDL's automatic mapping
+        // included, and one log line names it (`mapping::select`).
+        #[cfg(target_os = "linux")]
+        let mapping = crate::mapping::select::select(db, gamepad);
+        #[cfg(not(target_os = "linux"))]
         let uuid = Uuid::from_bytes(gamepad.uuid());
+        #[cfg(not(target_os = "linux"))]
         let mapping = db
             .get(uuid)
             .map(
@@ -1125,6 +1149,9 @@ impl GamepadData {
 pub enum MappingSource {
     /// Gamepad uses SDL mappings.
     SdlMappings,
+    /// Project Avalanche patch T23: no row of SDL's mappings names the gamepad, and it uses the mapping SDL makes
+    /// from its evdev capabilities (Linux only).
+    Automatic,
     /// Gamepad does not use any mappings but driver should provide unified controller layout.
     Driver,
     /// Gamepad does not use any mappings and most gamepad events will probably be `Button::Unknown`
@@ -1176,6 +1203,19 @@ fn axis_value(info: &AxisInfo, val: i32, axis: Axis) -> f32 {
     }
 
     utils::clamp(val, -1.0, 1.0)
+}
+
+/// Project Avalanche patch T23: a digital hat's position (−1, 0 or 1, SDL's direction: negative is left or up) as
+/// gilrs' value of the axis it is mapped to, with gilrs' Y-axis sign (`axis_value`).
+fn hat_axis_value(position: f32, axis: Axis) -> f32 {
+    if gilrs_core::IS_Y_AXIS_REVERSED
+        && (axis == Axis::LeftStickY || axis == Axis::RightStickY || axis == Axis::DPadY)
+        && position != 0.0
+    {
+        -position
+    } else {
+        position
+    }
 }
 
 fn btn_value(info: &AxisInfo, val: i32) -> f32 {

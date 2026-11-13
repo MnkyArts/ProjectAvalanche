@@ -165,6 +165,11 @@ pub fn status(ui: &mut Ui, colour: Color32, text: impl Into<String>) {
     ui.label(RichText::new(shown(&text.into())).color(colour));
 }
 
+pub fn status_cut(ui: &mut Ui, colour: Color32, text: impl Into<String>) {
+    let text = shown(&text.into());
+    ui.add(egui::Label::new(RichText::new(&text).color(colour)).truncate()).on_hover_text(text);
+}
+
 pub fn progress(ui: &mut Ui, fraction: f32) {
     let ppp = ui.pixels_per_point();
     let snap = |v: f32| (v * ppp).round() / ppp;

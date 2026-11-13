@@ -13,11 +13,7 @@ use crate::rider::anim::JointRecord;
 use crate::rider::skin::RiderRig;
 
 fn newest_joints(rig: &RiderRig, ride: &Ride) -> Vec<JointRecord> {
-    let drawn = rig.anim.drawn_records();
     let (pose, graph, _) = rig.anim.posed();
-    if drawn.len() == graph.nodes.len() {
-        return drawn.to_vec();
-    }
     crate::rider::anim::world_records(graph, &pose.nodes, ride.step().0.traj)
 }
 
@@ -564,7 +560,8 @@ pub(super) fn update(
         }
         d.registry = w.registry_snapshot.clone();
     }
-    // TODO(guess): without a ride (fly camera) there is no focus character; the camera stands in; settle: none (viewer-only).
+    // PORT(choice): without a ride (fly camera) there is no focus character; the camera stands in (viewer-only); the
+    // game always rides a character.
     let point = ride.map_or(cam_pos, |r| r.state.traj);
     let controllers = match ride {
         Some(r) => r.session.controllers.as_ref(),

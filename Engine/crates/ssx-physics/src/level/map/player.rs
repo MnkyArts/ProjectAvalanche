@@ -57,7 +57,8 @@ impl MapPlayer {
         let push = waiting && t0.is_some_and(|t0| (PUSH_S..PUSH_S + 1.0).contains(&(time - t0)));
         let tuck = if push && i % 2 == 1 { 0.0 } else { 1.0 };
         let input = Input { steer: if push { 0.0 } else { steer }, brake: 0.0, tuck, jump: false, ..Input::default() };
-        let pad = RewindPad { rewind_held: false, takeover: false, flip_accel: input.air_stick(s.tricks.classic).y };
+        let pad =
+            RewindPad { rewind_held: false, takeover: false, flip_accel: input.flip_acceleration(s.tricks.classic) };
         (input, pad, turned)
     }
 

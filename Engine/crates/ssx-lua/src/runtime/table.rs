@@ -29,7 +29,8 @@ pub enum KeyError {
     NaN,
 }
 
-// TODO(guess): the game hashes these keys by their memory address, so their order in `next` cannot match the game's; settle: not possible (addresses are run-time values).
+// PORT(choice): these keys hash by the heap object's index; the game hashes them by their memory address, so their
+// order in `next` cannot match the game's (addresses are run-time values).
 fn pointer_hash(v: &Value) -> u32 {
     match v {
         Value::LightUserData(p) => *p as u32,

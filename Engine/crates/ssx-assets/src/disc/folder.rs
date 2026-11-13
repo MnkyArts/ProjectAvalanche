@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -9,8 +9,8 @@ use ssx_content::hash::{ContentHash, ContentIndex};
 use super::setup::{ARCHIVES, MOVIE_DIR, big_root, marker, safe_relative};
 
 pub const INDEX_FILE: &str = "content.tsv";
-// TODO(guess): 32 MiB, 17 times the index of the one pressing measured (12 928 rows, 1 879 517 bytes; its longest
-// path 91 bytes); settle: the indexes of the disc's other pressings (regions).
+// PORT(choice): 32 MiB, 17 times the index of the one pressing measured (12 928 rows, 1 879 517 bytes; its longest path
+// 91 bytes); tuning: the indexes of the disc's other pressings (regions); a bound of the port's setup reader.
 pub const MAX_INDEX_BYTES: u64 = 32 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +22,7 @@ pub enum State {
     NoIndex,
     IndexDamaged(String),
     MarkerDamaged(String),
+    FilesDamaged(String),
 }
 
 impl State {
@@ -34,7 +35,14 @@ impl State {
     }
 
     pub fn needs_repair(&self) -> bool {
-        matches!(self, State::NoMovies | State::NoIndex | State::IndexDamaged(_) | State::MarkerDamaged(_))
+        matches!(
+            self,
+            State::NoMovies
+                | State::NoIndex
+                | State::IndexDamaged(_)
+                | State::MarkerDamaged(_)
+                | State::FilesDamaged(_)
+        )
     }
 }
 
@@ -51,6 +59,7 @@ impl fmt::Display for State {
             State::NoIndex => f.write_str("set up by an earlier version: no content index"),
             State::IndexDamaged(why) => write!(f, "its content index is damaged ({why})"),
             State::MarkerDamaged(why) => write!(f, "its setup marker is damaged ({why})"),
+            State::FilesDamaged(why) => write!(f, "files of it are missing or damaged ({why})"),
         }
     }
 }
@@ -68,7 +77,7 @@ impl fmt::Display for Incomplete {
             State::Unfinished => "finish it in the launcher (Game Data, Extract game data)",
             _ => "repair it in the launcher (Game Data, Repair game data)",
         };
-        write!(f, "the game data folder {} is {}: {todo}", self.data.display(), self.state)
+        write!(f, "the game data folder {}: {}: {todo}", self.data.display(), self.state)
     }
 }
 
@@ -92,7 +101,7 @@ pub fn check(data: &Path) -> Folder {
         }
         return match read_index(data) {
             Ok(None) => only(State::NoIndex),
-            Ok(Some(text)) => verified(&text, None),
+            Ok(Some(text)) => verified(data, &text, None),
             Err(why) => only(State::IndexDamaged(why)),
         };
     };
@@ -124,7 +133,7 @@ pub fn check(data: &Path) -> Folder {
         Err(why) => return only(State::MarkerDamaged(why)),
     };
     match read_index(data) {
-        Ok(Some(text)) => verified(&text, Some(&recorded)),
+        Ok(Some(text)) => verified(data, &text, Some(&recorded)),
         Ok(None) => only(State::IndexDamaged(format!("{INDEX_FILE} is missing"))),
         Err(why) => only(State::IndexDamaged(why)),
     }
@@ -144,13 +153,106 @@ fn is_tree(data: &Path) -> bool {
     big.join("cache1/data/xenon/attribdb").is_dir() && big.join("data0").is_dir()
 }
 
-fn verified(text: &str, recorded: Option<&Recorded>) -> Folder {
+fn verified(data: &Path, text: &str, recorded: Option<&Recorded>) -> Folder {
     match verify_index(text, recorded) {
         Ok(index) => {
+            let damage = check_files(data, &index);
+            if !damage.is_empty() {
+                return Folder { state: State::FilesDamaged(damage.to_string()), index: None };
+            }
             let state = State::Complete { marked: recorded.is_some(), files: index.entries.len() };
             Folder { state, index: Some(index) }
         }
         Err(why) => Folder { state: State::IndexDamaged(why), index: None },
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fault {
+    Missing,
+    NotPlain,
+    Size(u64),
+    Unreadable(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileDamage {
+    pub rows: Vec<(String, Fault)>,
+}
+
+impl FileDamage {
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn below(&self, prefix: &str) -> bool {
+        self.rows.iter().any(|(path, _)| path.starts_with(prefix))
+    }
+}
+
+impl fmt::Display for FileDamage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let count = |pick: fn(&Fault) -> bool| self.rows.iter().filter(|(_, fault)| pick(fault)).count();
+        let counts = [
+            (count(|x| *x == Fault::Missing), "missing"),
+            (count(|x| *x == Fault::NotPlain), "not a plain file"),
+            (count(|x| matches!(x, Fault::Size(_))), "of another size"),
+            (count(|x| matches!(x, Fault::Unreadable(_))), "unreadable"),
+        ];
+        let shown: Vec<_> = counts.iter().filter(|(n, _)| *n > 0).map(|(n, what)| format!("{n} {what}")).collect();
+        let files = if self.rows.len() == 1 { "file" } else { "files" };
+        write!(f, "{} {files}: {}", self.rows.len(), shown.join(", "))?;
+        if let Some((path, fault)) = self.rows.first() {
+            let path = ssx_core::text::quoted(path);
+            match fault {
+                Fault::Missing => write!(f, "; first {path}, missing")?,
+                Fault::NotPlain => write!(f, "; first {path}, not a plain file")?,
+                Fault::Size(n) => write!(f, "; first {path}, {n} bytes")?,
+                Fault::Unreadable(why) => write!(f, "; first {path}: {}", ssx_core::text::quoted(why))?,
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn check_files(data: &Path, index: &ContentIndex) -> FileDamage {
+    let mut folders: HashMap<PathBuf, Option<Fault>> = HashMap::new();
+    let mut damage = FileDamage::default();
+    for (path, (size, _)) in &index.entries {
+        if let Some(fault) = file_fault(data, path, *size, &mut folders) {
+            damage.rows.push((path.clone(), fault));
+        }
+    }
+    damage
+}
+
+fn file_fault(data: &Path, path: &str, size: u64, folders: &mut HashMap<PathBuf, Option<Fault>>) -> Option<Fault> {
+    let Some(rel) = safe_relative(path) else {
+        return Some(Fault::Unreadable("no path of the setup's".into()));
+    };
+    let mut dir = data.to_path_buf();
+    let mut parts = rel.components().peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break;
+        }
+        dir.push(part);
+        let fault = folders.entry(dir.clone()).or_insert_with(|| match std::fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() => None,
+            Ok(_) => Some(Fault::NotPlain),
+            Err(e) if e.kind() == ErrorKind::NotFound => Some(Fault::Missing),
+            Err(e) => Some(Fault::Unreadable(e.to_string())),
+        });
+        if fault.is_some() {
+            return fault.clone();
+        }
+    }
+    match std::fs::symlink_metadata(data.join(&rel)) {
+        Ok(m) if m.is_file() && m.len() == size => None,
+        Ok(m) if m.is_file() => Some(Fault::Size(m.len())),
+        Ok(_) => Some(Fault::NotPlain),
+        Err(e) if e.kind() == ErrorKind::NotFound => Some(Fault::Missing),
+        Err(e) => Some(Fault::Unreadable(e.to_string())),
     }
 }
 
@@ -184,7 +286,7 @@ pub fn read_text(dir: &Path, name: &str) -> Result<Option<String>, String> {
     let file = match ssx_files::open_plain(&path) {
         Ok(Some(file)) => file,
         Ok(None) => return Err(format!("{name} is a link or a folder, not a file")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
     let mut bytes = Vec::new();

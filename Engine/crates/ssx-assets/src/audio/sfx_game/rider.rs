@@ -103,7 +103,9 @@ impl RiderSounds {
             avalanche_distance: r.avalanche.distance,
             reverb: sfx.reverb,
             front_end: sfx.game_state != 0,
-            tricky_song: matches!(sfx.tricky.playing, 1 | 3 | 5) || !sfx.script_song,
+            wingsuit_audio: wingsuit_audio(sfx),
+            script_song: sfx.script_song,
+            tricky_clip: sfx.tricky.clip_playing(),
         };
         self.snapshots.frame(&mut sfx.mixer.graph, &inputs);
         if r.eog && !self.eog {
@@ -337,12 +339,12 @@ impl RiderSounds {
         if bit(f, 28) {
             sfx.fire_event("trigger_SFX_Awesome_Landing", &p);
         }
-        // `Tricky_State` 2 for the whole of Super Tricky, as the game has it (0x830EB7D8); a mod's script song has no
-        // Tricky remix, so it is 2 only while the "It's Tricky" clip plays (a port behaviour; the game ships no mod
-        // songs, so there is no disc behaviour to compare with).
-        let tricky = if bit(f, 18) {
-            if matches!(sfx.tricky.playing, 1 | 3 | 5) || !sfx.script_song { 2 } else { 1 }
-        } else if aw {
+        // PORT(choice): for music mods — with a client script's song `Tricky_State` is 2 only while "It's Tricky" plays
+        // and 1 (Awesome) for the rest of Super Tricky (PR #53); 0x830EB7D8 keeps 2 for the whole of Super Tricky and
+        // the game ships no script songs (the mod music contract).
+        let tricky = if bit(f, 18) && (!sfx.script_song || sfx.tricky.clip_playing()) {
+            2
+        } else if bit(f, 18) || aw {
             1
         } else {
             0
@@ -483,5 +485,15 @@ impl RiderSounds {
             (0, t) if t != 0 => ev("TunnelStop", 0.0),
             _ => {}
         }
+    }
+}
+
+fn wingsuit_audio(sfx: &SfxEngine) -> bool {
+    match &sfx.launch_block {
+        Some(b) => b.wingsuit_audio(),
+        // PORT(choice): for hosts without a front-end launch (the asset viewer's ride, `sfx_ride`; port hosts only): no
+        // game info block exists, so the wingsuit word counts as set and `WingSuit_1` follows bit 3 alone; the game
+        // always builds the block (0x823F7788).
+        None => true,
     }
 }

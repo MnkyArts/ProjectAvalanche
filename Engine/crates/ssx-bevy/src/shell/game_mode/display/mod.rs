@@ -1,4 +1,5 @@
 mod alt_enter;
+mod keeper;
 mod list;
 mod render_scale;
 mod resolve;
@@ -192,7 +193,7 @@ const SETTLE: f64 = 1.0;
 pub struct DisplayState {
     pub settings: DisplaySettings,
     kept: DisplaySettings,
-    file: Option<PathBuf>,
+    keeper: Option<keeper::Keeper>,
     physical: bool,
     follow_focus: bool,
     notes: Vec<String>,
@@ -219,10 +220,18 @@ pub fn register(app: &mut App, spec: &WindowSpec, keep: bool, follow_focus: bool
     if !keep && spec.file.is_some() {
         notes.push("a test run: the window's state is not kept in settings.json".into());
     }
+    let keeper = match spec.file.clone().filter(|_| keep).map(|f| keeper::Keeper::start(f, spec.display.clone())) {
+        Some(Ok(k)) => Some(k),
+        Some(Err(e)) => {
+            notes.push(format!("no thread for the settings' writes ({e}): the window's state is not kept"));
+            None
+        }
+        None => None,
+    };
     app.insert_resource(DisplayState {
         settings: spec.display.clone(),
         kept: spec.display.clone(),
-        file: spec.file.clone().filter(|_| keep),
+        keeper,
         physical: spec.physical,
         follow_focus,
         notes,
@@ -391,7 +400,8 @@ fn apply(
             window.resolution.set(w as f32, h as f32);
         }
     }
-    // TODO(guess): a port choice — the pointer is kept in the window in exclusive fullscreen (a click on another monitor would take the focus and leave the video mode); free in borderless fullscreen and in the window; settle: none (the console has no pointer).
+    // PORT(choice): the pointer is kept in the window in exclusive fullscreen (a click on another monitor would take
+    // the focus and leave the video mode); free in borderless fullscreen and in the window; the console has no pointer.
     let grab = if r.effective == WindowMode::Exclusive { CursorGrabMode::Confined } else { CursorGrabMode::None };
     if cursor.grab_mode != grab {
         cursor.grab_mode = grab;
@@ -424,7 +434,9 @@ fn describe(mode: WindowMode, video: Option<VideoMode>) -> String {
     }
 }
 
-// TODO(guess): a port choice — exclusive fullscreen is left and the window minimised when the focus goes (as DXGI's own exclusive fullscreen does on Windows; winit 0.30.13 switches the video mode with `ChangeDisplaySettingsExW` / XRandR and keeps it when the focus goes); settle: none (the console has no window).
+// PORT(choice): exclusive fullscreen is left and the window minimised when the focus goes (as DXGI's own exclusive
+// fullscreen does on Windows; winit 0.30.13 switches the video mode with `ChangeDisplaySettingsExW` / XRandR and keeps
+// it when the focus goes); the console has no window.
 fn focus_frame(
     state: &mut DisplayState,
     focus: &mut MessageReader<WindowFocused>,
@@ -471,21 +483,19 @@ fn size_frame(state: &mut DisplayState, entity: Entity, window: &Window, now: f6
 }
 
 fn keep(state: &mut DisplayState) {
-    let Some(file) = &state.file else { return };
+    let Some(keeper) = &state.keeper else { return };
     if state.settings == state.kept {
         return;
     }
-    match ssx_assets::display::write_member(file, &state.kept, &state.settings) {
-        Ok(()) => {
-            info!("display: kept in {}", file.display());
-            state.kept = state.settings.clone();
-        }
-        Err(e) => warn!("display: {e:#}"),
-    }
+    keeper.keep(state.settings.clone());
+    state.kept = state.settings.clone();
 }
 
 fn display_exit(mut exit: MessageReader<AppExit>, mut state: ResMut<DisplayState>) {
     if exit.read().next().is_some() {
         keep(&mut state);
+        if let Some(keeper) = &mut state.keeper {
+            keeper.finish();
+        }
     }
 }

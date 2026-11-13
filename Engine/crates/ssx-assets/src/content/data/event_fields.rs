@@ -153,10 +153,10 @@ fn elem_type(kind: ValueKind, seen: &Seen, class: Class, targets: &dyn Fn(u32) -
     let (lo, hi) = width(kind);
     match kind {
         ValueKind::Bool => (s(Scalar::Bool), String::new()),
-        // TODO(guess): a port choice — a ui_drop's float or presentation integer may lie within 4x of the disc's
-        // values of its field, a simulation integer only at one of them; the game checks nothing (it reads the vault)
-        // and the readers of the 30 event and 11 drop fields were not traced for their limits. settle: each field's
-        // reader (Results_Process 0x8251D5D8, the flow manager's drop setup) traced for the values it handles.
+        // PORT(choice): a ui_drop's float or presentation integer may lie within 4x of the disc's values of its field,
+        // a simulation integer only at one of them; the readers of the 30 event and 11 drop fields were not traced for
+        // their limits; tuning: each field's reader (Results_Process 0x8251D5D8, the flow manager's drop setup) traced
+        // for the values it handles; the game checks nothing (it reads the vault).
         ValueKind::Float | ValueKind::Vector2 | ValueKind::Vector3 | ValueKind::Vector4 => {
             let (a, b) = seen.floats.iter().fold((f64::MAX, f64::MIN), |(a, b), &(x, _)| (a.min(x), b.max(x)));
             let (a, b) = if seen.floats.is_empty() { (0.0, 0.0) } else { (a, b) };
@@ -229,10 +229,10 @@ pub fn rival_schema(rows: &[Vec<i64>]) -> RecordSchema {
     for (c, name) in RIVAL_COLUMNS.iter().enumerate() {
         let values: BTreeSet<i64> = rows.iter().filter_map(|r| r.get(c).copied()).collect();
         let (ty, source) = match *name {
-            // TODO(guess): a port choice — a rival's score within 4x of the disc's 728 rows' scores (ms on a race,
-            // points or mm otherwise), every other column one of the disc's values; the readers (GhostManager,
-            // Results_Process 0x8251D5D8: a rank by comparison) handle any u32. settle: none needed for the ranking;
-            // the bound keeps a package from making a medal impossible or free.
+            // PORT(choice): a rival's score within 4x of the disc's 728 rows' scores (ms on a race, points or mm
+            // otherwise), every other column one of the disc's values; the readers (GhostManager, Results_Process
+            // 0x8251D5D8: a rank by comparison) handle any u32, so the ranking needs none; the bound keeps a package
+            // from making a medal impossible or free; the game loads no packages.
             "score" | "tuned_score" => {
                 let pos: Vec<i64> = values.iter().copied().filter(|&v| v >= 0).collect();
                 let (lo, hi) = (pos.first().copied().unwrap_or(0), pos.last().copied().unwrap_or(0));

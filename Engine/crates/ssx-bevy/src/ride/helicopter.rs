@@ -8,9 +8,9 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, MaterialPlugin};
 use bevy::prelude::{
-    AlphaMode, App, Asset, Assets, ChildOf, Commands, Entity, Handle, Image, IntoScheduleConfigs, Mat4, Mesh, Mesh3d,
-    MeshMaterial3d, Name, Plugin, PostUpdate, Quat, Query, Reflect, Res, ResMut, Resource, StandardMaterial, Transform,
-    Vec3, Vec4, Visibility, With, World, info, resource_exists, warn,
+    AlphaMode, App, Asset, Assets, ChildOf, Commands, Entity, FixedUpdate, Handle, Image, IntoScheduleConfigs, Mat4,
+    Mesh, Mesh3d, MeshMaterial3d, Name, Plugin, PostUpdate, Quat, Query, Reflect, Res, ResMut, Resource,
+    StandardMaterial, Transform, Update, Vec3, Vec4, Visibility, With, World, info, resource_exists, warn,
 };
 use bevy::render::render_resource::{
     AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, RenderPipelineDescriptor, ShaderType,
@@ -29,7 +29,7 @@ use crate::render::lighting::game::{GameLightAssets, GameLightUniform};
 use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::{LDR_FRAME_FORMAT, LDR_PIPELINE_LABEL, LDR_TONEMAP_BUFFER, ObjectMaterial};
 use crate::render::objects::{LoadedPart, MaterialHandle, part_from_mesh};
-use crate::rider::anim::{JointRecord, world_records};
+use crate::rider::anim::{JointRecord, interpolate_records, world_records};
 
 pub const HELI_LAYER: usize = 2;
 
@@ -61,9 +61,8 @@ pub struct HeliVisual {
     root: Entity,
     nodes: Vec<Entity>,
     seen_steps: u64,
-    traj: Option<((Quat, Vec3), (Quat, Vec3))>,
     handover: Option<HeliPose>,
-    tilt: Option<(Quat, Quat)>,
+    steps: (Vec<JointRecord>, Vec<JointRecord>),
     pub drawn_floor: Option<Vec3>,
     lights: Vec<HeliLight>,
     pub particle_nodes: Vec<ParticleNode>,
@@ -135,8 +134,11 @@ fn load(root: &Path, track: Option<&str>, intro: &IntroAssets) -> Result<LoadedH
 pub type Loaded = LoadedHeli;
 
 pub fn register(app: &mut App) {
+    let (ride, heli) = (resource_exists::<crate::ride::Ride>, resource_exists::<HeliVisual>);
     app.add_plugins(HeliTranslucentPlugin)
         .add_systems(crate::shell::level::LevelStartup, spawn.run_if(resource_exists::<PendingHeli>))
+        .add_systems(FixedUpdate, snapshot.after(crate::ride::RideStepSet).run_if(ride).run_if(heli))
+        .add_systems(Update, snapshot.after(crate::ride::RideStepSet).run_if(ride).run_if(heli))
         .add_systems(
             PostUpdate,
             update
@@ -302,9 +304,8 @@ fn spawn(
         root,
         nodes,
         seen_steps: 0,
-        traj: None,
         handover: None,
-        tilt: None,
+        steps: (Vec::new(), Vec::new()),
         drawn_floor: None,
         lights: loaded.lights,
         particle_nodes: loaded.particles,
@@ -319,6 +320,34 @@ fn record_transform(r: &JointRecord) -> Transform {
     Transform { translation: r.p, rotation: r.q, scale: r.s }
 }
 
+fn snapshot(ride: Res<crate::ride::Ride>, mut heli: ResMut<HeliVisual>) {
+    let h = &mut *heli;
+    let Some(state) = ride.heli.as_ref() else {
+        (h.steps, h.newest) = ((Vec::new(), Vec::new()), Vec::new());
+        return;
+    };
+    if ride.steps < h.seen_steps {
+        (h.seen_steps, h.handover, h.steps) = (0, None, (Vec::new(), Vec::new()));
+    }
+    if ride.steps == h.seen_steps && !h.steps.1.is_empty() {
+        return;
+    }
+    let ticks = (ride.steps - h.seen_steps) as f32 * ssx_physics::DT_TICKS;
+    h.seen_steps = ride.steps;
+    h.animator.update(ticks);
+    let root = Quat::from_array(state.gameplay_pose().q.get("Root").copied().unwrap_or([0.0, 0.0, 0.0, 1.0]));
+    let (newest, reference) = pose_records(h, state, root);
+    let before = std::mem::replace(&mut h.steps.1, snapshot_block(&newest, reference));
+    h.steps.0 = if before.is_empty() { h.steps.1.clone() } else { before };
+    h.newest = newest;
+    h.downwash = ride.session.downwash;
+    if let (Some((_, wash)), Some(d)) = (h.wash, h.downwash)
+        && let Some((q, p)) = d.wash
+    {
+        h.newest[wash] = JointRecord { s: Vec3::ONE, q, p };
+    }
+}
+
 fn update(
     ride: Option<Res<crate::ride::Ride>>,
     heli: Option<ResMut<HeliVisual>>,
@@ -328,43 +357,22 @@ fn update(
 ) {
     let (Some(ride), Some(mut heli)) = (ride, heli) else { return };
     let h = &mut *heli;
-    let Some(state) = ride.heli.as_ref() else {
+    if ride.heli.is_none() || h.steps.1.is_empty() {
         if let Ok(mut v) = visibility.get_mut(h.root) {
             *v = Visibility::Hidden;
         }
-        (h.newest, h.drawn) = (Vec::new(), Vec::new());
+        h.drawn = Vec::new();
         return;
-    };
-    if ride.steps < h.seen_steps {
-        (h.seen_steps, h.traj, h.handover, h.tilt) = (0, None, None, None);
-    }
-    let ticks = (ride.steps - h.seen_steps) as f32 * ssx_physics::DT_TICKS;
-    let root = Quat::from_array(state.gameplay_pose(0.0).q.get("Root").copied().unwrap_or([0.0, 0.0, 0.0, 1.0]));
-    let new_step = ride.steps != h.seen_steps;
-    if new_step {
-        h.traj = Some((h.traj.map_or(state.traj, |t| t.1), state.traj));
-        h.tilt = Some((h.tilt.map_or(root, |t| t.1), root));
-    }
-    h.seen_steps = ride.steps;
-    h.animator.update(ticks);
-    if new_step || h.newest.is_empty() {
-        h.newest = pose_records(h, state, root, 0.0, false);
-        h.downwash = ride.session.downwash;
-        if let (Some((_, wash)), Some(d)) = (h.wash, h.downwash)
-            && let Some((q, p)) = d.wash
-        {
-            h.newest[wash] = JointRecord { s: Vec3::ONE, q, p };
-        }
     }
     let lag_ticks = ((ride.steps as f32 / ssx_physics::SIM_HZ - ride.render_time).max(0.0)) * 60.0;
-    let records = pose_records(h, state, root, lag_ticks, true);
-    for (&e, r) in h.nodes.iter().zip(&records) {
+    let frac = 1.0 - (lag_ticks / ssx_physics::DT_TICKS).clamp(0.0, 1.0);
+    interpolate_records(&h.steps.0, &h.steps.1, frac, &mut h.drawn);
+    for (&e, r) in h.nodes.iter().zip(&h.drawn) {
         if let Ok(mut tr) = transforms.get_mut(e) {
             *tr = record_transform(r);
         }
     }
-    h.drawn_floor = h.model.rig.find("Floor").map(|f| records[f].p);
-    h.drawn = records;
+    h.drawn_floor = h.model.rig.find("Floor").map(|f| h.drawn[f].p);
     if let Ok(mut v) = visibility.get_mut(h.root) {
         *v = Visibility::Inherited;
     }
@@ -400,33 +408,44 @@ fn light_factor(fx: &ssx_physics::controllers::EntityFx, group: &str) -> Option<
     }
 }
 
+fn snapshot_block(records: &[JointRecord], reference: Vec3) -> Vec<JointRecord> {
+    use ssx_formats::vmx::{add, pack_half, sub, unpack_half};
+    let half = |x: f32| unpack_half(pack_half(x));
+    let r = reference.to_array();
+    records
+        .iter()
+        .map(|j| {
+            let p = j.p.to_array();
+            JointRecord {
+                s: Vec3::from_array(j.s.to_array().map(half)),
+                q: Quat::from_array(j.q.to_array().map(half)),
+                p: Vec3::from_array(std::array::from_fn(|i| add(half(sub(p[i], r[i])), r[i]))),
+            }
+        })
+        .collect()
+}
+
 fn pose_records(
     h: &mut HeliVisual,
     state: &ssx_physics::helicopter::Helicopter,
     root: Quat,
-    lag_ticks: f32,
-    drawn: bool,
-) -> Vec<JointRecord> {
+) -> (Vec<JointRecord>, Vec3) {
     let mut base;
-    let frame = match state.nis_pose(lag_ticks) {
+    let frame = match state.nis_pose() {
         Some(nis) => {
             base = nis;
-            if drawn {
-                h.handover = Some(base.clone());
-            }
+            h.handover = Some(base.clone());
             state.frame
         }
         None => {
-            let f = 1.0 - (lag_ticks / ssx_physics::DT_TICKS).clamp(0.0, 1.0);
             let posing = !crate::render::post::env_is("SSX_HELI_POSING", "off");
-            base = state.gameplay_pose(lag_ticks);
+            base = state.gameplay_pose();
             let clip_node = matches!(
                 state.node,
                 ssx_physics::helicopter::HeliNode::IdleEnd { .. } | ssx_physics::helicopter::HeliNode::Trick { .. }
             );
             if posing && !clip_node {
-                let (r0, r1) = h.tilt.unwrap_or((root, root));
-                base.q.insert("Root".into(), r0.slerp(r1, f).to_array());
+                base.q.insert("Root".into(), root.to_array());
             } else if !clip_node {
                 let d = h.animator.default_pose();
                 for j in ["Root", "Roll"] {
@@ -436,21 +455,20 @@ fn pose_records(
             }
             if let (Some(last), ssx_physics::helicopter::HeliPhase::Gameplay { ticks, .. }) = (&h.handover, state.phase)
             {
-                let w = 1.0 - ssx_assets::anim_eval::curve_weight((ticks - lag_ticks).max(0.0) / 20.0, 1);
+                let w = 1.0 - ssx_assets::anim_eval::curve_weight(ticks.max(0.0) / 20.0, 1);
                 let mut blended = last.clone();
                 blended.blend_from(&base, |_, _| w);
                 base = blended;
             }
             base.q.insert("AITrajectory".into(), [0.0, 0.0, 0.0, 1.0]);
             base.t.insert("AITrajectory".into(), [0.0; 3]);
-            let (a, b) = h.traj.unwrap_or((state.traj, state.traj));
-            (a.0.slerp(b.0, f), a.1.lerp(b.1, f))
+            state.traj
         }
     };
-    let pose = h.animator.pose_at(&base, state.nis_active(), lag_ticks);
+    let pose = h.animator.pose(&base, state.nis_active());
     let (fq, fp) = frame;
     let nodes = h.model.node_pose(&pose, (fq.to_array(), fp.to_array()));
-    world_records(&h.model.rig, &nodes, Vec3::ZERO)
+    (world_records(&h.model.rig, &nodes, Vec3::ZERO), state.traj.1)
 }
 
 const TRANSLUCENT_SHADER: &str = "embedded://ssx_bevy/ride/heli_translucent.wesl";

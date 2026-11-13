@@ -109,7 +109,11 @@ impl RivalGhosts {
     }
 }
 
-// TODO(guess): a port choice — a map's targets stand where a drop's medal ghosts stand (the Explore leaderboard's rows for the trick-ghost and survive-to-death types, 0x824833E8; the race leaderboard's entrants for the race types, 0x824CC8B8, as finished at their value from the start, no replay to follow: no height, so no split callout against them, 0x824CB7C0 measuring from a racer's height); settle: the ghost recorder (`GhostRecorder_Init` 0x824BE0D8) and writer (`GhostFile_WriteHeader` 0x8253DC98), so a gamemode ships replays.
+// PORT(choice): a map's targets stand where a drop's medal ghosts stand (the Explore leaderboard's rows for the
+// trick-ghost and survive-to-death types, 0x824833E8; the race leaderboard's entrants for the race types, 0x824CC8B8,
+// as finished at their value from the start, no replay to follow: no height, so no split callout against them,
+// 0x824CB7C0 measuring from a racer's height); the ghost recorder (`GhostRecorder_Init` 0x824BE0D8) and writer
+// (`GhostFile_WriteHeader` 0x8253DC98) ported would let a gamemode ship replays; the game has no maps.
 pub fn target_rows(values: &[u32]) -> Vec<(String, u32)> {
     MEDAL_NAMES.iter().zip(values).map(|(k, &v)| (k.to_string(), v)).collect()
 }

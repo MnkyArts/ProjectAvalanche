@@ -120,11 +120,7 @@ impl TrackObjects {
 
 pub fn asset_file(big_root: &Path, rel: &str) -> Option<PathBuf> {
     let rel = rel.replace('\\', "/");
-    std::fs::read_dir(big_root)
-        .ok()?
-        .flatten()
-        .map(|e| e.path().join("data/xenon/gameexplorer").join(&rel))
-        .find(|p| p.is_file())
+    crate::data_roots::find(big_root, &format!("data/xenon/gameexplorer/{rel}"))
 }
 
 pub fn load_track_objects(big_root: &Path, track: &str, drop_key: Option<u32>) -> Result<TrackObjects> {
@@ -189,7 +185,7 @@ fn decode_placements(d: &FieldData) -> Vec<Placement> {
         .collect()
 }
 
-pub fn game_object(db: &Db<'_>, class: u32, key: u32) -> Result<GameObject> {
+pub fn game_object(db: &Db, class: u32, key: u32) -> Result<GameObject> {
     let mut o = GameObject { name: db.collection_name(key), key, ..Default::default() };
     for f in db.fields(class, key)? {
         match f.key {
@@ -230,7 +226,7 @@ pub fn game_object(db: &Db<'_>, class: u32, key: u32) -> Result<GameObject> {
     Ok(o)
 }
 
-fn model_meshes(db: &Db<'_>, class: u32, key: u32) -> Result<Vec<ObjectMesh>> {
+fn model_meshes(db: &Db, class: u32, key: u32) -> Result<Vec<ObjectMesh>> {
     let mut meshes = Vec::new();
     let Some(field) = db.field(class, key, FIELD_MESHES)? else { return Ok(meshes) };
     for r in refs(&field.data).into_iter().filter(|r| r.collection != 0) {

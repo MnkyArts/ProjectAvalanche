@@ -200,6 +200,16 @@ pub struct TrickBot {
     pub recorded: u32,
 }
 
+#[derive(Clone, Copy)]
+pub struct TrickFrame<'a> {
+    pub event_type: EventType,
+    pub player: &'a RaceEntrant,
+    pub points: f32,
+    pub progress: f32,
+    pub world_tour: bool,
+    pub bots: &'a [TrickBot],
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TrickStandings {
     seen: Vec<u32>,
@@ -240,18 +250,8 @@ impl TrickStandings {
         v as i32
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn update(
-        &mut self,
-        v: &mut UiValues,
-        loc: &mut Localization,
-        event_type: EventType,
-        player: &RaceEntrant,
-        points: f32,
-        progress: f32,
-        world_tour: bool,
-        bots: &[TrickBot],
-    ) {
+    pub fn update(&mut self, v: &mut UiValues, loc: &mut Localization, f: TrickFrame) {
+        let TrickFrame { event_type, player, points, progress, world_tour, bots } = f;
         let mut list = vec![Entry {
             kind: 2,
             value: points as i64 as i32,
@@ -334,7 +334,16 @@ mod tests {
         let mut t = TrickStandings::default();
         t.reset(1);
         let mut values = |t: &mut TrickStandings, points: f32, progress: f32, live: f32| {
-            t.update(&mut v, &mut loc, EventType::TrickBots, &player, points, progress, true, &[bot(live)]);
+            let bots = [bot(live)];
+            let f = TrickFrame {
+                event_type: EventType::TrickBots,
+                player: &player,
+                points,
+                progress,
+                world_tour: true,
+                bots: &bots,
+            };
+            t.update(&mut v, &mut loc, f);
             v.rows(id::LEADERBOARD).iter().map(|r| (r.name.clone(), r.value)).collect::<Vec<_>>()
         };
         assert_eq!(values(&mut t, 0.0, 0.2, 0.0), [("me".into(), 0), ("bot".into(), 0)]);
@@ -347,7 +356,16 @@ mod tests {
         assert_eq!(values(&mut t, 12_000.0, 0.95, 6_100.0), [("me".into(), 12_000), ("bot".into(), 10_000)]);
         assert!(v.bool(id::EXPLORE_LEADERBOARD_IS_ACTIVE));
         let mut u = TrickStandings::default();
-        u.update(&mut v, &mut loc, EventType::TrickBots, &player, 1.0, 0.5, false, &[bot(777.9)]);
+        let bots = [bot(777.9)];
+        let f = TrickFrame {
+            event_type: EventType::TrickBots,
+            player: &player,
+            points: 1.0,
+            progress: 0.5,
+            world_tour: false,
+            bots: &bots,
+        };
+        u.update(&mut v, &mut loc, f);
         assert_eq!(v.rows(id::LEADERBOARD)[0].value, 777);
     }
 

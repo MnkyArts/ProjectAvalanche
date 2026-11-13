@@ -373,6 +373,29 @@ fn a_damaged_index_reads_only_the_parts_it_lost() {
 }
 
 #[test]
+fn a_complete_folder_with_files_gone_reads_only_those_parts_again() {
+    let f = Fixture::new("files-gone");
+    f.run();
+    let fresh = index_text(&f.out());
+    let out = f.out();
+    fs::remove_file(out.join("big/cache4/data/a_6.bin")).unwrap();
+    let large = out.join("big/data0/data/large.bin");
+    let cut = fs::read(&large).unwrap()[..1000].to_vec();
+    fs::write(&large, cut).unwrap();
+    fs::remove_file(out.join("disc/data/common/fmv/alps.vp6")).unwrap();
+    let state = folder::state(&out);
+    assert!(matches!(&state, State::FilesDamaged(w) if w.starts_with("3 files: 2 missing, 1 of another size")));
+    assert!(!state.playable() && state.needs_repair());
+    let s = f.run();
+    assert_eq!(s.extracted, ["data0", "cache4"], "the two archives with a damaged file");
+    assert_eq!(s.already_done.len(), ARCHIVES.len() - 2);
+    assert_eq!((s.members_written, s.members_replaced, s.members_kept), (1, 1, 3), "data0's 3 and cache4's 2 files");
+    assert_eq!((s.movies_written, s.movies_kept, s.movies_replaced), (1, 1, 0));
+    f.assert_complete();
+    assert_eq!(index_text(&out), fresh, "the repaired index is the fresh setup's");
+}
+
+#[test]
 fn a_stopped_setup_resumes_with_the_parts_it_finished() {
     let f = Fixture::new("resume");
     f.run_cancelled_at(3);

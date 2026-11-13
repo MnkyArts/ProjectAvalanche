@@ -149,7 +149,7 @@ pub fn load(big_root: &Path, track: &str, avalanche_scripts: &[String]) -> Resul
     load_bound(big_root, track, avalanche_scripts, &[2, 3])
 }
 
-fn entity_model(db: &Db<'_>, schema: &str, object: &str) -> Result<EntityModel> {
+fn entity_model(db: &Db, schema: &str, object: &str) -> Result<EntityModel> {
     let key = fnv1(object);
     let models = db.field(CLASS_GAMEOBJECT, key, FIELD_MODELS)?.with_context(|| format!("{object}: no models"))?;
     let model = refs(&models.data).into_iter().find(|r| r.collection != 0).context("no LOD-0 model")?;

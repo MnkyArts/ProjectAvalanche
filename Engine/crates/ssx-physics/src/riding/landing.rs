@@ -12,6 +12,17 @@ use crate::tuning::Bundle;
 pub const BAIL_ON_LANDING_PITCH: f32 = 2.356_194;
 pub const PITCH_BALANCE_STIFFNESS: f32 = 0.01;
 pub const PITCH_BALANCE_STABLE: f32 = 0.05;
+pub const BAIL_ALLOW_AIRBORNE_TICKS: f32 = 20.0;
+// TODO(guess): a landing bail ends after 90 riding ticks; the retail build has no such end. `BailOnLanding` (+0x19B,
+// BLN_carving_state_bail_on_landing) is written only by the touchdown 0x82CCF6D4, BalanceUpdate's level complete
+// 0x82CC7A88 and avalanche branch 0x82CC7B40 / 0x82CC7BF8 and the construction 0x82CC2EB8; ReadStateVars 0x82CC4228
+// and WriteStateVars 0x82CC3824 sync it with the graph, but anim_all.cba has no tag or Lua write of it
+// (state_riding_bail's entry and state_bail_cycle's exits only read it), no other disc file names it, and the
+// title update's BalanceUpdate (0x82CA2E28) is the same body. So a pitch bail on smooth ground lasted until an
+// air phase (issue #5, PR #18 by chryzsh). 90 is at least the longest SEQ_bail_ground_* landing sequence (62 to 71
+// ticks; the cycles are 48 / 54), so the landing plays out first. Settle: a retail writer of the variable on the
+// ground and its delay.
+pub const BAIL_ON_LANDING_MAX_TICKS: f32 = 90.0;
 pub const UBER_RECOVER_TRIGGER_CLEAR_TICKS: f32 = 110.0;
 pub const UBER_RECOVER_HOP_TICKS: f32 = 4.0;
 pub const UBER_CRASH_GATE_TICKS: f32 = 30.0;
@@ -126,6 +137,7 @@ pub struct LandingState {
     pub auto_recover_backslide: bool,
     pub landed_switch: bool,
     pub ticks: f32,
+    pub landing_bail_ticks: f32,
     pub uber_recovery: UberRecovery,
     pub quality: LandingQuality,
     pub touchdown_pitch: f32,
@@ -287,6 +299,17 @@ impl LandingState {
 }
 
 impl LandingState {
+    pub fn landing_bail_limit(&mut self, spared: bool, dt: f32) {
+        if !self.bail_on_landing || spared {
+            self.landing_bail_ticks = 0.0;
+            return;
+        }
+        self.landing_bail_ticks += dt;
+        if self.landing_bail_ticks >= BAIL_ON_LANDING_MAX_TICKS {
+            (self.bail_on_landing, self.landing_bail_ticks) = (false, 0.0);
+        }
+    }
+
     pub fn recovery_input(&self, t: &BalanceTuning, fwd: f32, stick_y: f32) -> bool {
         stick_y.abs() > t.input_dead_zone && fsel_sign(stick_y) == fsel_sign(fwd * self.pitch)
     }

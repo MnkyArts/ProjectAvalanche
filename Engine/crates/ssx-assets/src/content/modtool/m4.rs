@@ -280,7 +280,7 @@ pub(super) fn check(
 }
 
 fn particle_nodes(big: &Path) -> Result<BTreeSet<u32>, String> {
-    with_attribdb(big, |db| Ok(db.collections_of(0, fnv1("ge_particlenode")).map(|(k, _)| k).collect()))
+    with_attribdb(big, |db| Ok(db.collections_of_all(fnv1("ge_particlenode")).into_iter().map(|(k, _)| k).collect()))
         .map_err(|e| format!("{e:#}"))
 }
 

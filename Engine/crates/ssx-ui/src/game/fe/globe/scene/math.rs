@@ -1,4 +1,5 @@
 use super::*;
+use crate::game::fe::globe::audio::FeAudio;
 
 pub type V3 = [f32; 3];
 pub type Quat = [f32; 4];
@@ -198,20 +199,22 @@ impl Default for ShotBlend {
 }
 
 impl ShotBlend {
-    pub fn queue(&mut self, segments: &[Segment]) {
+    pub fn queue(&mut self, segments: &[Segment], audio: &mut FeAudio) {
         self.from = self.current;
         self.queue = segments.iter().take(4).copied().collect();
         self.index = 0;
         self.segment_time = 0.0;
-        self.total = self.queue.iter().map(|s| s.duration).sum();
         self.time = 0.0;
+        let total: f32 = self.queue.iter().map(|s| s.duration).sum();
+        self.total = audio.beat_sync(total, 1.0);
+        audio.transition_end(self.total);
     }
 
-    pub fn go(&mut self, to: Shot, duration: f32, cut: Option<Shot>) {
+    pub fn go(&mut self, to: Shot, duration: f32, cut: Option<Shot>, audio: &mut FeAudio) {
         if let Some(c) = cut {
             self.current = c;
         }
-        self.queue(&[Segment::new(to, 2, duration)]);
+        self.queue(&[Segment::new(to, 2, duration)], audio);
     }
 
     pub fn progress(&self) -> f32 {
@@ -222,12 +225,13 @@ impl ShotBlend {
         self.total < 0.0
     }
 
-    pub fn step(&mut self, dt: f32) {
+    pub fn step(&mut self, dt: f32, audio: &mut FeAudio) {
         if self.total < 0.0 {
             return;
         }
         let mut dt = dt;
         loop {
+            let step_dt = dt;
             self.segment_time += dt;
             self.time += dt;
             dt = 0.0;
@@ -252,12 +256,13 @@ impl ShotBlend {
                 }
                 return;
             }
-            self.blend(&seg, self.segment_time / seg.duration);
+            let look = self.blend(&seg, self.segment_time / seg.duration);
+            audio.shot_step(look, seg.duration, step_dt);
             return;
         }
     }
 
-    pub(super) fn blend(&mut self, seg: &Segment, t: f32) {
+    pub(super) fn blend(&mut self, seg: &Segment, t: f32) -> f32 {
         let to = seg.shot;
         let [c_target, c_look, c_fov] = seg.curves;
         let (e_look, e_target, e_fov) = (ease(c_look, t), ease(c_target, t), ease(c_fov, t));
@@ -269,5 +274,6 @@ impl ShotBlend {
         c.offset = sub(c.look, scale(dir, l_from + (l_to - l_from) * e_look));
         c.target = lerp(f.target, to.target, e_target);
         c.fov = f.fov + (to.fov - f.fov) * e_fov;
+        e_look
     }
 }

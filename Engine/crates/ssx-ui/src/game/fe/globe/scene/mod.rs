@@ -111,7 +111,6 @@ pub struct SceneEvents {
     pub transitioning: bool,
     pub list_type: Option<i32>,
     pub recommendation: Option<bool>,
-    pub audio: Option<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -163,6 +162,7 @@ pub struct GlobeScene {
     pub postfx: crate::game::fe::globe::look::PostFxLayer,
     pub fades: Vec<(i32, f32, f32)>,
     pub sounds: Vec<i32>,
+    pub audio: crate::game::fe::globe::audio::FeAudio,
     pub fade_posted: bool,
     pub clouds: crate::game::fe::globe::clouds::CloudTransition,
 }
@@ -222,6 +222,7 @@ impl GlobeScene {
             postfx: Default::default(),
             fades: Vec::new(),
             sounds: Vec::new(),
+            audio: Default::default(),
             fade_posted: false,
             clouds: Default::default(),
         };

@@ -12,7 +12,7 @@ use super::records::{CLASS_KEYS, record_ids};
 use super::textures::texture_id;
 use crate::object_collision::load_pob;
 use crate::track_objects::{CLASS_GAMEOBJECT, GameObject, asset_file, game_object};
-use crate::vault_db::{CLASS_MATERIAL, Material as VaultMaterial, with_attribdb};
+use crate::vault_db::{CLASS_MATERIAL, Material as VaultMaterial, with_attribdb, with_local_attribdb};
 
 pub struct RecordNames {
     pub by_key: HashMap<(u32, u32), ContentId>,
@@ -68,12 +68,7 @@ pub fn material_def(m: &VaultMaterial) -> MaterialDef {
     }
 }
 
-pub fn object_def(
-    o: &GameObject,
-    names: &RecordNames,
-    models: &DiscModels,
-    big_root: &Path,
-) -> anyhow::Result<ObjectDef> {
+pub fn object_def(o: &GameObject, names: &RecordNames, big_root: &Path) -> anyhow::Result<ObjectDef> {
     let lods = o
         .lods
         .iter()
@@ -81,7 +76,7 @@ pub fn object_def(
             lod.iter()
                 .map(|m| MeshRecord {
                     geometry: m.geometry.clone(),
-                    model: model_id(&m.geometry).filter(|id| models.file(id).is_some()),
+                    model: model_id(&m.geometry),
                     material: (m.material_key != 0).then(|| names.material(m.material_key).cloned()).flatten(),
                     skeleton: m.skeleton.clone(),
                 })
@@ -108,13 +103,31 @@ pub fn object_def(
 
 pub struct DiscRecords {
     big_root: PathBuf,
-    models: Arc<DiscModels>,
+    assets_root: PathBuf,
+    _models: Arc<DiscModels>,
     names: OnceLock<Result<Arc<RecordNames>, String>>,
 }
 
 impl DiscRecords {
     pub fn new(big_root: &Path, models: Arc<DiscModels>) -> Self {
-        DiscRecords { big_root: big_root.to_path_buf(), models, names: OnceLock::new() }
+        Self::with_assets(big_root, big_root, models)
+    }
+
+    pub fn with_assets(vault_root: &Path, assets_root: &Path, models: Arc<DiscModels>) -> Self {
+        DiscRecords {
+            big_root: vault_root.to_path_buf(),
+            assets_root: assets_root.to_path_buf(),
+            _models: models,
+            names: OnceLock::new(),
+        }
+    }
+
+    pub fn usable(&self) -> Result<std::collections::BTreeMap<u32, usize>, String> {
+        if !self.big_root.join("bootcache/data/xenon/attribdb/ge_attribdb.vlt").is_file() {
+            return Err(format!("{}: no bootcache ge_attribdb.vlt", self.big_root.display()));
+        }
+        self.names()?;
+        with_local_attribdb(&self.big_root, |db| Ok(db.unknown.clone())).map_err(|e| format!("{e:#}"))
     }
 
     pub fn names(&self) -> Result<Arc<RecordNames>, String> {
@@ -154,7 +167,7 @@ impl DiscRecords {
                 return Ok(Asset::Value(Arc::new(def)));
             }
             let o = game_object(db, class, key)?;
-            let mut def = object_def(&o, &names, &self.models, &self.big_root)?;
+            let mut def = object_def(&o, &names, &self.assets_root)?;
             def.name = id.path().to_string();
             Ok(Asset::Value(Arc::new(def)))
         })

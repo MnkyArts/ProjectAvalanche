@@ -429,11 +429,7 @@ impl WingsuitState {
             WingsuitNode::Enter => (1.0, tag_spline(&HANDLE_DEPLOY_SPLINE, w)),
             _ => (0.0, tag_spline(&HANDLE_RETRACT_SPLINE, w)),
         };
-        FloatTag { value, mode: 3, reset_on_leave: false, spline }.on(
-            e,
-            &mut self.handle_weight,
-            &mut self.handle_saved,
-        );
+        FloatTag { value, mode: 3, reset: None, spline }.on(e, &mut self.handle_weight, &mut self.handle_saved);
     }
 }
 

@@ -13,6 +13,25 @@ pub fn advance(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.globe.advance_free = false;
 }
 
+pub fn freeride(fe: &mut FrontEnd, env: &mut FeEnv) {
+    if !fe.globe.advance_free || !fe.globe.provider_is_drop {
+        return;
+    }
+    let drop = fe.globe.drop;
+    let Some(e) = fe.career.event(drop) else { return };
+    if e.cost != 0
+        || e.event_type == 4
+        || matches!(e.drop_type, ssx_assets::career::DropType::Custom | ssx_assets::career::DropType::Type2)
+    {
+        fe.note(format!("A_GameFreeride: drop {drop:#010x} is not a free drop; refused"));
+        return;
+    }
+    fe.free_ride_drop = Some(drop);
+    fe.note(format!("A_GameFreeride: drop {drop:#010x} as a free ride"));
+    select_drop_screen(fe, env);
+    fe.globe.advance_free = false;
+}
+
 pub(super) fn select_drop_screen(fe: &mut FrontEnd, env: &mut FeEnv) {
     let screen = fe.screen;
     fe.note(format!("Globe_SelectDrop on screen {screen:#x}"));
@@ -67,6 +86,13 @@ fn range_movie_plays(fe: &mut FrontEnd, movie: &str) -> bool {
 
 pub(super) fn select_drop(fe: &mut FrontEnd, env: &mut FeEnv) {
     let drop = fe.globe.drop;
+    if fe.free_ride_drop == Some(drop) {
+        fe.note(format!("free ride: drop {drop:#010x} chosen; the event's setup is skipped"));
+        fe.equipment.drop = drop;
+        fe.go_to_screen(env, screens::id::EQUIPMENT);
+        return;
+    }
+    fe.free_ride_drop = None;
     let state = fe.profile.drop_state(drop);
     if state == DropState::Locked && fe.screen == 0x44 {
         fe.note("drop locked");
@@ -172,6 +198,7 @@ pub fn previous(fe: &mut FrontEnd, env: &mut FeEnv) {
 }
 
 pub fn back_from_equipment(fe: &mut FrontEnd, env: &mut FeEnv) {
+    fe.free_ride_drop = None;
     fe.note("equipment: save end (0x825FAFC8) → previous");
     env.nav_events.push("previous".into());
 }

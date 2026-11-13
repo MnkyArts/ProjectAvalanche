@@ -228,3 +228,26 @@ fn a_well_compressed_file_larger_than_one_output_block_reads_back() {
     let mut z = open(bytes).unwrap();
     assert_eq!(z.read(0, 1 << 20).unwrap(), big);
 }
+
+#[test]
+fn a_player_dump_may_name_folders_with_inner_spaces() {
+    let dump = || {
+        assemble(
+            b"",
+            &[
+                stored("DLC- 4541096D/0B4D5E7856AD993977D79B0FABAABB2F1A16C6B245", b"1"),
+                stored("Title Update/tu", b"2"),
+            ],
+            b"",
+        )
+    };
+    let limits = ZipLimits { names: super::ZipNames::PlayerDump, ..ZipLimits::default() };
+    let mut a = ZipArchive::open(Cursor::new(dump()), &limits).unwrap();
+    assert_eq!(a.entries()[0].name, "DLC- 4541096D/0B4D5E7856AD993977D79B0FABAABB2F1A16C6B245");
+    assert_eq!(a.read(1, 16).unwrap(), b"2");
+    refused_with(dump(), "contains ' '");
+    for bad in [" a/b", "a /b", "a/ b", "con .txt", "con/x", "a/../b", "a\\b", "a: b"] {
+        let one = assemble(b"", &[stored(bad, b"1")], b"");
+        assert!(ZipArchive::open(Cursor::new(one), &limits).is_err(), "{bad:?}");
+    }
+}

@@ -4,6 +4,7 @@ use super::*;
 pub struct StepStart {
     pub velocity: Vec3,
     pub wipeout: bool,
+    pub raw_stick: Vec2,
 }
 
 pub struct LevelStartGraph {

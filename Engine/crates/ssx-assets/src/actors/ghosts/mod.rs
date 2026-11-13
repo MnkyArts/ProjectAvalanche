@@ -38,11 +38,7 @@ pub fn tint_rgba(word: u32) -> [f32; 4] {
 }
 
 pub fn replay_file(big_root: &Path, id: u32) -> Option<PathBuf> {
-    std::fs::read_dir(big_root)
-        .ok()?
-        .flatten()
-        .map(|e| e.path().join(GHOST_DIR).join(format!("{id}.bin")))
-        .find(|p| p.is_file())
+    crate::data_roots::find(big_root, &format!("{GHOST_DIR}/{id}.bin"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

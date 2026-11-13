@@ -15,11 +15,12 @@ use ssx_net_proto::master::MasterUrl;
 
 pub const LOCAL_SOURCE: &str = "the server's own list";
 const MAX_PATH: usize = 4096;
-// TODO(guess): 10 s, a port choice: an operator's repeated command does not ask the master again each time; nothing
-// measured; settle: the request rate the master accepts (it answers 1 a second, burst 4, per address).
+// PORT(choice): 10 s: an operator's repeated command does not ask the master again each time; nothing measured; tuning:
+// the request rate the master accepts (it answers 1 a second, burst 4, per address); the original has no dedicated
+// server.
 const MIN_ASK: Duration = Duration::from_secs(10);
-// TODO(guess): 120 s, a port choice above the queue's longest job seen (a copy's read and mount, seconds); settle: the
-// queue's times on a server with many resources.
+// PORT(choice): 120 s, above the queue's longest job seen (a copy's read and mount, seconds); tuning: the queue's times
+// on a server with many resources; the original has no dedicated server.
 const REQUEUE: Duration = Duration::from_secs(120);
 
 pub fn local_path(s: &str) -> Result<PathBuf, String> {

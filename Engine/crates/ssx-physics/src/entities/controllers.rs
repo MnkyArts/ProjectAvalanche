@@ -190,7 +190,8 @@ pub fn script_sets(name: &str, src: &str) -> Arc<StateSets> {
     Arc::new(StateSets::from_graph(&g))
 }
 
-// TODO(guess): a port cap of 2²⁰ instructions (1 024 × the disc's largest controller, 1 024); settle: none on the disc (the game runs only its own scripts) — the scripting round's budget for a package's controller.
+// PORT(choice): a port cap of 2²⁰ instructions (1 024 × the disc's largest controller, 1 024); the scripting round's
+// budget for a package's controller; nothing on the disc (the game runs only its own scripts).
 pub const MAP_CONTROLLER_BUDGET: u64 = 1 << 20;
 
 pub fn script_sets_within(name: &str, src: &str, budget: u64) -> Result<Arc<StateSets>, String> {

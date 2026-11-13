@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use ssx_physics::SIM_HZ;
 
 use super::{CameraNoise, Chase, ChaseCamera, NisRig, Snapshot, inputs, render_blend};
-use crate::camera::{CameraMode, FlyCam, GAME_FAR, GAME_REST_HFOV_DEG, GameProjection};
+use crate::camera::{CameraMode, FlyCam, GAME_FAR, GAME_NEAR, GAME_REST_HFOV_DEG, GameProjection};
 use crate::ride::Ride;
 use crate::rider::skin::RiderRig;
 
@@ -21,34 +21,43 @@ pub fn toggle(
         CameraMode::Chase => {
             for (transform, mut cam, mut projection) in &mut cameras {
                 cam.sync_to(transform.rotation);
-                set_projection(&mut projection, GAME_REST_HFOV_DEG);
+                set_projection(&mut projection, GAME_REST_HFOV_DEG, GAME_NEAR);
             }
             CameraMode::Fly
         }
     };
 }
 
-fn set_projection(projection: &mut Projection, hfov_deg: f32) {
+fn set_projection(projection: &mut Projection, hfov_deg: f32, near: f32) {
     if let Projection::Custom(custom) = projection
         && let Some(p) = custom.get_mut::<GameProjection>()
     {
         p.hfov_deg = hfov_deg;
+        p.near = near;
         p.far = GAME_FAR;
     }
 }
 
 fn current_view<'a>(mut cameras: impl Iterator<Item = (&'a Transform, &'a Projection)>) -> Snapshot {
     let Some((transform, projection)) = cameras.next() else {
-        return Snapshot { position: Vec3::ZERO, rotation: Quat::IDENTITY, fov_deg: GAME_REST_HFOV_DEG };
+        return Snapshot {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            fov_deg: GAME_REST_HFOV_DEG,
+            near: GAME_NEAR,
+        };
     };
-    let fov_deg = match projection {
-        Projection::Custom(custom) => custom.get::<GameProjection>().map_or(GAME_REST_HFOV_DEG, |p| p.hfov_deg),
-        _ => GAME_REST_HFOV_DEG,
+    let (fov_deg, near) = match projection {
+        Projection::Custom(custom) => {
+            custom.get::<GameProjection>().map_or((GAME_REST_HFOV_DEG, GAME_NEAR), |p| (p.hfov_deg, p.near))
+        }
+        _ => (GAME_REST_HFOV_DEG, GAME_NEAR),
     };
     Snapshot {
         position: transform.translation,
         rotation: transform.rotation * Quat::from_rotation_y(FRAC_PI_2),
         fov_deg,
+        near,
     }
 }
 
@@ -130,12 +139,22 @@ fn nis_view(ride: &Ride) -> Option<(Snapshot, Option<NisRig>)> {
             nis_orientation: intro.orientation,
             start_position: ride.state.level_start,
         };
-        return Some((Snapshot { position: v.position, rotation: v.rotation, fov_deg: v.hfov_deg }, Some(rig)));
+        let (traj_rot, traj_pos) = v.trajectory;
+        let near = super::collision::post_update_near(
+            &ride.world().collision,
+            traj_pos,
+            traj_rot,
+            v.hfov_deg,
+            v.near.unwrap_or(super::collision::DEFAULT_NEAR_CLIPPING_PLANE),
+        );
+        return Some((Snapshot { position: v.position, rotation: v.rotation, fov_deg: v.hfov_deg, near }, Some(rig)));
     }
     let cut = intro.assets.choice.variant == ssx_physics::nis::IntroVariant::Outro
         && matches!(intro.scene, ssx_physics::nis::Scene::Jump { .. });
     let v = ride.vista.filter(|_| cut)?;
-    Some((Snapshot { position: v.position, rotation: v.rotation, fov_deg: v.fov_deg }, None))
+    let near =
+        super::collision::post_update_near(&ride.world().collision, v.position, v.rotation, v.fov_deg, GAME_NEAR);
+    Some((Snapshot { position: v.position, rotation: v.rotation, fov_deg: v.fov_deg, near }, None))
 }
 
 pub(super) fn step(
@@ -187,7 +206,7 @@ pub fn follow(
     let placed = debug_view(&ride).unwrap_or(placed);
     for (mut transform, mut projection) in &mut cameras {
         *transform = placed;
-        set_projection(&mut projection, view.fov_deg);
+        set_projection(&mut projection, view.fov_deg, view.near);
     }
 }
 

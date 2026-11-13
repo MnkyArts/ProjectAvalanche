@@ -15,12 +15,13 @@ use fetch::Miss;
 use source::Source;
 
 pub const CACHE_FOLDER: &str = "ResourceCache";
-// TODO(guess): 8 GiB (four servers' worth of the 2 GiB a package may be); settle: the cache sizes players keep.
+// PORT(choice): 8 GiB (four servers' worth of the 2 GiB a package may be); tuning: the cache sizes players keep; the
+// original has no dedicated server.
 pub const DEFAULT_QUOTA: u64 = 8 << 30;
-// TODO(guess): 2 GiB (one package at its cap; M8b's level budget is 512 MiB of models and 1 GiB of images); settle:
-// what players set.
+// PORT(choice): 2 GiB (one package at its cap; M8b's level budget is 512 MiB of models and 1 GiB of images); tuning:
+// what players set; the original has no dedicated server.
 pub const DEFAULT_LIMIT: u64 = 2 << 30;
-// TODO(guess): 15 s (8 MiB at about 0.5 MiB/s); settle: real servers' manifests.
+// PORT(choice): 15 s (8 MiB at about 0.5 MiB/s); tuning: real servers' manifests; the original has no dedicated server.
 pub const MANIFEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug)]
@@ -125,8 +126,8 @@ pub struct Look {
     pub blocked: Option<String>,
 }
 
-// TODO(guess): 30 s (a list's rows are asked every 10 s; a download in another game changes the count meanwhile, which
-// shifts only a server's lower bound); settle: none (a port choice of the browser).
+// PORT(choice): 30 s (a list's rows are asked every 10 s; a download in another game changes the count meanwhile, which
+// shifts only a server's lower bound), the browser's; the original has no dedicated server.
 pub const HELD_INTERVAL: Duration = Duration::from_secs(30);
 
 impl CacheView {

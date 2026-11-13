@@ -11,8 +11,9 @@ pub(super) trait Reading: Send + Sync + 'static {
     fn remount(&self, running: &[Started]) -> Result<(), String>;
 }
 
-// TODO(guess): 4 replacements in 10 minutes (a read panics only on a defect: a command an operator repeats would
-// otherwise start a thread per try; a later defect, minutes on, is still read); settle: a defect seen in the field.
+// PORT(choice): 4 replacements in 10 minutes (a read panics only on a defect: a command an operator repeats would
+// otherwise start a thread per try; a later defect, minutes on, is still read); tuning: a defect seen in the field; the
+// original has no dedicated server.
 pub(super) const MAX_RESTARTS: usize = 4;
 pub(super) const RESTART_WINDOW: Duration = Duration::from_secs(600);
 

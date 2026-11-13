@@ -1,8 +1,12 @@
+use ssx_assets::career::random::GameRandom;
+use ssx_assets::career::store::purchase::{OfferPurchase, PurchaseError};
+
 use crate::avm1::Ctx;
 use crate::avm1::value::Value;
 use crate::game::fe::inventory::{self, DropInfo, Inventory, UiItem, flag};
 use crate::game::fe::{ActionParam, FeEnv, FrontEnd, screens};
 use crate::game::loc::Localization;
+use crate::game::values::id::EQUIPMENT_LIMITED_TIME_OFFER as LIMITED_TIME_OFFER;
 use crate::game::values::{UiValue, UiValues};
 
 mod actions;
@@ -62,6 +66,8 @@ pub struct Equipment {
     pub online: i32,
     pub rider: u32,
     pub inv: Option<Box<Inventory>>,
+    pub offer_ms: i32,
+    offer_shown: Option<i64>,
 }
 
 impl Equipment {
@@ -73,6 +79,8 @@ impl Equipment {
         (self.inv_step, self.inv_index) = (0, 0);
         self.pending = None;
         self.gear_info = GearInfo::default();
+        self.offer_ms = 0;
+        self.offer_shown = None;
     }
 
     pub fn rider_name(&self, fe: &FrontEnd) -> String {
@@ -105,13 +113,28 @@ pub fn flow_equip(fe: &mut FrontEnd, key: u32, slot: i64) {
 fn set_category(fe: &mut FrontEnd, env: &mut FeEnv, category: i32) {
     let kind = kind_of(category);
     let mut inv = inv(fe);
+    inv.now_ms = (fe.time * 1000.0) as i64;
     let drop = drop_info(fe);
     let ctx = inv.store_context(&fe.career, &fe.profile, drop.as_ref());
     inv.build_lists(&fe.career, &fe.profile, env.loc, drop.as_ref(), &ctx, kind);
     inv.build_selected_gear(&fe.career, &fe.profile, env.loc, drop.as_ref());
     env.values.set_int(0x6C, inv.survival);
     env.values.set_int(0x64, inv.inventory_size);
+    let note = store_note(&inv, "built");
     fe.equipment.inv = Some(inv);
+    fe.note(note);
+}
+
+fn store_note(inv: &Inventory, what: &str) -> String {
+    let list: Vec<String> = inv.store_list.iter().map(|u| format!("{:#x}:{}", u.key, u.cost)).collect();
+    let specials: Vec<Vec<String>> = (inv.store.stock.iter())
+        .map(|l| l.iter().filter(|i| i.special).map(|i| format!("{:#x}@{}", i.id, i.expires_ms)).collect())
+        .collect();
+    format!(
+        "equipment: store list {what} [{}], special shown {:x?}, the stock's specials by kind {specials:?}",
+        list.join(", "),
+        inv.store.shown_special
+    )
 }
 
 fn loadout_refresh(fe: &mut FrontEnd, env: &mut FeEnv) {
@@ -128,6 +151,9 @@ fn loadout_refresh(fe: &mut FrontEnd, env: &mut FeEnv) {
     let ctx = inv.store_context(&fe.career, &fe.profile, info.as_ref());
     let data = inv.data.clone();
     inv.store.update(&data, &ctx, force, inv.now_ms);
+    if force {
+        inv.recommend_first = inv.store.rng.below(100) >= 50;
+    }
     fe.equipment.inv = Some(inv);
     set_category(fe, env, 0);
 }
@@ -262,6 +288,20 @@ fn save_state(fe: &FrontEnd, env: &mut FeEnv) {
 }
 
 pub fn update(fe: &mut FrontEnd, env: &mut FeEnv) {
+    if let Some(left) = fe.equipment.inv.as_ref().and_then(|i| i.store.shown_special_left((fe.time * 1000.0) as i64)) {
+        env.values.set_int(LIMITED_TIME_OFFER, i32::try_from(left).unwrap_or(i32::MAX));
+    }
+    if fe.equipment.state == state::GEAR {
+        if env.values.is_dirty(LIMITED_TIME_OFFER) {
+            fe.equipment.offer_ms = env.values.int(LIMITED_TIME_OFFER);
+        }
+        let eq = &mut fe.equipment;
+        let shown = eq.store.iter().any(|u| u.has(flag::SPECIAL)).then(|| i64::from(eq.offer_ms.max(0)) / 1000);
+        if shown != eq.offer_shown {
+            eq.offer_shown = shown;
+            fe.publish.push("dp_limited_time_offer".into());
+        }
+    }
     if fe.equipment.state == state::HINT && env.values.bool(0x216) {
         fe.equipment.state = state::READY;
         fe.publish.extend(
@@ -388,18 +428,26 @@ fn purchase(fe: &mut FrontEnd, env: &mut FeEnv, list: List, index: usize) {
     let mut inv = inv(fe);
     let kind = kind_of(fe.equipment.category);
     let new_list = usize::try_from(kind).ok().filter(|&k| k <= inventory::KINDS);
+    inv.now_ms = (fe.time * 1000.0) as i64;
     let paid = match (item.src, new_list) {
         (1, Some(k)) if k < inventory::KINDS => {
             let info = drop_info(fe);
             let ctx = inv.store_context(&fe.career, &fe.profile, info.as_ref());
             let data = inv.data.clone();
             let now = inv.now_ms;
-            fe.profile.buy_offer(&mut inv.store, &data, &ctx, k, item.key, (fe.time as u32).max(1), now).map(|id| {
-                inv.new_items[k].push((id, 1));
-                item.cost
-            })
+            fe.profile
+                .buy_offer(
+                    &mut inv.store,
+                    &data,
+                    &ctx,
+                    OfferPurchase { kind: k, id: item.key, clock_s: (fe.time as u32).max(1), now_ms: now },
+                )
+                .map(|id| {
+                    inv.new_items[k].push((id, 1));
+                    item.cost
+                })
         }
-        (1, _) => Err(ssx_assets::career::store::purchase::PurchaseError::Unknown),
+        (1, _) => Err(PurchaseError::Unknown),
         _ => fe.profile.buy_fixed(&inv.catalog, item.key).inspect(|_| {
             if let Some(k) = new_list {
                 inv.new_items[k].push((item.key, 0));
@@ -412,7 +460,7 @@ fn purchase(fe: &mut FrontEnd, env: &mut FeEnv, list: List, index: usize) {
             fe.note(format!("equipment: bought {:#010x}/{} for {cost}", item.key, item.src));
             let adj = env.values.int(0x93);
             env.values.set_int(0x93, adj.wrapping_sub(i32::try_from(cost).unwrap_or(i32::MAX)));
-            set_category(fe, env, fe.equipment.category);
+            after_purchase(fe, env, kind, (item.key, item.src));
         }
         Err(e) => fe.note(format!("equipment: purchase refused: {e:?}")),
     }
@@ -421,6 +469,61 @@ fn purchase(fe: &mut FrontEnd, env: &mut FeEnv, list: List, index: usize) {
         fe.publish.push("dp_equipment_purchase_result".into());
     } else {
         publish_list(fe, "dp_playable_characters");
+    }
+}
+
+fn after_purchase(fe: &mut FrontEnd, env: &mut FeEnv, kind: i64, bought: (u32, u8)) {
+    let mut inv = inv(fe);
+    let drop = drop_info(fe);
+    let ctx = inv.store_context(&fe.career, &fe.profile, drop.as_ref());
+    let before = store_note(&inv, "before the purchase");
+    if kind != inventory::RIDER {
+        inv.put_bought_first(&fe.career, &fe.profile, env.loc, drop.as_ref(), kind, bought);
+    }
+    inv.refresh_lists(&fe.career, &fe.profile, env.loc, drop.as_ref(), &ctx, kind);
+    let after = store_note(&inv, "refreshed");
+    inv.build_selected_gear(&fe.career, &fe.profile, env.loc, drop.as_ref());
+    env.values.set_int(0x6C, inv.survival);
+    env.values.set_int(0x64, inv.inventory_size);
+    let price = inv.record(&fe.career, &fe.profile, env.loc, bought.0, bought.1).map(|r| r.cost);
+    fe.equipment.inv = Some(inv);
+    fe.note(before);
+    fe.note(after);
+    let stat = match kind {
+        1 => Some("LifetimeSpentOnBoards"),
+        2 => Some("LifetimeSpentOnGear"),
+        3 => Some("LifetimeSpentOnBoost"),
+        _ => None,
+    };
+    if let (Some(stat), Some(price)) = (stat, price) {
+        let n = u32::try_from(price.max(0)).unwrap_or(u32::MAX);
+        fe.profile.add_persistent_stat(stat, n);
+        fe.note(format!("equipment: stat {stat} += {n} (0x82491280)"));
+    }
+}
+
+fn purchase_rider_level(fe: &mut FrontEnd, env: &mut FeEnv, level: i64) {
+    let Some(rider) = fe.equipment.inv.as_ref().map(|i| i.rider).filter(|&r| r != 0) else {
+        fe.note("equipment: level purchase without an equipped rider");
+        return;
+    };
+    match fe.profile.purchase_rider_level(&fe.rules, rider, level) {
+        Ok(price) => {
+            if let Some(stats) = fe.profile.riders.get_mut(&rider) {
+                ssx_assets::career::profile::update_rider_level(
+                    stats,
+                    &fe.rules.level_thresholds,
+                    &fe.rules.level_prices,
+                );
+            }
+            let bank = env.values.int(0x93).wrapping_sub(i32::try_from(price).unwrap_or(i32::MAX));
+            env.values.set_int(0x93, bank);
+            fe.note(format!("equipment: bought level {} for {price}", level + 1));
+            loadout_refresh(fe, env);
+            fe.publish
+                .extend(["dp_selected_rider", "dp_playable_characters", "dp_equipment_categories"].map(String::from));
+        }
+        Err(e) => fe.note(format!("equipment: level purchase refused: {e:?}")),
     }
 }
 

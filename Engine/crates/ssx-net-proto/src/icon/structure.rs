@@ -1,7 +1,7 @@
 use flate2::{Decompress, FlushDecompress, Status};
 
-// TODO(guess): 64 chunks, far above an image's IHDR, PLTE, tRNS, a few IDAT, metadata and IEND; settle: none (a
-// bound on hostile input).
+// PORT(choice): 64 chunks, far above an image's IHDR, PLTE, tRNS, a few IDAT, metadata and IEND, a bound on hostile
+// input; the original has no server browser.
 const MAX_CHUNKS: usize = 64;
 
 #[derive(Clone, Copy, Debug)]

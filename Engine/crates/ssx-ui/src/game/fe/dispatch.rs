@@ -138,6 +138,7 @@ impl FrontEnd {
             ("avabrowserfilters", _) => ava::browser::filters::data_action(self, env, dp, action, param),
             ("globe", "A_GameAdvanceScreen") => globe::advance(self, env),
             ("globe", "A_GamePreviousScreen") => globe::previous(self, env),
+            ("globe", "A_GameFreeride") => globe::freeride(self, env),
             ("equipmentloading", "A_EquipmentLoadingBackgroundLoaded") => flow::loading_screen_loaded(self),
             ("equipmentloading", _) => {}
             _ => {}

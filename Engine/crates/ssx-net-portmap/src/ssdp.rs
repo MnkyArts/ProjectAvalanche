@@ -4,8 +4,8 @@ use crate::Error;
 
 pub const MULTICAST: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), 1900);
 pub const SEARCH_TARGET: &str = "urn:schemas-upnp-org:device:InternetGatewayDevice:1";
-// TODO(guess): MX 2 (UDA 1.1 allows 1 to 5), 1 500 bytes (one Ethernet frame), 32 lines of at most 512 bytes, a path of
-// at most 256 bytes; settle: real gateways' SSDP answers.
+// PORT(choice): MX 2 (UDA 1.1 allows 1 to 5), 1 500 bytes (one Ethernet frame), 32 lines of at most 512 bytes, a path
+// of at most 256 bytes; tuning: real gateways' SSDP answers; the original has no dedicated server.
 pub const MX: u32 = 2;
 pub const MAX_DATAGRAM: usize = 1500;
 const MAX_LINES: usize = 32;

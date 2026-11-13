@@ -14,9 +14,9 @@ use crate::rider::anim::{JointRecord, world_records};
 
 const PLAYER_IDS: u64 = 0x4000_0001;
 
-// TODO(guess): the explore racers' request colour 0xFF05B8F3 (`[0x837E6FA8]`, `GameMode_BuildExploreGhostRequests`
-// 0x82480840), as the game gave its replayed online racers a request colour; the colour of a live player's name is not
-// decoded (the original has no real-time racers); settle: none (a port feature).
+// PORT(choice): the explore racers' request colour 0xFF05B8F3 (`[0x837E6FA8]`, `GameMode_BuildExploreGhostRequests`
+// 0x82480840), as the game gave its replayed online racers a request colour; a port feature: the original has no
+// real-time racers, so no colour of a live player's name to decode.
 const NAME_COLOUR: u32 = 0xFF05_B8F3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,9 +37,8 @@ struct LiveVisual {
 
 type Loading = (LiveLook, Mutex<Receiver<Result<LoadedBot>>>);
 
-// TODO(guess): a port choice (the original has no live racers): two loader threads at most, counted until each ends
-// (also those whose racer left meanwhile), bound the threads and the memory a join flood can start; settle: none (a
-// port feature).
+// PORT(choice): two loader threads at most, counted until each ends (also those whose racer left meanwhile), bound the
+// threads and the memory a join flood can start; a port feature: the original has no live racers.
 const MAX_LOADS: usize = 2;
 
 struct LoaderCount(std::sync::Arc<std::sync::atomic::AtomicUsize>);
@@ -115,7 +114,7 @@ impl LiveVisuals {
         race: &ssx_physics::session::bots::BotRace,
         ride: &crate::ride::Ride,
         frame: LiveFrame,
-        rng: &mut ssx_physics::session::bots::Mt19937,
+        rng: &mut dyn ssx_assets::career::random::GameRandom,
         draw: &mut RacerDraw,
     ) {
         let LiveFrame { facts, dt_ticks, racers } = frame;

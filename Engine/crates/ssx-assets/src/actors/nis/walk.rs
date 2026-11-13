@@ -434,6 +434,11 @@ impl<'a> Walk<'a> {
                             true => num(&t, "Value"),
                             false => f32::from(u8::from(t.bool("Value").unwrap_or(false))),
                         };
+                        let var = t.guid("ValueAsset").and_then(|g| self.db.get(g));
+                        let default = match float {
+                            true => var.and_then(|v| v.f32("Default")).unwrap_or(0.0),
+                            false => f32::from(u8::from(var.and_then(|v| v.bool("Default")).unwrap_or(false))),
+                        };
                         actor.game_state.push(GameStateTag {
                             state: value_name().unwrap_or_default(),
                             window: window(&t),
@@ -441,6 +446,7 @@ impl<'a> Walk<'a> {
                             value,
                             mode: t.int("Mode").unwrap_or(0) as u32,
                             reset_on_leave: t.bool("ResetOnLeave").unwrap_or(false),
+                            default,
                             spline: t.array("Spline").iter().filter_map(Value::as_f32).collect(),
                         });
                     }

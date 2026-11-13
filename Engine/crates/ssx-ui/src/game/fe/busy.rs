@@ -47,7 +47,9 @@ impl BusyIcon {
         } else if self.music == 1 {
             (1, None)
         } else if self.connecting {
-            // TODO(guess): a port choice — the port's join shows form 1 with "Connecting" where the game's online waits show theirs (+0xAC `TXT_LOADING_ACCT_STATUS`, +0xA8 `TXT_LE_RESULTS_UPLOAD_MSG_2`, after the music menu's and before the loading count); settle: none (the console game joins no server of the port's).
+            // PORT(choice): the port's join shows form 1 with "Connecting" where the game's online waits show theirs
+            // (+0xAC `TXT_LOADING_ACCT_STATUS`, +0xA8 `TXT_LE_RESULTS_UPLOAD_MSG_2`, after the music menu's and before
+            // the loading count); the console game joins no server of the port's.
             (1, Some("TXT_AVA_CONNECTING_BUSY"))
         } else if self.music != 0 || self.counts.iter().sum::<u32>() == 0 {
             (0, None)

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use glam::{Quat, Vec3};
 use ssx_assets::career::geotags::{RIDE_GEOTAGS, geotag_key, pickup_value};
+use ssx_assets::career::random::GameRandom;
 use ssx_assets::track_objects::Placement;
 use ssx_assets::track_objects::geotags::{GeotagController, offline_tier};
 use ssx_assets::vault_db::{fnv1, with_track_db};
@@ -11,12 +12,10 @@ use ssx_formats::csvdb::Geotag;
 use ssx_lua::game::controllers::{Controller, ControllerWorld, Phase, Track, TrackCall};
 use ssx_lua::game::objectives::Name;
 
-use crate::session::bots::Mt19937;
 use crate::triggers::{IG_PLAYER, PLAYER_TOUCH_RADIUS, TriggerVolume, TriggerVolumeRecord};
 
 pub const MIN_SPACING_M: i32 = 100;
 
-// TODO(guess): the game draws from its global generator (0x831500D0, time-seeded, shared): which geotags a crowded track keeps is random per play; the port's own generator seeded with 1 (`ride_sim --geotag-seed`, `SSX_GEOTAG_SEED`); settle: none — the game's choice is not reproducible.
 pub const DEFAULT_GEOTAG_SEED: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,7 +26,12 @@ pub struct GeotagRecord {
     pub tier: usize,
 }
 
-pub fn place(rows: &[Geotag], track_key: u32, collected: impl Fn(u64) -> bool, rng: &mut Mt19937) -> Vec<GeotagRecord> {
+pub fn place(
+    rows: &[Geotag],
+    track_key: u32,
+    collected: impl Fn(u64) -> bool,
+    rng: &mut dyn GameRandom,
+) -> Vec<GeotagRecord> {
     let mut list = records(rows, track_key, collected);
     thin(&mut list, RIDE_GEOTAGS, MIN_SPACING_M, rng);
     list
@@ -47,7 +51,7 @@ pub fn records(rows: &[Geotag], track_key: u32, collected: impl Fn(u64) -> bool)
         .collect()
 }
 
-pub fn thin(list: &mut Vec<GeotagRecord>, max: usize, spacing: i32, rng: &mut Mt19937) {
+pub fn thin(list: &mut Vec<GeotagRecord>, max: usize, spacing: i32, rng: &mut dyn GameRandom) {
     let d2 = (spacing.wrapping_mul(spacing) as u32) as f32;
     let mut i = 0;
     while i < list.len() {
@@ -163,7 +167,7 @@ pub struct GeotagRun {
 }
 
 impl GeotagRun {
-    pub fn new(data: Arc<GeotagData>, collected: impl Fn(u64) -> bool, rng: &mut Mt19937) -> Self {
+    pub fn new(data: Arc<GeotagData>, collected: impl Fn(u64) -> bool, rng: &mut dyn GameRandom) -> Self {
         let records = place(&data.rows, data.track_key, collected, rng);
         let entities = records
             .into_iter()
@@ -312,6 +316,7 @@ impl ControllerWorld for GeotagWorld<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ssx_assets::career::random::Mt19937;
 
     const SET: &str = r#"
 local s = CreateStateSet( "GeoCache" )

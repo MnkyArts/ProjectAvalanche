@@ -69,7 +69,11 @@ pub fn campaign_fields(cx: &mut Ctx, o: &Value, campaign: Option<(bool, String, 
     }
 }
 
-pub fn death_body(values: &mut UiValues, loc: &mut Localization, course_mm: i64, descent_mm: u32) {
+pub fn death_body(values: &mut UiValues, loc: &mut Localization, course_mm: i64, descent_mm: u32, free_ride: bool) {
+    if free_ride {
+        values.set_str(id::RESULT_DEATH_BODY, String::new());
+        return;
+    }
     let left = course_mm - i64::from(descent_mm);
     let d = loc.distance_long(left as f32 as f64 / 1000.0);
     let body = loc.format("TXT_RESULTS_DEATH_BODY", &[&d]);

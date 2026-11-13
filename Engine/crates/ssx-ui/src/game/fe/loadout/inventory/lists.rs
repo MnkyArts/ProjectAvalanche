@@ -7,6 +7,14 @@ pub(super) const ICON_NONE: &str = "assets/equipmentIcons/none.dds";
 pub(super) const ICON_MISSING: &str = "assets/equipmentIcons/missingIcon.dds";
 pub(super) const MYSTERY_ICON: &str = "assets/equipmentIcons/mystery.dds";
 
+#[derive(Clone, Copy)]
+pub(super) struct ListInputs<'a> {
+    pub db: &'a CareerDb,
+    pub profile: &'a Profile,
+    pub drop: Option<&'a DropInfo>,
+    pub ctx: &'a StoreContext,
+}
+
 impl Inventory {
     pub fn ui_item(
         &self,
@@ -37,9 +45,9 @@ impl Inventory {
                 .and_then(|c| c.portrait.as_ref())
                 .filter(|p| p.namespace() != ssx_content::BASE_NAMESPACE)
                 .and_then(ssx_assets::content::textures::ui_path_of);
-            // TODO(guess): a package's rider shows its one portrait where the disc composes the locked picture or the
-            // rider in its last suit (jacket + pants pictures by the suit's look ids, 0x8248D2D0…0x8248D5D0); a package
-            // has no per-suit pictures, and no record field names them yet.
+            // PORT(choice): a package's rider shows its one portrait (a package has no per-suit pictures, and no record
+            // field names them yet); the disc composes the locked picture or the rider in its last suit (jacket + pants
+            // pictures by the suit's look ids, 0x8248D2D0…0x8248D5D0).
             if let Some(path) = package_portrait {
                 u.asset = path;
                 u.secondary.clear();
@@ -117,6 +125,17 @@ impl Inventory {
             let (level, percent) = Self::rider_level(db, profile, rec.key);
             u.level = level + 1;
             u.level_progress = percent;
+            if rec.owned {
+                let stats = profile.riders.get(&rec.key).cloned().unwrap_or_default();
+                if let Some((_, price)) = ssx_assets::career::profile::level_purchase_tables(
+                    &stats,
+                    &db.progression.level_thresholds,
+                    &db.progression.level_prices,
+                ) {
+                    u.cost = price;
+                    u.flags |= flag::LEVEL_PURCHASEABLE;
+                }
+            }
             u.description =
                 db.riders.iter().find(|r| r.key == rec.key).map(|r| loc.text(&r.description)).unwrap_or_default();
         } else {
@@ -185,7 +204,6 @@ impl Inventory {
         out
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn build_lists(
         &mut self,
         db: &CareerDb,
@@ -195,9 +213,53 @@ impl Inventory {
         ctx: &StoreContext,
         kind: i64,
     ) {
-        self.owned_list.clear();
-        self.store_list.clear();
+        self.category_lists(ListInputs { db, profile, drop, ctx }, loc, kind, false);
+    }
+
+    pub fn refresh_lists(
+        &mut self,
+        db: &CareerDb,
+        profile: &Profile,
+        loc: &mut Localization,
+        drop: Option<&DropInfo>,
+        ctx: &StoreContext,
+        kind: i64,
+    ) {
+        self.category_lists(ListInputs { db, profile, drop, ctx }, loc, kind, kind != RIDER);
+    }
+
+    pub fn put_bought_first(
+        &mut self,
+        db: &CareerDb,
+        profile: &Profile,
+        loc: &mut Localization,
+        drop: Option<&DropInfo>,
+        kind: i64,
+        bought: (u32, u8),
+    ) {
+        if !(0..KINDS as i64).contains(&kind) {
+            return;
+        }
+        let Some(rec) = self.record(db, profile, loc, bought.0, bought.1) else { return };
+        let bit = |t: i64| if (0..32).contains(&t) { 1u32 << t } else { 0 };
+        if (self.worn_gear | self.gear_mask) & bit(rec.slot) != 0 {
+            return;
+        }
+        let item = self.ui_item(db, profile, loc, drop, &rec);
+        self.owned_list.insert(0, item);
+    }
+
+    fn category_lists(&mut self, s: ListInputs, loc: &mut Localization, kind: i64, refresh: bool) {
+        let ListInputs { db, profile, drop, ctx } = s;
+        if !refresh {
+            self.owned_list.clear();
+            self.store_list.clear();
+        }
         self.inventory_list.clear();
+        self.store.clear_shown_special();
+        if !refresh && let Some(k) = usize::try_from(kind).ok().filter(|&k| k < KINDS) {
+            self.store.drop_expired_specials(k, self.now_ms);
+        }
         let mut keys: Vec<(u32, u8)> = self.fixed_shown(db, profile, drop, kind).into_iter().map(|k| (k, 0)).collect();
         if kind != RIDER {
             keys.extend(self.generated_shown(db, profile, kind, ctx).into_iter().map(|k| (k, 1)));
@@ -213,7 +275,7 @@ impl Inventory {
             let over_level = rec.kind != RIDER && self.level_limit != -1 && self.level_limit < rec.level;
             let equipped =
                 (0..KINDS as i64).contains(&kind) && self.equipped[kind as usize].contains(&(rec.key, rec.src));
-            if !worn && !over_level {
+            if !refresh && !worn && !over_level {
                 if !rec.owned {
                     let gear_ok = rec.kind != 2 || (ctx.gear_types | ctx.required_gear) & bit(rec.slot) != 0;
                     let boost_ok = rec.kind != 3 || item.sort >= 1;
@@ -234,10 +296,15 @@ impl Inventory {
                 self.inventory_list.push(it);
             }
         }
-        let by_value = |a: &UiItem, b: &UiItem| (b.sort, b.rarity).cmp(&(a.sort, a.rarity));
         if kind != RIDER {
-            self.owned_list.sort_by(by_value);
-            self.inventory_list.sort_by(by_value);
+            let mut owned = std::mem::take(&mut self.owned_list);
+            if refresh {
+                self.reread(s, loc, kind, &mut owned, true);
+            } else {
+                self.order_list(db, profile, loc, drop, kind, &mut owned);
+            }
+            self.owned_list = owned;
+            self.inventory_list.sort_by(super::order::by_value);
             let with_empty = matches!(kind, 2..=4);
             self.owned_list.truncate(if with_empty { 6 } else { 7 });
             if with_empty && let Some(rec) = self.record(db, profile, loc, fnv1(EMPTY[kind as usize].as_bytes()), 0) {
@@ -245,11 +312,18 @@ impl Inventory {
                 self.owned_list.push(e.clone());
                 self.inventory_list.push(e);
             }
-            self.store_list.sort_by(by_value);
-            if kind == 2
-                && let Some(slot) = drop.and_then(DropInfo::main_gear)
+            let mut store = std::mem::take(&mut self.store_list);
+            if refresh {
+                self.reread(s, loc, kind, &mut store, false);
+            } else {
+                self.order_list(db, profile, loc, drop, kind, &mut store);
+            }
+            self.store_list = store;
+            self.build_store_front(s, loc, kind, refresh);
+            if let Some(k) = usize::try_from(kind).ok().filter(|&k| k < KINDS)
+                && let Some(front) = self.store_list.first().filter(|u| u.has(flag::SPECIAL))
             {
-                self.offer_main_gear(db, profile, loc, drop, ctx, slot);
+                self.store.show_special(k, front.key);
             }
             self.store_list.truncate(4);
             let equipped = self.equipped[kind as usize].clone();
@@ -258,31 +332,22 @@ impl Inventory {
                     it.flags |= flag::EQUIPPED;
                 }
             }
+        } else {
+            self.owned_list.sort_by(super::order::by_value);
         }
         self.survival = self.survival_score(db, profile, drop);
         self.inventory_size = Self::inventory_size(db, profile);
     }
 
-    fn offer_main_gear(
-        &mut self,
-        db: &CareerDb,
-        profile: &Profile,
-        loc: &mut Localization,
-        drop: Option<&DropInfo>,
-        ctx: &StoreContext,
-        slot: i64,
-    ) {
-        if let Some(i) = self.store_list.iter().position(|u| u.slot == slot) {
-            let it = self.store_list.remove(i);
-            self.store_list.insert(0, it);
-            return;
-        }
-        let level = if ctx.level < self.level_limit { ctx.level } else { self.level_limit };
-        let req = Request { level, slot, ..Request::NORMAL };
-        let Some(id) = self.store.generate(&self.data, ctx, 2, &req, self.now_ms) else { return };
-        if let Some(rec) = self.record(db, profile, loc, id, 1) {
-            let item = self.ui_item(db, profile, loc, drop, &rec);
-            self.store_list.insert(0, item);
+    fn reread(&self, s: ListInputs, loc: &mut Localization, kind: i64, list: &mut Vec<UiItem>, owned: bool) {
+        let ListInputs { db, profile, drop, .. } = s;
+        let old = std::mem::take(list);
+        for u in old {
+            let Some(rec) = self.record(db, profile, loc, u.key, u.src) else { continue };
+            let keep = if owned { rec.owned && !Self::is_empty_item(kind, rec.key, rec.src) } else { !rec.owned };
+            if keep {
+                list.push(self.ui_item(db, profile, loc, drop, &rec));
+            }
         }
     }
 

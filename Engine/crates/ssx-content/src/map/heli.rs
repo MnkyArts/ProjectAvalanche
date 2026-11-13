@@ -3,7 +3,9 @@ use super::MapDefinition;
 pub const HELI_CELL: f32 = 10.0;
 pub const HELI_FILL_BELOW: f32 = 20.0;
 pub const MAX_HELI_GRID_CELLS: usize = 1 << 18;
-// TODO(guess): a port cap of 2²⁴ visits (64 per cell of a full 2¹⁸-cell grid; the template's two-triangle slope visits 4 160, a disc track's cage terrain a few per cell); settle: none on the disc (the grids were made offline) — a measurement of the largest honest map's visits.
+// PORT(choice): a port cap of 2²⁴ visits (64 per cell of a full 2¹⁸-cell grid; the template's two-triangle slope visits
+// 4 160, a disc track's cage terrain a few per cell); tuning: a measurement of the largest honest map's visits; nothing
+// on the disc (the grids were made offline).
 pub const MAX_HELI_GRID_VISITS: u64 = 1 << 24;
 
 #[derive(Clone, Debug, PartialEq)]

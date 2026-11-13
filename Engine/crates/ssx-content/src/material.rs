@@ -472,11 +472,11 @@ pub fn from_gltf(model: &ContentId, m: &ModelMaterial, slot: usize) -> (Material
         }
     }
     let mut floats = BTreeMap::new();
-    // TODO(guess): a glTF metallic-roughness material on the game's Phong family: roughness r → α = r², the Blinn
+    // PORT(choice): a glTF metallic-roughness material on the game's Phong family: roughness r → α = r², the Blinn
     // exponent 2/α² − 2 halved twice for Phong's reflect form (clamped 1…512) as specularEccentricity; the reflectance
     // at normal incidence F0 = 0.04 (dielectric) mixed to the base colour's luma by metallic, its square root as
-    // specularIntensity (the game squares specularIntensity · specular.g); no glow. No mapping is in the game; settle:
-    // fit the two on renders of the glTF sample materials against a reference PBR renderer.
+    // specularIntensity (the game squares specularIntensity · specular.g); no glow; tuning: fit the two on renders of
+    // the glTF sample materials against a reference PBR renderer; no mapping is in the game.
     let alpha = (m.roughness.clamp(0.0, 1.0) * m.roughness.clamp(0.0, 1.0)).max(1e-3);
     floats.insert("specularEccentricity".to_string(), ((2.0 / (alpha * alpha) - 2.0) / 4.0).clamp(1.0, 512.0));
     let [r, g, b, _] = m.base_colour;

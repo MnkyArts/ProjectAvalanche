@@ -8,8 +8,9 @@ use thiserror::Error;
 pub const KNOWN_SERVERS_FILE: &str = "known_servers.txt";
 
 const HEADER: &str = "Project Avalanche known servers v1";
-// TODO(guess): 10 000 servers (1 MiB holds them at about 90 bytes a line); settle: the direct connects players make
-// once servers are public (phase 5); a full file is refused with a message, never trimmed.
+// PORT(choice): 10 000 servers (1 MiB holds them at about 90 bytes a line); tuning: the direct connects players make
+// once servers are public (phase 5); a full file is refused with a message, never trimmed; the original has no
+// real-time multiplayer.
 const MAX_FILE: u64 = 1 << 20;
 pub const MAX_KNOWN_SERVERS: usize = 10_000;
 const MAX_ADDRESS: usize = 262;

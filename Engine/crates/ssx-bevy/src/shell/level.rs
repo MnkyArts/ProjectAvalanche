@@ -59,11 +59,13 @@ pub struct RideOptions {
     pub air_input: Option<Vec2>,
     pub grab: Option<Vec2>,
     pub tweak: bool,
+    pub shoulders: Option<[bool; 4]>,
     pub boost: bool,
     pub boost_meter: f32,
     pub fly_camera: bool,
     pub screenshot_steps: Option<u32>,
     pub event_key: Option<u32>,
+    pub free_ride: bool,
     pub collected_geotags: Vec<u64>,
     pub game: bool,
     pub classic: bool,
@@ -207,7 +209,7 @@ impl LevelData {
         let heli = helicopter::load_level(root, Some(&name), ride.as_ref().and_then(ride::RideLoad::heli_intro));
         let ghosts = if ride.as_ref().is_some_and(|r| {
             let session = &r.ride().session;
-            !ssx_physics::event::shows_explore_ghosts(session.event.setup.event_type, session.bots.is_some())
+            session.event.setup.free_ride || !ssx_physics::event::shows_explore_ghosts(session.event.setup.event_type)
         }) {
             None
         } else {
@@ -447,6 +449,7 @@ pub(super) fn ride_setup(
         air_input: cli.air_input,
         grab: cli.grab,
         tweak: cli.tweak,
+        shoulders: cli.shoulders,
         boost: cli.boost,
         boost_meter: cli.boost_meter,
         screenshot_steps: cli.screenshot_steps,
@@ -455,6 +458,7 @@ pub(super) fn ride_setup(
         fly_camera: cli.fly_camera,
         load_secs: w.load_secs,
         event_key: cli.event_key,
+        free_ride: cli.free_ride,
         collected_geotags: cli.collected_geotags.clone(),
         game: cli.game,
         classic: cli.classic,

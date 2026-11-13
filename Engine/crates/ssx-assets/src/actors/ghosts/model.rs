@@ -39,7 +39,7 @@ pub(crate) struct PartRef {
     pub material: Material,
 }
 
-pub(crate) fn part_refs(db: &Db<'_>, class: u32, key: u32) -> Result<Vec<PartRef>> {
+pub(crate) fn part_refs(db: &Db, class: u32, key: u32) -> Result<Vec<PartRef>> {
     let mut out = Vec::new();
     let Some(field) = db.field(class, key, FIELD_MESHES)? else { return Ok(out) };
     for r in refs(&field.data).into_iter().filter(|r| r.collection != 0) {

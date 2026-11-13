@@ -9,8 +9,8 @@ use ssx_net_proto::{ServerChat, TICK_HZ};
 
 use crate::systems::{Bridge, Lifecycle};
 
-// TODO(guess): 5 s, the time to read the results table (the game's own results screen waits for a button); settle: the
-// results screen's use in a stopping server.
+// PORT(choice): 5 s, the time to read the results table; tuning: the results screen's use in a stopping server; the
+// original has no dedicated server (the game's own results screen waits for a button).
 pub const RESULTS_SHOWN: Duration = Duration::from_secs(5);
 const MARGIN: Duration = Duration::from_secs(2);
 

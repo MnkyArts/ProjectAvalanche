@@ -351,7 +351,11 @@ pub fn route_ui_drops(big_root: &Path, cols: &[Collection], decoded: &mut [Decod
 }
 
 pub fn ghost_db_text(big_root: &Path) -> std::io::Result<String> {
-    let text = std::fs::read_to_string(big_root.join(GHOST_DB))?;
+    let text = crate::data_roots::read(big_root, "data/common/ghosts/ghostdb.csv")
+        .and_then(|b| {
+            String::from_utf8(b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        })
+        .or_else(|_| std::fs::read_to_string(big_root.join(GHOST_DB)))?;
     let content = GameContent::of(big_root);
     if !content.packages_provide(Kind::Event) {
         return Ok(text);

@@ -6,9 +6,12 @@ use ssx_assets::setup::DiscCheck;
 use crate::art::{self, Gallery};
 use crate::catalog::{self, DropCache, Rider};
 use crate::command::{self, Invocation};
+use crate::dlc_list::DlcPage;
 use crate::jobs::{self, Background, SetupJob, Viewer};
 use crate::mod_list::ModsPage;
 use crate::settings::Settings;
+use crate::tu_list::TuPage;
+use crate::tuner_page::TunerPage;
 use crate::ui::{ExtrasTab, MenuItem, ModsTab, Page, SettingsTab};
 use crate::update::Update;
 
@@ -23,12 +26,24 @@ pub struct Launcher {
     pub data_state: ssx_assets::folder::State,
     pub data_ready: bool,
     pub data_disc: Option<String>,
+    pub languages: Vec<(&'static str, &'static str)>,
     pub page: Page,
     pub cursor: MenuItem,
     pub settings_tab: SettingsTab,
     pub extras_tab: ExtrasTab,
     pub mods_tab: ModsTab,
     pub mods: ModsPage,
+    pub dlc: DlcPage,
+    pub tuner: TunerPage,
+    pub tu: TuPage,
+    pub app_dir: PathBuf,
+    pub save_path: PathBuf,
+    pub save_exists: bool,
+    pub files_frame: Option<u64>,
+    pub save_synced: bool,
+    pub dlc_root: PathBuf,
+    pub tuner_root: PathBuf,
+    pub tu_root: PathBuf,
     pub host: crate::host::HostPage,
     pub last_page: Page,
     pub update: Update,
@@ -45,6 +60,7 @@ pub struct Launcher {
     pub started_game: bool,
     pub displays: crate::display::Displays,
     pub settings_save: crate::settings_flow::SettingsSave,
+    pub start_after_save: Option<(Invocation, bool)>,
     pub launch_error: Option<String>,
     pub show_command: bool,
     pub screenshot: Option<ScreenshotPlan>,
@@ -58,6 +74,7 @@ pub struct Launcher {
     pub link_status: Option<crate::link_handler::Status>,
     pub forced_hover: Option<String>,
     pub scripted_keys: std::collections::VecDeque<(egui::Key, bool)>,
+    pub scroll: f32,
     pub window_pixels: Option<[f32; 2]>,
     pub frame: u64,
     pub timing: Option<std::time::Instant>,
@@ -70,8 +87,8 @@ fn program_missing() -> Vec<&'static str> {
     crate::update::install::install_dir().map(|dir| crate::update::install::missing(&dir)).unwrap_or_default()
 }
 
-pub fn art_request(settings: &Settings) -> art::Request {
-    art::Request { app_dir: crate::settings::app_dir(), game_data: settings.data_ready().then(|| settings.game_data()) }
+pub fn art_request(settings: &Settings, ready: bool) -> art::Request {
+    art::Request { app_dir: crate::settings::app_dir(), game_data: ready.then(|| settings.game_data()) }
 }
 
 impl Launcher {
@@ -81,13 +98,17 @@ impl Launcher {
         screenshot: Option<PathBuf>,
         gallery: Gallery,
         auto_update: bool,
+        data_state: ssx_assets::folder::State,
     ) -> Self {
         gallery.attach(ctx);
+        let app_dir = crate::settings::app_dir();
+        let save_path = crate::command::save_path_in(&app_dir);
         let mut app = Self {
             saved: settings.clone(),
             data_state: ssx_assets::folder::State::Missing,
             data_ready: false,
             data_disc: None,
+            languages: Vec::new(),
             settings,
             page: Page::Play,
             cursor: MenuItem::Page(Page::Play),
@@ -95,6 +116,17 @@ impl Launcher {
             extras_tab: ExtrasTab::default(),
             mods_tab: ModsTab::default(),
             mods: ModsPage::default(),
+            dlc: DlcPage::default(),
+            tuner: TunerPage::default(),
+            tu: TuPage::default(),
+            save_exists: save_path.is_file(),
+            save_path,
+            files_frame: None,
+            save_synced: true,
+            dlc_root: DlcPage::root(&app_dir),
+            tuner_root: TunerPage::root(&app_dir),
+            tu_root: TuPage::root(&app_dir),
+            app_dir,
             host: crate::host::HostPage::default(),
             last_page: Page::Play,
             update: Update::Idle,
@@ -111,6 +143,7 @@ impl Launcher {
             started_game: false,
             displays: Default::default(),
             settings_save: Default::default(),
+            start_after_save: None,
             launch_error: None,
             show_command: false,
             screenshot: screenshot.map(|path| ScreenshotPlan { path, requested: false }),
@@ -124,12 +157,16 @@ impl Launcher {
             link_status: None,
             forced_hover: None,
             scripted_keys: Default::default(),
+            scroll: 0.0,
             window_pixels: None,
             frame: 0,
             timing: None,
         };
-        app.read_data_state();
+        app.set_data_state(data_state);
         app.refresh_mods(ctx);
+        app.refresh_dlc(ctx);
+        app.refresh_tuner(ctx);
+        app.refresh_tu(ctx);
         if app.data_ready {
             app.refresh_catalog();
         } else if let Some(iso) = app.settings.iso.clone().filter(|p| p.is_file()) {
@@ -166,16 +203,21 @@ impl Launcher {
         self.read_data_state();
         if self.data_ready {
             self.refresh_catalog();
-            self.gallery.restart(art_request(&self.settings));
+            self.gallery.restart(art_request(&self.settings, self.data_ready));
         }
     }
 
     pub fn read_data_state(&mut self) {
+        self.set_data_state(self.settings.data_state());
+    }
+
+    fn set_data_state(&mut self, state: ssx_assets::folder::State) {
         let data = self.settings.game_data();
-        self.data_state = ssx_assets::folder::state(&data);
-        self.data_ready = self.data_state.playable();
+        self.data_ready = state.playable();
+        self.data_state = state;
         self.data_disc =
             ssx_assets::setup::read_marker(&data).and_then(|m| m["fingerprint"].as_str().map(str::to_owned));
+        self.languages = crate::language::available(&self.settings.big_root());
     }
 
     pub fn running(&self) -> bool {
@@ -193,10 +235,14 @@ impl Launcher {
             });
             return;
         }
+        if self.start_after_saving(ctx, inv, game) {
+            return;
+        }
         match Viewer::spawn(ctx, inv, if game { jobs::GAME_LOG } else { jobs::VIEWER_LOG }) {
             Ok(v) => {
                 (self.viewer, self.started_game) = (Some(v), game);
                 self.displays.synced = !game;
+                self.save_synced = false;
             }
             Err(e) => self.launch_error = Some(format!("could not start {}: {e}", inv.program.display())),
         }

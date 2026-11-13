@@ -364,10 +364,6 @@ impl TrickState {
     }
 
     pub(super) fn update_virtual_stick(&mut self, t: &TrickTuning, inp: &TrickInput, dt: f32) {
-        if self.classic {
-            (self.virtual_stick, self.virtual_stick_timer) = (Vec2::ZERO, -1.0);
-            return;
-        }
         self.virtual_stick_timer -= dt;
         let v = &mut self.virtual_stick;
         let pressed = if inp.y {

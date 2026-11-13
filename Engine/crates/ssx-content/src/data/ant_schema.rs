@@ -5,11 +5,10 @@ use ssx_formats::ant::{Guid, Object, Schema, Stream, TypeDesc, Value, builtin};
 use super::ant::{HEADER, MAX_NESTING, chain};
 use super::schema::{Class, FieldSchema, FieldType, RecordSchema, Scalar};
 
-// TODO(guess): a port choice — a package's float may lie within 4x of the disc's values of its field (sign and a zero
-// bound kept); the game checks nothing (it reads what the bundle holds) and the readers of the 1985 float fields were
-// not traced for their own limits; the fuzz target `data_ride` rode 35 min (21 392 inputs) of accepted records
-// without a NaN or a panic. settle: each field's bound from the code that reads it (ssx-physics params/*,
-// score/scoring/*).
+// PORT(choice): a package's float may lie within 4x of the disc's values of its field (sign and a zero bound kept); the
+// readers of the 1985 float fields were not traced for their own limits; the fuzz target `data_ride` rode 35 min (21
+// 392 inputs) of accepted records without a NaN or a panic; tuning: each field's bound from the code that reads it
+// (ssx-physics params/*, score/scoring/*); the game checks nothing (it reads what the bundle holds).
 pub const FLOAT_FACTOR: f64 = 4.0;
 pub const LIST_FACTOR: usize = 2;
 const MAX_TEXTS: usize = 4096;
@@ -171,9 +170,10 @@ impl Ranges {
     }
 }
 
-// TODO(guess): a port choice — the 244 integer fields other than these two accept only the disc's values of their
-// field (an integer may index a table or pick a branch; two readers traced: banks.rs TrickComboMaxCount, jump.rs
-// obstacle_fan 0x82CE128C). settle: each integer's reader traced for the values it handles.
+// PORT(choice): the 244 integer fields other than these two accept only the disc's values of their field (an integer
+// may index a table or pick a branch; two readers traced: banks.rs TrickComboMaxCount, jump.rs obstacle_fan
+// 0x82CE128C); tuning: each integer's reader traced for the values it handles; the game checks nothing (it reads what
+// the bundle holds).
 pub const INT_RANGES: &[(&str, &str, i64, i64, &str)] = &[
     (
         "ScoringSceneOpAsset",
@@ -362,11 +362,11 @@ impl Builder<'_> {
         }
     }
 
-    // TODO(guess): a port choice — a package's reference may name only an asset the disc names at the same field of
-    // the same class, of the class its own names; the port's readers were written for the disc's references and one
-    // checks which asset it gets (world/surface.rs BoardChatter: FLT_carving_state_GrindBlendValue …, found by the
-    // data_ride fuzz target: another blackboard variable of the same class failed the load). settle: each reference
-    // field's reader traced for the assets it handles.
+    // PORT(choice): a package's reference may name only an asset the disc names at the same field of the same class, of
+    // the class its own names; the port's readers were written for the disc's references and one checks which asset it
+    // gets (world/surface.rs BoardChatter: FLT_carving_state_GrindBlendValue …, found by the data_ride fuzz target:
+    // another blackboard variable of the same class failed the load); tuning: each reference field's reader traced for
+    // the assets it handles; the game loads no packages.
     fn guid(&self, path: &str, v: &Value) -> (FieldType, String) {
         let st = self.stat(path);
         let null = st.is_none_or(|s| s.null);

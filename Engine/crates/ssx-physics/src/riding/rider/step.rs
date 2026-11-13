@@ -115,6 +115,7 @@ pub fn step_with_trigger(
     if dt.abs() <= TINY {
         return StepEvents::default();
     }
+    s.audio_tags.clear();
     let t = &w.tuning;
     if let Some(sig) = x.graph.as_ref().and_then(|g| g.signature()) {
         s.tricks.signature = sig;
@@ -122,8 +123,14 @@ pub fn step_with_trigger(
     resolve_item_flags(s, w);
     s.impacts = 0;
     let in_air = s.in_air();
-    let stick = input.stick();
-    let l2_last = s.grind.button;
+    let raw_stick = input.stick();
+    s.pad_stick = match s.reverse_camera {
+        Some(camera) => reverse_camera_stick(raw_stick, camera, s.alignment, s.kin.fwd, s.traj_velocity),
+        None => raw_stick,
+    };
+    let input = &input.with_stick(s.pad_stick);
+    let stick = s.pad_stick;
+    let l2_last = s.grind.l2_hold;
     let sa_next = grind::dispatch(
         &mut s.grind,
         &grind::DispatchState {
@@ -138,11 +145,11 @@ pub fn step_with_trigger(
             dt,
         },
     );
-    s.grind.button = s.grind.pad_l2;
+    (s.grind.button, s.grind.l2_hold) = (s.grind.pad_l2, s.grind.pad_l2_hold);
     (s.wingsuit.hold_prev, s.wingsuit.hold) = (s.wingsuit.hold, s.wingsuit.pad_r1);
     s.grind.stick = crate::steering::stick_angle_and_magnitude(stick);
     let cached = (s.traj_velocity, s.traj_cached, s.traj_cached_prev);
-    let start = StepStart { velocity: s.traj_velocity, wipeout: s.landing.tumbling };
+    let start = StepStart { velocity: s.traj_velocity, wipeout: s.landing.tumbling, raw_stick };
     if let Some(ls) = s.start.as_mut() {
         ls.nis_scene_op();
     }
@@ -180,17 +187,8 @@ pub fn step_with_trigger(
             dt,
         },
     );
-    if s.tricks.classic {
-        s.tricks.classic_boost_ticks = crate::tricks::classic_boost_ticks(s.tricks.classic_boost_ticks, tricks.x, dt);
-    } else {
-        s.tricks.classic_boost_ticks = 0.0;
-    }
     let boost_request = BoostRequest {
-        requested: if s.tricks.classic {
-            crate::tricks::classic_boost_requested(s.tricks.classic_boost_ticks)
-        } else {
-            tricks.tweak
-        },
+        requested: crate::tricks::boost_requested(s.tricks.classic, tricks),
         in_air,
         player_speed: s.player_speed,
         crashed: carving_crashed(s, in_air),
@@ -198,7 +196,9 @@ pub fn step_with_trigger(
     };
     s.boost.update(&mut s.score.boost, &w.props, &boost_request, dt);
     s.boost.modifier = if s.tricks.classic { if tricks.x { 1.0 } else { 0.0 } } else { r2.clamp(0.0, 1.0) };
-    let recovery_input = (s.jump.held && !input.jump) || (tricks.tweak && s.score.boost > 0.0);
+    let a_release = s.jump.held && !input.jump;
+    let recovery_input =
+        crate::tricks::wipeout_recovery_input(prewind_release, a_release, s.tricks.classic, tricks, s.score.boost);
     s.jump.update(input.jump, prewind_release, s.close.is_very_close, dt, &t.player);
     s.jump.update_compression(input.jump, tricks.right_stick.y, dt, &t.player);
     if s.death.is_alive() && !in_air {
@@ -268,7 +268,7 @@ pub fn step_with_trigger(
             let go = GoInputs {
                 a_press: input.jump && !a_prev,
                 right_stick: tricks.right_stick,
-                get_going: get_going_gesture(stick, s.stick_prev),
+                get_going: get_going(s.reverse_camera.is_some(), raw_stick, s.stick_prev),
             };
             return level_start_step(s, w, (input, tricks, &go), &start, dt, x, sa_next, rider_dead);
         }
@@ -292,7 +292,7 @@ pub fn step_with_trigger(
     if enter_gameplay {
         conduit_init(s, w, dt);
     } else {
-        transition(s, w, stick, dt, x.graph.is_some());
+        transition(s, w, raw_stick, dt, x.graph.is_some());
     }
     if s.state == RideState::Airborne && before != RideState::Airborne && !s.janked.janked && s.heli_trick.is_none() {
         let correcting = matches!(s.landing.uber_recovery, UberRecovery::Hop(h) if h < UBER_RECOVER_HOP_TICKS);
@@ -358,14 +358,17 @@ pub fn step_with_trigger(
     } else {
         s.air_ticks += dt;
     }
+    let mut audio_tags = Vec::new();
     let (dp, root) = match x.graph.as_deref_mut() {
         Some(g) => {
             let physics = step_physics(s.traj_orientation, dp, rig_op_rotation(s, root), simulated);
             g.update_controllers(s, input, tricks, &start, dt, Some(physics));
+            audio_tags = g.take_audio_tags();
             resolve_root_motion(s, g.root_motion(), (dp, root), dt)
         }
         None => (dp, root),
     };
+    s.audio_tags.extend(audio_tags);
     if let Some(g) = s.gameplay.as_mut() {
         if g.tags.update(g.ticks) {
             let mut saved = false;
@@ -410,7 +413,7 @@ pub fn step_with_trigger(
     s.grind.sa = Some(sa_next);
     s.heading = (s.alignment * Vec3::X).try_normalize().unwrap_or(s.heading);
     s.position = s.board_point();
-    s.stick_prev = stick;
+    s.stick_prev = raw_stick;
     StepEvents { rider_dead, race_start }
 }
 
@@ -445,6 +448,7 @@ pub(super) fn level_start_step(
     rider_dead: Option<RiderDead>,
 ) -> StepEvents {
     let rm = &w.tuning.root_motion;
+    s.audio_tags.clear();
     let Some(ls) = s.start.as_mut() else { return StepEvents { rider_dead, ..StepEvents::default() } };
     ls.controller_update(dt, || crate::levelstart::go_pick(rm.random_seed));
     let (phase, idle_pose) = (ls.phase, ls.idle_pose(rm));
@@ -460,15 +464,15 @@ pub(super) fn level_start_step(
         let ws = &mut s.wingsuit;
         match (t.state.as_str(), t.float) {
             ("BLN_State_Wingsuit", false) => {
-                let tag =
-                    crate::tags::BoolTag { value: t.value != 0.0, mode: t.mode, reset_on_leave: t.reset_on_leave };
+                let reset = t.reset_on_leave.then_some(t.default != 0.0);
+                let tag = crate::tags::BoolTag { value: t.value != 0.0, mode: t.mode, reset };
                 let mut saved = ws.signal;
                 tag.on(e, &mut ws.signal, &mut saved);
             }
             ("FLT_Wingsuit_BlendWeight", true) => {
                 let spline = crate::ice_axe::tag_spline(&t.spline, w);
-                let tag =
-                    crate::tags::FloatTag { value: t.value, mode: t.mode, reset_on_leave: t.reset_on_leave, spline };
+                let reset = t.reset_on_leave.then_some(t.default);
+                let tag = crate::tags::FloatTag { value: t.value, mode: t.mode, reset, spline };
                 tag.on(e, &mut ws.handle_weight, &mut ws.handle_saved);
             }
             _ => {}
@@ -489,9 +493,11 @@ pub(super) fn level_start_step(
             }
         }
     };
+    let mut audio_tags = Vec::new();
     let (dp, root) = match x.graph.as_deref_mut() {
         Some(g) => {
             g.update_controllers(s, input, tricks, start, dt, None);
+            audio_tags = g.take_audio_tags();
             if matches!(phase, Phase::Idle { .. }) {
                 (dp, root)
             } else {
@@ -500,6 +506,7 @@ pub(super) fn level_start_step(
         }
         None => (dp, root),
     };
+    s.audio_tags.extend(audio_tags);
     rig_ops(s, w, dp, root, dt);
     s.alignment = s.traj_orientation;
     s.graph = match x.graph.as_deref_mut() {
@@ -516,6 +523,6 @@ pub(super) fn level_start_step(
     s.grind.sa = Some(sa_next);
     s.heading = (s.traj_orientation * Vec3::X).try_normalize().unwrap_or(s.heading);
     s.position = s.board_point();
-    s.stick_prev = input.stick();
+    s.stick_prev = start.raw_stick;
     StepEvents { rider_dead, ..StepEvents::default() }
 }

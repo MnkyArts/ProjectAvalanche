@@ -11,9 +11,9 @@ use crate::bridge::{HeldJoin, JoinQueue, JoinTask, JoinVerdict};
 
 pub const DEFER_BOUND: Duration = ssx_net_proto::join::MAX_HOLD;
 
-// TODO(guess): 3 s; the scripts' thread answers each tick's job, `onPlayerConnecting` runs in the job after the join
-// is put to them (one tick, 33 ms at 30 Hz) unless a script's budget holds the thread; settle: the thread's answer
-// times under phase 4's load with a gamemode's handlers.
+// PORT(choice): 3 s; the scripts' thread answers each tick's job, `onPlayerConnecting` runs in the job after the join
+// is put to them (one tick, 33 ms at 30 Hz) unless a script's budget holds the thread; tuning: the thread's answer
+// times under phase 4's load with a gamemode's handlers; the original runs no mod scripts.
 pub const FIRST_WORD: Duration = Duration::from_secs(3);
 
 enum Answer {

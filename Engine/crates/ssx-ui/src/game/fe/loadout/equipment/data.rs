@@ -228,13 +228,7 @@ pub fn build(
         }
         "dp_limited_time_offer" => {
             let special = eq.store.iter().any(|u| u.has(flag::SPECIAL));
-            let left = eq.inv.as_ref().and_then(|i| {
-                i.store.stock.iter().flatten().filter(|o| o.special).map(|o| o.expires_ms - i.now_ms).max()
-            });
-            Some(Value::str(&match (special, left) {
-                (true, Some(ms)) => offer_clock(ms),
-                _ => String::new(),
-            }))
+            Some(Value::str(&if special { offer_clock(i64::from(eq.offer_ms)) } else { String::new() }))
         }
         "dp_equipment_purchase_result" => Some(Value::Bool(eq.purchase_result)),
         "dp_selected_gear_info" => Some(eq.gear_info.to_value(cx)),

@@ -9,8 +9,8 @@ use ssx_net_proto::icon::{ICON_SIDE, Icon};
 use crate::assets::image::ImageData;
 use crate::avm1::Ctx;
 
-// TODO(guess): 64 icons (a session browses tens of servers; 64 × 36 KiB of pixels); settle: the browser over real
-// lists (how many servers a player selects in a run).
+// PORT(choice): 64 icons (a session browses tens of servers; 64 × 36 KiB of pixels); tuning: the browser over real
+// lists (how many servers a player selects in a run); the original has no server browser.
 pub const MAX_ICONS: usize = 64;
 const ICON_DIR: &str = "ava_server_icons/";
 

@@ -7,7 +7,9 @@ use crate::avm1::value::Value;
 use crate::game::fe::{FeEnv, FrontEnd};
 use crate::game::loc::Localization;
 
-// TODO(guess): a port choice — a server's drop shows the panel's drop fields only (title, peak, event type, difficulty, requirements, warning, time of day), not the player's medal, price or lock (multiplayer plays every drop and changes no career); settle: none (the port's screen).
+// PORT(choice): a server's drop shows the panel's drop fields only (title, peak, event type, difficulty, requirements,
+// warning, time of day), not the player's medal, price or lock (multiplayer plays every drop and changes no career);
+// the port's screen; the original has no server browser.
 pub fn refresh(fe: &mut FrontEnd, env: &mut FeEnv) {
     let drop = selected(&fe.ava.browser).and_then(|e| e.summary()).filter(|s| s.map.is_none()).map(|s| s.drop);
     let same = match (&fe.ava.browser.panel, &drop) {

@@ -332,7 +332,10 @@ pub fn start(world: &mut World, load: LevelLoad) {
         feed.explore.rivals = rows.clone();
         ghosts = ghosts.with_targets(rows);
     }
-    world.resource_mut::<GameUiRes>().set_drop(opts.launch.drop, event_type);
+    let nis = world.get_resource::<Ride>().is_some_and(|r| ssx_ui::game::feed::nis_is_active(&r.state, &r.session));
+    let free_ride =
+        opts.launch.free_ride || world.get_resource::<Ride>().is_some_and(|r| r.session.event.setup.free_ride);
+    world.resource_mut::<GameUiRes>().set_drop(opts.launch.drop, event_type, free_ride, nis);
     world.resource_mut::<GameUiRes>().fe_call(|fe, _| ssx_ui::game::fe::flow::simulation_begins(fe));
     let saved = world.resource::<GameUiRes>().0.fe.as_ref().map_or(-1, |f| f.profile.camera_type());
     info!("level: the profile's camera type (CTYP) {saved}");

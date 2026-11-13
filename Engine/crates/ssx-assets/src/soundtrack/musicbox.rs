@@ -1,10 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
+mod dlc;
 mod package;
 mod posts;
 pub mod selection;
 
+use dlc::MAX_BANK_BYTES;
+pub use dlc::{BankFiles, DlcMusic, music_sets};
 pub use package::{FIRST_PACKAGE_SONG, PackageSongs, SongAudio, SongSwitches};
 pub use posts::{RACE_EVENT_PERIOD_MS, RemixClock, remix};
 pub use selection::{RaceEvent, Session, session};
@@ -84,30 +87,32 @@ pub fn parse_song_info(d: &[u8]) -> Result<Vec<Song>> {
     for x in &mut h {
         *x = r.u32()?;
     }
-    let (size, first) = (h[4] as usize, h[5] as usize);
-    if size != 0x24 {
-        bail!("MBSI record size {size:#x}");
-    }
-    let mut songs = Vec::new();
-    let mut end = d.len();
-    let mut o = first;
-    while o + size <= end {
+    let (count, first) = (h[4] as usize, h[5] as usize);
+    const RECORD: usize = 0x24;
+    first
+        .checked_add(count.checked_mul(RECORD).context("MBSI count")?)
+        .filter(|&e| e <= d.len())
+        .context("MBSI records past the end")?;
+    let mut songs = Vec::with_capacity(count);
+    for i in 0..count {
+        let o = first + i * RECORD;
         r.seek(o)?;
         let id = r.u32()?;
         let mut unk = [0u32; 6];
         for x in &mut unk {
             *x = r.u32()?;
         }
-        let (count, table) = (r.u32()? as usize, r.u32()? as usize);
-        end = end.min(table);
-        let mut info = Vec::with_capacity(count);
-        for p in 0..count {
-            r.seek(table + 8 * p)?;
+        let (pairs, table) = (r.u32()? as usize, r.u32()? as usize);
+        if pairs > 64 {
+            bail!("MBSI record {id:#x}: {pairs} string pairs");
+        }
+        let mut info = Vec::with_capacity(pairs);
+        for p in 0..pairs {
+            r.seek(table.checked_add(8 * p).context("MBSI string table")?)?;
             let (k, v) = (r.u32()? as usize, r.u32()? as usize);
             info.push((cstr(d, k)?, cstr(d, v)?));
         }
         songs.push(Song { id, unk, info });
-        o += size;
     }
     Ok(songs)
 }
@@ -154,18 +159,23 @@ impl RaceType {
     }
 }
 
+struct Bank {
+    bank: SampleBank,
+    data: Vec<u8>,
+    sbs: Arc<Bytes>,
+}
+
 pub struct MusicBox {
     pub songs: Vec<Song>,
     pub selectable: Vec<u32>,
-    pub selections: selection::SelectionData,
+    pub selections: Vec<selection::SelectionData>,
     pub events: EventSystem,
-    pub graffiti: Graffiti,
+    pub graffiti: Vec<Graffiti>,
     pub pools: RepetitionPools,
-    bank: SampleBank,
-    bank_data: Vec<u8>,
-    sbs: Arc<Bytes>,
+    banks: Vec<Bank>,
     pub package: PackageSongs,
     pub package_switches: std::collections::BTreeMap<ssx_content::ContentId, bool>,
+    pub dlc_sets: Vec<String>,
 }
 
 impl MusicBox {
@@ -186,19 +196,101 @@ impl MusicBox {
         let bank = SampleBank::parse(&bank_data)?;
         let sbs_path = find_file(big_root, &rel("music_samples.sbs")).context("music_samples.sbs not found")?;
         let sbs = Arc::new(Bytes::open(&sbs_path)?);
-        Ok(Self {
+        let mut mb = Self {
             songs,
             selectable,
-            selections,
+            selections: vec![selections],
             events,
-            graffiti,
+            graffiti: vec![graffiti],
             pools,
-            bank,
-            bank_data,
-            sbs,
+            banks: vec![Bank { bank, data: bank_data, sbs }],
             package: Default::default(),
             package_switches: Default::default(),
-        })
+            dlc_sets: Vec::new(),
+        };
+        for set in music_sets(big_root) {
+            mb.add_music_set(set);
+        }
+        Ok(mb)
+    }
+
+    fn add_music_set(&mut self, set: DlcMusic) {
+        let source = set.source.clone();
+        let songs = set.songs.len();
+        let mut banks = 0usize;
+        for files in &set.banks {
+            let read = |p: &Path| -> Result<Vec<u8>> {
+                let meta = std::fs::metadata(p).with_context(|| format!("{}", p.display()))?;
+                if !meta.is_file() || meta.len() > MAX_BANK_BYTES {
+                    bail!("{}: not a file of at most {MAX_BANK_BYTES} bytes", p.display());
+                }
+                Ok(std::fs::read(p)?)
+            };
+            let data = match read(&files.sbr) {
+                Ok(d) => d,
+                Err(e) => {
+                    ssx_core::eprintln!(
+                        "musicbox: {}: sample bank {}: {}",
+                        ssx_core::text::shown_max(&source, 160),
+                        ssx_core::text::shown_max(&files.sbr.display().to_string(), 160),
+                        ssx_core::text::shown_max(&format!("{e:#}"), 240)
+                    );
+                    continue;
+                }
+            };
+            let bank = match SampleBank::parse(&data) {
+                Ok(b) => b,
+                Err(e) => {
+                    ssx_core::eprintln!(
+                        "musicbox: {}: sample bank {}: {}",
+                        ssx_core::text::shown_max(&source, 160),
+                        ssx_core::text::shown_max(&files.sbr.display().to_string(), 160),
+                        ssx_core::text::shown_max(&format!("{e:#}"), 240)
+                    );
+                    continue;
+                }
+            };
+            let sbs = match Bytes::open(&files.sbs) {
+                Ok(b) => b,
+                Err(e) => {
+                    ssx_core::eprintln!(
+                        "musicbox: {}: stream {}: {}",
+                        ssx_core::text::shown_max(&source, 160),
+                        ssx_core::text::shown_max(&files.sbs.display().to_string(), 160),
+                        ssx_core::text::shown_max(&format!("{e:#}"), 240)
+                    );
+                    continue;
+                }
+            };
+            self.banks.push(Bank { bank, data, sbs: Arc::new(sbs) });
+            banks += 1;
+        }
+        if banks == 0 {
+            ssx_core::eprintln!(
+                "musicbox: {}: no sample bank opened; its songs are not loaded",
+                ssx_core::text::shown_max(&source, 160)
+            );
+            return;
+        }
+        for song in set.songs {
+            match self.songs.iter_mut().find(|s| s.id == song.id) {
+                Some(old) => *old = song,
+                None => self.songs.push(song),
+            }
+        }
+        self.selectable.extend(set.selectable);
+        self.graffiti.push(set.graffiti);
+        self.selections.push(set.selections);
+        for pool in set.pools.pools {
+            if self.pools.pool(pool.id).is_none() {
+                self.pools.pools.push(pool);
+            }
+        }
+        ssx_core::eprintln!(
+            "musicbox: {}: {songs} songs, one Graffiti list, {banks} sample bank(s)",
+            ssx_core::text::shown_max(&source, 160)
+        );
+        self.dlc_sets.push(source);
     }
 
     pub fn song(&self, id: u32) -> Option<&Song> {
@@ -225,22 +317,27 @@ impl MusicBox {
     }
 
     pub fn duration(&self, id: u32) -> Option<f64> {
-        let sps = Sps::read(&self.sbs, self.sps_offset(id).ok()?).ok()?;
+        let (bank, offset) = self.sps_offset(id).ok()?;
+        let sps = Sps::read(&self.banks.get(bank)?.sbs, offset).ok()?;
         Some(f64::from(sps.header.num_samples) / f64::from(sps.header.sample_rate.max(1)))
     }
 
     pub fn decode_song(&self, id: u32) -> Result<(Vec<f32>, u32, u16)> {
-        let sps = Sps::read(&self.sbs, self.sps_offset(id)?)?;
+        let (bank, offset) = self.sps_offset(id)?;
+        let sps = Sps::read(&self.banks.get(bank).context("bank gone")?.sbs, offset)?;
         let d = ssx_formats::ealayer3_decode::decode_sound(&sps.header, &sps.blocks)?;
         Ok((d.samples, d.sample_rate, u16::from(d.channels)))
     }
 
-    fn sps_offset(&self, id: u32) -> Result<usize> {
-        let s = self.bank.sounds.iter().find(|s| s.id == id).with_context(|| format!("no sound {id:#x}"))?;
-        match self.bank.resolve(&self.bank_data, s)? {
-            SoundRef::Sps { sps_offset } => Ok(sps_offset as usize),
-            SoundRef::SnrSns { .. } => bail!("sound {id:#x} is not an SPS sound"),
+    fn sps_offset(&self, id: u32) -> Result<(usize, usize)> {
+        for (i, b) in self.banks.iter().enumerate() {
+            let Some(s) = b.bank.sounds.iter().find(|s| s.id == id) else { continue };
+            return match b.bank.resolve(&b.data, s)? {
+                SoundRef::Sps { sps_offset } => Ok((i, sps_offset as usize)),
+                SoundRef::SnrSns { .. } => bail!("sound {id:#x} is not an SPS sound"),
+            };
         }
+        bail!("no sound {id:#x} in any sample bank")
     }
 }
 
@@ -306,6 +403,7 @@ struct DiscSong {
     next: usize,
     channels: usize,
     dec: Option<(usize, SectionDecoder)>,
+    sbs: Arc<Bytes>,
 }
 
 const PACKAGE_CHUNK: usize = 1024;
@@ -415,9 +513,12 @@ impl LicensedMusic {
             let source = SongSource::Package(Box::new(stream));
             return Some(SongStream { id, source, buf: Vec::new(), pos: 0, gain: a.gain });
         }
-        let opened = self.mb.sps_offset(id).and_then(|o| Ok(Sps::read(&self.mb.sbs, o)?));
+        let opened = self.mb.sps_offset(id).and_then(|(bank, o)| {
+            let b = self.mb.banks.get(bank).context("bank gone")?;
+            Ok((b.sbs.clone(), Sps::read(&b.sbs, o)?))
+        });
         match opened {
-            Ok(sps) => {
+            Ok((sbs, sps)) => {
                 let blocks = sps
                     .blocks
                     .sections
@@ -428,7 +529,7 @@ impl LicensedMusic {
                 let label = self.mb.song(id).map_or_else(|| format!("sound {id:#x}"), Song::label);
                 self.played.push((id, label));
                 let channels = sps.header.channels as usize;
-                let source = SongSource::Disc(Box::new(DiscSong { blocks, next: 0, channels, dec: None }));
+                let source = SongSource::Disc(Box::new(DiscSong { blocks, next: 0, channels, dec: None, sbs }));
                 Some(SongStream { id, source, buf: Vec::new(), pos: 0, gain: 1.0 })
             }
             Err(e) => {
@@ -576,7 +677,7 @@ impl LicensedMusic {
             if s.pos * 2 >= s.buf.len() {
                 s.buf.clear();
                 s.pos = 0;
-                match Self::refill(s, &self.mb.sbs, &mut self.tmp) {
+                match Self::refill(s, &mut self.tmp) {
                     Refill::More => {}
                     Refill::Behind => {
                         out[f * 2..].fill(0.0);
@@ -594,11 +695,11 @@ impl LicensedMusic {
         }
     }
 
-    fn refill(s: &mut SongStream, sbs: &[u8], tmp: &mut Vec<f32>) -> Refill {
+    fn refill(s: &mut SongStream, tmp: &mut Vec<f32>) -> Refill {
         let id = s.id;
         match &mut s.source {
             SongSource::Disc(d) => {
-                if d.decode_block(id, &mut s.buf, sbs, tmp) {
+                if d.decode_block(id, &mut s.buf, tmp) {
                     Refill::More
                 } else {
                     Refill::End
@@ -625,7 +726,7 @@ impl LicensedMusic {
 }
 
 impl DiscSong {
-    fn decode_block(&mut self, id: u32, buf: &mut Vec<f32>, sbs: &[u8], tmp: &mut Vec<f32>) -> bool {
+    fn decode_block(&mut self, id: u32, buf: &mut Vec<f32>, tmp: &mut Vec<f32>) -> bool {
         let Some(&(offset, section, samples)) = self.blocks.get(self.next) else { return false };
         self.next += 1;
         if self.dec.as_ref().is_none_or(|(x, _)| *x != section) {
@@ -634,7 +735,7 @@ impl DiscSong {
                 Err(_) => return false,
             }
         }
-        let Ok(block) = ssx_formats::eaac::Block::read(sbs, offset) else { return false };
+        let Ok(block) = ssx_formats::eaac::Block::read(&self.sbs, offset) else { return false };
         tmp.clear();
         let Some((_, dec)) = self.dec.as_mut() else { return false };
         let Ok(n) = dec.decode_payload(block.payload, tmp) else {
@@ -665,6 +766,31 @@ mod tests {
 
     fn song(id: u32, level: u32, weight: u32) -> Song {
         Song { id, unk: [1, 1, level, 100, weight, 4], info: Vec::new() }
+    }
+
+    fn one_song(count: usize) -> Vec<u8> {
+        let mut d = b"MBSI".to_vec();
+        for v in [0x0002_0002u32, 0, 0x14, 0, u32::try_from(count).unwrap(), 0x1c] {
+            d.extend(v.to_be_bytes());
+        }
+        d.extend(0xBEu32.to_be_bytes());
+        for v in [1u32, 1, 1, 100, 100, 4, 1, 0x40] {
+            d.extend(v.to_be_bytes());
+        }
+        for v in [0x48u32, 0x4E] {
+            d.extend(v.to_be_bytes());
+        }
+        d.extend(b"Index\0");
+        d.extend(b"101\0");
+        d
+    }
+
+    #[test]
+    fn the_song_tables_header_is_the_record_count() {
+        let songs = parse_song_info(&one_song(1)).unwrap();
+        assert_eq!(songs.len(), 1);
+        assert_eq!((songs[0].id, songs[0].get("Index")), (0xBE, Some("101")));
+        assert!(parse_song_info(&one_song(2)).is_err());
     }
 
     #[test]

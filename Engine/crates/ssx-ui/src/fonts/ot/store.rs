@@ -3,13 +3,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use ssx_formats::gfx::text::Font;
 
-// TODO(guess): a port choice — the store's cap: 64 MiB of converted glyphs (the CJK font's glyphs are 88-byte records,
-// 105 per glyph at the median and 683 at most — about 9 KiB and 59 KiB; every one of its 65 535 glyphs would be 589
-// MiB; a chat line in each of eleven scripts converted 195 glyphs, 515 KiB); settle: none (the original has no
-// fallback fonts; the number bounds a session's memory).
+// PORT(choice): the store's cap: 64 MiB of converted glyphs (the CJK font's glyphs are 88-byte records, 105 per glyph
+// at the median and 683 at most — about 9 KiB and 59 KiB; every one of its 65 535 glyphs would be 589 MiB; a chat line
+// in each of eleven scripts converted 195 glyphs, 515 KiB); the number bounds a session's memory; the original has no
+// fallback fonts.
 pub const STORE_BYTES: usize = 64 << 20;
-// TODO(guess): a port choice — conversions per frame: 256 glyphs (the six files' slowest glyph 49 µs, p99 19 µs in
-// release, example `font_shipped`: at most about 12 ms of a frame, 5 ms at p99); settle: none (port feature).
+// PORT(choice): conversions per frame: 256 glyphs (the six files' slowest glyph 49 µs, p99 19 µs in release, example
+// `font_shipped`: at most about 12 ms of a frame, 5 ms at p99); the original has no fallback fonts.
 pub const FRAME_CONVERSIONS: u32 = 256;
 
 #[derive(Debug)]

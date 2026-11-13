@@ -9,8 +9,9 @@ use ssx_net_proto::master::{EXPIRE_AFTER, Heartbeat, LIST_VERSION, ListedServer,
 use crate::address::{AddressKey, address_key};
 use crate::blocklists::etag;
 
-// TODO(guess): 15 minutes (a server that keeps beating while its ports closed is off the list within a quarter of an
-// hour; FiveM's and MTA's masters check once); settle: the check load of a public master.
+// PORT(choice): 15 minutes (a server that keeps beating while its ports closed is off the list within a quarter of an
+// hour; FiveM's and MTA's masters check once); tuning: the check load of a public master; the original has no master
+// server.
 pub const RECHECK_AFTER: Duration = Duration::from_secs(15 * 60);
 pub const REBUILD_EVERY: Duration = Duration::from_secs(1);
 

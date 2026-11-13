@@ -10,8 +10,8 @@ const MESSAGE_POPUP: &str = "ava_net_message";
 
 const HUB_RETRY_S: f64 = 1.0;
 
-// TODO(guess): 30 s (the quit staging's loading screen and the level's teardown take a few seconds); settle: the
-// longest quit measured on the slowest supported machine.
+// PORT(choice): 30 s (the quit staging's loading screen and the level's teardown take a few seconds); tuning: the
+// longest quit measured on the slowest supported machine; the original has no real-time multiplayer.
 const EQUIPMENT_WAIT_S: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, Default)]

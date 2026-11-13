@@ -417,7 +417,9 @@ impl TutorialManager {
             host.values().set_bool(TRICK_IS_ENABLED, true);
             host.values().set_bool(id::LEADER_IS_ACTIVE, false);
         } else if self.shown && self.published {
-            // TODO(guess): a port choice — this branch waits for a UI update after the one above (the game publishes once per simulation frame; the port can take two steps in a drawn frame); settle: nothing to decode (drop it when the UI publishes once per simulation step).
+            // PORT(choice): this branch waits for a UI update after the one above (the port can take two steps in a
+            // drawn frame), to drop when the UI publishes once per simulation step; nothing to decode: the game
+            // publishes once per simulation frame.
             host.values().set_bool(TRICK_IS_DIRTY, false);
             host.values().set_bool(TRICK_SUCCESS, false);
             self.shown = false;
@@ -471,8 +473,8 @@ impl GameUi {
     }
 
     pub fn tutorial_popup(&mut self, key: &str) -> bool {
-        // TODO(guess): a port choice (the original has no real-time multiplayer; its popups pause the simulation);
-        // settle: none (a port feature).
+        // PORT(choice): a network session withholds the tutorial popups (above); the original has no real-time
+        // multiplayer, and its popups pause the simulation.
         if let Some(fe) = self.fe.as_mut().filter(|fe| fe.network_session) {
             fe.withheld_popups.push(key.to_string());
             return false;

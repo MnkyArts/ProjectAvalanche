@@ -30,6 +30,14 @@ impl Catalog {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OfferPurchase {
+    pub kind: usize,
+    pub id: u32,
+    pub clock_s: u32,
+    pub now_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PurchaseError {
     Unknown,
     AlreadyOwned,
@@ -80,17 +88,14 @@ impl Profile {
         self.attribs.get(&ATTRIB_FLAGS).copied().unwrap_or(0) as u32
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn buy_offer(
         &mut self,
         store: &mut Store,
         data: &StoreData,
         ctx: &StoreContext,
-        kind: usize,
-        id: u32,
-        clock_s: u32,
-        now_ms: i64,
+        purchase: OfferPurchase,
     ) -> Result<u32, PurchaseError> {
+        let OfferPurchase { kind, id, clock_s, now_ms } = purchase;
         let item = store.find(kind, id).cloned().ok_or(PurchaseError::Unknown)?;
         self.pay(item.cost)?;
         let mut row = GeneratedItem::from_offer(&item);

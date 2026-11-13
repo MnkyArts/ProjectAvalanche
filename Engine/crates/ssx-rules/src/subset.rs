@@ -17,9 +17,9 @@ pub const TUTORIAL_DROPS: [u32; 2] = [0xC145_699A, 0xB0F3_51A2];
 
 const MAX_TRACK_NAME: usize = 32;
 
-// TODO(guess): 1 024, a port limit over the disc's 61 track vaults, so that a damaged or hostile folder cannot make the
-// start list without bound; settle: the track count of the largest data a server is meant to read (a map's vaults are
-// phase 9's).
+// PORT(choice): 1 024, a port limit over the disc's 61 track vaults, so that a damaged or hostile folder cannot make
+// the start list without bound; tuning: the track count of the largest data a server is meant to read (a map's vaults
+// are phase 9's); the original has no dedicated server.
 const MAX_TRACK_VAULTS: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

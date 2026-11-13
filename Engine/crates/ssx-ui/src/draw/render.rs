@@ -190,9 +190,6 @@ impl Renderer {
         if !inst.visible && !inh.mask {
             return;
         }
-        if !inh.mask && hidden_side_dimmer(lib, player, inst) {
-            return;
-        }
         // TODO(guess): an instance with normal (or layer) blending pushes nothing, so the innermost other mode of its ancestors applies; settle: which render-tree nodes push.
         let blend = if inh.mask {
             BlendMode::Normal
@@ -236,6 +233,9 @@ impl Renderer {
                 }
                 while let Some((_, m)) = masks.pop() {
                     self.pop_mask(lib, player, m, here, out);
+                }
+                if !here.mask && player.hud_extra >= 0.5 && is_side_dimmer(lib, player, inst) {
+                    self.side_dimmer_edges(lib, player, inst, &matrix, &here, out);
                 }
             }
             InstanceKind::Shape | InstanceKind::Morph | InstanceKind::Bitmap => {
@@ -612,24 +612,33 @@ fn bitmap_quad(b: crate::library::BitmapDef) -> ShapeMesh {
     ShapeMesh { layers: vec![shape::ShapeLayer { paint, mesh: Arc::new(mesh) }] }
 }
 
-// Port feature for ultrawide windows (the game's HUD is 16:9): the menus' side dimmer (`dimmer.gfx`, `mcDimmer`'s
-// character 2) ends in a hard edge at the stage's side, so it is not drawn; the full-screen dimmer beside it
-// (character 4, behind popups) is kept.
-fn hidden_side_dimmer(lib: &Library, player: &Player, inst: &Instance) -> bool {
-    inst.character.as_ref().is_some_and(|c| c.id == 2)
-        && inst.parent.and_then(|p| player.get(p)).is_some_and(|p| p.name == "mcDimmer")
-        && lib.movie(inst.movie).path.to_ascii_lowercase().rsplit(['/', '\\']).next() == Some("dimmer.gfx")
+const LEADERBOARD_MOVIES: [&str; 2] = ["components/hud/leaderboard.gfx", "components/hud/dynamicleaderboard.gfx"];
+
+// PORT(choice): for windows wider than 16:9 — the standings components place themselves outside `RepositionIfSD`, so
+// their topmost clip is shifted right by the window's extra stage width when drawn, as the HUD's `RepositionIfSD` side
+// panels are moved out; the console's displays are 16:9 or 4:3.
+fn is_leaderboard_movie(lib: &Library, inst: &Instance) -> bool {
+    LEADERBOARD_MOVIES.contains(&lib.movie(inst.movie).path.as_str())
 }
 
-// Port feature for ultrawide windows (the game's HUD is 16:9): the leaderboard movies place themselves outside
-// `RepositionIfSD`, so the shift is made when drawn, on the movie's topmost clip.
-fn is_leaderboard_movie(lib: &Library, inst: &Instance) -> bool {
-    let path = lib.movie(inst.movie).path.to_ascii_lowercase();
-    path.rsplit(['/', '\\']).next().is_some_and(|f| f.contains("leaderboard"))
+fn parent_to_root(player: &Player, inst: &Instance) -> Option<Mat2d> {
+    let mut up = Mat2d::IDENTITY;
+    let mut cur = inst.parent;
+    let mut steps = 0;
+    while let Some(c) = cur {
+        let i = player.get(c)?;
+        up = i.matrix.mul(&up);
+        cur = i.parent;
+        steps += 1;
+        if steps > 64 {
+            return None;
+        }
+    }
+    Some(up)
 }
 
 fn wide_leaderboard(lib: &Library, player: &Player, inst: &Instance) -> Option<Mat2d> {
-    let extra = crate::game::display_class::hud_extra();
+    let extra = player.hud_extra as f32;
     if extra < 0.5 {
         return None;
     }
@@ -639,21 +648,15 @@ fn wide_leaderboard(lib: &Library, player: &Player, inst: &Instance) -> Option<M
     if !is_leaderboard_movie(lib, inst) {
         return None;
     }
-    let mut up = Mat2d::IDENTITY;
     let mut cur = inst.parent;
-    let mut steps = 0;
     while let Some(c) = cur {
         let i = player.get(c)?;
         if is_leaderboard_movie(lib, i) {
             return None;
         }
-        up = i.matrix.mul(&up);
         cur = i.parent;
-        steps += 1;
-        if steps > 64 {
-            return None;
-        }
     }
+    let up = parent_to_root(player, inst)?;
     let det = up.determinant();
     if det.abs() < 1e-9 {
         return None;
@@ -661,6 +664,82 @@ fn wide_leaderboard(lib: &Library, player: &Player, inst: &Instance) -> Option<M
     let dx = extra * 20.0;
     let m = inst.matrix;
     Some(Mat2d { tx: m.tx + up.d * dx / det, ty: m.ty - up.b * dx / det, ..m })
+}
+
+fn is_side_dimmer(lib: &Library, player: &Player, inst: &Instance) -> bool {
+    inst.character.as_ref().is_some_and(|c| c.id == 2)
+        && inst.parent.and_then(|p| player.get(p)).is_some_and(|p| p.name == "mcDimmer")
+        && lib.movie(inst.movie).path.to_ascii_lowercase().rsplit(['/', '\\']).next() == Some("dimmer.gfx")
+}
+
+impl Renderer {
+    // PORT(choice): for windows wider than 16:9 — where the side dimmer's gradient reaches the stage's left or right
+    // edge, its padded end colour is drawn on out to the window's edge (the same gradient paint over a quad beyond the
+    // shape's bounds), so the dimming does not stop in a hard edge beside the 16:9 stage; the stage's own pixels are
+    // unchanged; the console's displays are 16:9 or 4:3.
+    fn side_dimmer_edges(
+        &mut self,
+        lib: &Library,
+        player: &Player,
+        inst: &Instance,
+        matrix: &Mat2d,
+        here: &Inherited,
+        out: &mut Vec<Command>,
+    ) {
+        const STAGE_WIDTH_TWIPS: f32 = 1280.0 * 20.0;
+        let Some(up) = parent_to_root(player, inst) else { return };
+        let to_root = up.mul(matrix);
+        let window = (-player.hud_extra as f32 * 20.0, STAGE_WIDTH_TWIPS + player.hud_extra as f32 * 20.0);
+        let InstanceKind::Sprite(s) = &inst.kind else { return };
+        for &child in s.children.values() {
+            let Some(c) = player.get(child) else { continue };
+            if !c.visible || !matches!(c.kind, InstanceKind::Shape) {
+                continue;
+            }
+            let full = to_root.mul(&c.matrix);
+            if full.b.abs() > 1e-6 || full.c.abs() > 1e-6 || full.a.abs() <= 1e-6 {
+                continue;
+            }
+            let b = player.local_bounds(lib, child);
+            if b.is_empty() {
+                continue;
+            }
+            let xf = here.xf.mul(&c.matrix);
+            let Some(mesh) = self.character_mesh(lib, c, &xf) else { continue };
+            let (sx0, sx1) = (full.a * b.x0 + full.tx, full.a * b.x1 + full.tx);
+            let (left, right) = (sx0.min(sx1), sx0.max(sx1));
+            let to_local = |x: f32| (x - full.tx) / full.a;
+            let span = |a: f32, b: f32| (to_local(a).min(to_local(b)), to_local(a).max(to_local(b)));
+            let mut spans = Vec::new();
+            if left <= 0.5 && right > 0.5 && window.0 < left {
+                spans.push(span(window.0, left));
+            }
+            if right >= STAGE_WIDTH_TWIPS - 0.5 && left < STAGE_WIDTH_TWIPS - 0.5 && window.1 > right {
+                spans.push(span(right, window.1));
+            }
+            let blend = if matches!(c.blend, BlendMode::Normal | BlendMode::Layer) { here.blend } else { c.blend };
+            for layer in &mesh.layers {
+                let shape::Paint::Gradient(g) = &layer.paint else { continue };
+                if g.spread != 0 {
+                    continue;
+                }
+                for &(x0, x1) in &spans {
+                    let quad = Mesh {
+                        vertices: vec![[x0, b.y0], [x1, b.y0], [x1, b.y1], [x0, b.y1]],
+                        indices: vec![0, 1, 2, 0, 2, 3],
+                        paint: Vec::new(),
+                    };
+                    out.push(Command::Draw(DrawItem {
+                        mesh: Arc::new(quad),
+                        paint: layer.paint.clone(),
+                        transform: xf,
+                        cxform: here.cx.concat(&c.cxform),
+                        blend,
+                    }));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -710,5 +789,102 @@ mod tests {
             })
             .collect();
         assert_eq!(kinds, ["begin", "draw", "end", "draw", "pop", "draw", "popend", "draw"]);
+    }
+
+    #[test]
+    fn the_side_dimmer_reaches_the_window_edge_only_in_a_wider_window() {
+        use crate::library::{FrameDef, MovieDef, TimelineDef};
+        use ssx_formats::gfx::shape::{DefineShape, FillStyle, Gradient, Shape, ShapeRecord, Styles};
+        use ssx_formats::gfx::types::{Matrix, Rect, Rgba};
+        let (w, h) = (436 * 20, 728 * 20);
+        let gradient = FillStyle::Gradient {
+            kind: 0x10,
+            matrix: Matrix { a: -0.2661, d: -0.4443, tx: 218 * 20, ..Matrix::IDENTITY },
+            gradient: Gradient {
+                spread: 0,
+                interpolation: 0,
+                records: vec![(29, Rgba { r: 0x4E, g: 0x9F, b: 0xB1, a: 0 }), (214, Rgba { r: 0, g: 0, b: 0, a: 255 })],
+                focal: None,
+            },
+        };
+        let records = vec![
+            ShapeRecord::StyleChange {
+                move_to: Some((0, 0)),
+                fill0: None,
+                fill1: Some(1),
+                line: None,
+                new_styles: None,
+            },
+            ShapeRecord::Straight { dx: w, dy: 0 },
+            ShapeRecord::Straight { dx: 0, dy: h },
+            ShapeRecord::Straight { dx: -w, dy: 0 },
+            ShapeRecord::Straight { dx: 0, dy: -h },
+        ];
+        let shape = DefineShape {
+            version: 3,
+            id: 1,
+            bounds: Rect { x_min: 0, x_max: w, y_min: 0, y_max: h },
+            edge_bounds: None,
+            unk_reserved: 0,
+            uses_fill_winding_rule: false,
+            uses_non_scaling_strokes: false,
+            uses_scaling_strokes: false,
+            shape: Shape { styles: Styles { fills: vec![gradient], lines: Vec::new() }, records },
+        };
+        let build = |tx: i32, extra: f64| {
+            let mut lib = empty_lib();
+            let id = lib.movies().len();
+            let frame = |tags: Vec<FrameTag>| vec![FrameDef { tags, ..Default::default() }];
+            let sprite =
+                |sid: u16, tags| Character::Sprite(Arc::new(TimelineDef { movie: id, id: sid, frames: frame(tags) }));
+            let mut chars = HashMap::new();
+            chars.insert(1, Character::Shape(Arc::new(shape.clone())));
+            chars.insert(2, sprite(2, vec![FrameTag::Place(Arc::new(po(1, Some(1), false, 0)))]));
+            chars.insert(7, sprite(7, vec![FrameTag::Place(Arc::new(po(1, Some(2), false, tx)))]));
+            let named =
+                ssx_formats::gfx::place::PlaceObject { name: Some("mcDimmer".into()), ..po(1, Some(7), false, 0) };
+            let m = lib.insert_movie(MovieDef {
+                path: "views/dimmer.gfx".into(),
+                dir: String::new(),
+                version: 8,
+                frame_rate: 30.0,
+                stage: RectF::new(0.0, 0.0, 25600.0, 14400.0),
+                background: None,
+                swf_name: "Dimmer".into(),
+                root: Arc::new(TimelineDef { movie: id, id: 0, frames: frame(vec![FrameTag::Place(Arc::new(named))]) }),
+                chars,
+                exports: HashMap::new(),
+                imports: HashMap::new(),
+                scaling_grids: HashMap::new(),
+            });
+            let mut player = Player::new();
+            player.load_level(&lib, m, 0);
+            player.hud_extra = extra;
+            let list = Renderer::new().build(&lib, &player, (1280, 720), ScaleMode::NoBorder);
+            list.commands
+                .iter()
+                .filter_map(|c| match c {
+                    Command::Draw(d) => Some(
+                        d.mesh
+                            .vertices
+                            .iter()
+                            .map(|v| v[0])
+                            .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x))),
+                    ),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(build(0, 0.0).len(), 1, "16:9: the shape alone");
+        let wide = build(0, 100.0);
+        assert_eq!(wide.len(), 2, "wider: the shape and its left end colour");
+        assert_eq!(wide[1], (-2000.0, 0.0), "from the window's edge (100 px beside the stage) to the shape");
+        assert_eq!(
+            build(-50 * 20, 100.0)[1],
+            (-1000.0, 0.0),
+            "slid 50 px out: from the window's edge to its left side"
+        );
+        assert_eq!(build(-300 * 20, 100.0).len(), 1, "slid past the window's edge: it covers the extra width itself");
+        assert_eq!(build(-500 * 20, 100.0).len(), 1, "wholly beside the stage: unchanged");
     }
 }

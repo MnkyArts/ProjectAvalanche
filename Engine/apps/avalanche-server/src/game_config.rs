@@ -57,17 +57,18 @@ pub fn map_mode_name(event_type: u8) -> Option<&'static str> {
     ssx_net_proto::instance::built_in_mode(event_type)
 }
 
-// TODO(guess): 32 drops, a port choice (the disc has 262 named drops; a rotation is a playlist); settle: what operators
-// ask for once servers are public (phase 4).
+// PORT(choice): 32 drops (the disc has 262 named drops; a rotation is a playlist); tuning: what operators ask for once
+// servers are public (phase 4); the original has no dedicated server.
 pub const MAX_ROTATION: usize = 32;
 
-// TODO(guess): 8 instances, a port choice (each a room, a replicated entity and a standings entity per client of the
-// lobby); settle: phase 4's 32-player measurement with several instances.
+// PORT(choice): 8 instances (each a room, a replicated entity and a standings entity per client of the lobby); tuning:
+// phase 4's 32-player measurement with several instances; the original has no dedicated server.
 pub const MAX_INSTANCES: usize = 8;
 
-// TODO(guess): the defaults — a round forms with 1 player after 15 s of the lobby (a lone player rides; others joining
+// PORT(choice): the defaults — a round forms with 1 player after 15 s of the lobby (a lone player rides; others joining
 // in those 15 s ride with them), loading waits 60 s, the countdown 5 s (the plan's at least 3 s), a round lasts at most
-// 600 s, the results 15 s; settle: what operators set and players ask for (phase 4's public servers).
+// 600 s, the results 15 s; tuning: what operators set and players ask for (phase 4's public servers); the original has
+// no dedicated server.
 const DEFAULT_MIN_PLAYERS: i64 = 1;
 const LOBBY_WAIT: (i64, i64, i64) = (15, 0, 600);
 const LOAD_TIMEOUT: (i64, i64, i64) = (60, 10, 600);

@@ -215,3 +215,42 @@ pub fn update_rider_level(stats: &mut RiderStats, thresholds: &[i64], prices: &[
     }
     (level, percent)
 }
+
+pub fn level_purchase(rules: &Rules, stats: &RiderStats) -> Option<(i64, i64)> {
+    level_purchase_tables(stats, &rules.level_thresholds, &rules.level_prices)
+}
+
+pub fn level_purchase_tables(stats: &RiderStats, thresholds: &[i64], prices: &[i64]) -> Option<(i64, i64)> {
+    let (level, percent) = update_rider_level(&mut stats.clone(), thresholds, prices);
+    if percent != 0 {
+        return None;
+    }
+    let next = level.checked_add(1)?;
+    let price = prices.get(usize::try_from(next).ok()?)?;
+    (*price > 0 && stats.max_purchased_level < next).then_some((next, *price))
+}
+
+impl Profile {
+    pub fn purchase_rider_level(
+        &mut self,
+        rules: &Rules,
+        rider: u32,
+        level: i64,
+    ) -> Result<i64, super::super::store::purchase::PurchaseError> {
+        use super::super::store::purchase::PurchaseError;
+        let row = |table: &[i64], index: Option<i64>| {
+            index.and_then(|i| usize::try_from(i).ok()).and_then(|i| table.get(i)).copied().unwrap_or(0)
+        };
+        let price = row(&rules.level_prices, Some(level));
+        let previous = row(&rules.level_thresholds, level.checked_sub(2));
+        if price > self.credits() {
+            return Err(PurchaseError::NotEnoughCredits { cost: price, credits: self.credits() });
+        }
+        self.add_credits(-price, true);
+        let stats = self.riders.entry(rider).or_default();
+        update_rider_level(stats, &rules.level_thresholds, &rules.level_prices);
+        stats.max_purchased_level = level;
+        stats.next_level_offset = stats.money_earned - previous;
+        Ok(price)
+    }
+}

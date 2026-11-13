@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
-// TODO(guess): 256 characters and 4 mirrors (MTA takes one `httpdownloadurl`, FiveM several `fileserver_add`); settle:
-// what operators of public servers configure.
+// PORT(choice): 256 characters and 4 mirrors (MTA takes one `httpdownloadurl`, FiveM several `fileserver_add`); tuning:
+// what operators of public servers configure; the original has no dedicated server.
 pub const MAX_MIRROR_URL: usize = 256;
 pub const MAX_MIRRORS: usize = 4;
 

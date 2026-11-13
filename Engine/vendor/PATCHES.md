@@ -4,7 +4,7 @@ Each directory here is a crate exactly as published on crates.io (the `.crate` c
 `Cargo.toml.orig`, `Cargo.lock`, `.cargo_vcs_info.json`) plus the patches listed below, and nothing else. The
 workspace uses them through `[patch.crates-io]` in `Engine/Cargo.toml`; they are not workspace members (`exclude`), so
 our formatting, lints and tests do not run on them. Every patched place carries a comment that starts with
-`Project Avalanche patch` and names its patch (T1…T20 below).
+`Project Avalanche patch` and names its patch (T1…T24 below).
 
 **Licenses.** lightyear and bevy_replicon are MIT OR Apache-2.0. lightyear's published crates carry no license file;
 each lightyear directory holds `LICENSE-MIT` and `LICENSE-APACHE` from the lightyear repository at the commit the
@@ -16,7 +16,10 @@ Security Research Group; published from `782dab2135ea64a057c097088a13eb8ed3cc332
 gilrs 0.11.2 is MIT OR Apache-2.0; its published crate omits the root license files, so its directory also carries
 `LICENSE-MIT` and `LICENSE-APACHE` from its published commit `07e286e24b046cf39e5c367daa2770b805a64692` in
 `https://gitlab.com/gilrs-project/gilrs` (the commit recorded in `.cargo_vcs_info.json`). Its bundled
-`SDL_GameControllerDB/LICENSE` is retained unchanged (zlib, Sam Lantinga).
+`SDL_GameControllerDB/LICENSE` is retained unchanged (zlib, Sam Lantinga). gilrs-core 0.6.8 (MIT OR Apache-2.0) was
+published from the same commit and its crate omits the same files, so its directory carries the same two license
+files. T23's `src/mapping/automatic.rs` is a translation of SDL 3.4.20 code (zlib): it is marked as altered and keeps
+SDL's licence notice in full, as the zlib licence's conditions 2 and 3 ask.
 
 **Decisions.** The user, 2026-10-23 (`Docs/architecture/multiplayer.md` §16, D18 and D19): patch lightyear in the
 workspace, keep `std` maths, fix the crash bugs in our copy, report nothing upstream. Measurements:
@@ -43,7 +46,8 @@ again (or drops it if the release has an equivalent fix); the line numbers below
 | `lightyear_core` 0.31.0 | T10 |
 | `bevy_replicon` 0.45.2 | T12, T14 |
 | `rav1d` 1.1.0 | T17, T18 |
-| `gilrs` 0.11.2 | T19, T20 |
+| `gilrs` 0.11.2 | T19, T20, T22, T23, T24 |
+| `gilrs-core` 0.6.8 | T21 |
 
 ## T1 — fragment reassembly is bounded (`lightyear_transport`)
 
@@ -409,6 +413,91 @@ deprecated module constant. Both warnings are in the unmodified published source
 primitive `f32` associated constant, whose value is identical. No gain-clamping behaviour changes and no lint
 is suppressed. Its T20 comment identifies the modification.
 
+## T21 — gilrs-core keeps the evdev facts SDL's automatic mapping reads (`gilrs-core`, vendored for it)
+
+**Why.** T23 ports SDL's automatic gamepad mapping, which reads three facts per Linux device: the key and absolute-axis
+capability bits (gilrs-core already keeps them), each absolute axis' `EVIOCGABS` answer (SDL 3.4.20
+`GuessIfAxesAreDigitalHat`, `src/joystick/linux/SDL_sysjoystick.c:1192-1223`, tells a digital hat by its range;
+`HandleHat`, 1730-1777, reads it by that range) and the device's kernel driver (the xpad d-pad rule, 2672-2688).
+gilrs-core 0.6.8 used the `EVIOCGABS` answer only for its own normalisation and dropped it, and never asked udev for
+the driver.
+
+**What.** `src/platform/linux/gamepad.rs`: `AxesInfo` keeps each axis' `EvdevAbsInfo` (minimum, maximum, fuzz, flat,
+resolution) where the ioctl succeeded (SDL skips an axis whose `EVIOCGABS` fails); the device's driver is read as
+SDL's `SDL_UDEV_GetProductInfo` reads it (`src/core/linux/SDL_udev.c:279-287`: `udev_device_get_driver`, else the
+`ID_USB_DRIVER` property; a name that is not UTF-8 counts as none), at enumeration and hotplug; without udev (the
+inotify fallback) there is none, as in SDL without libudev. `udev.rs` adds `Device::driver`. The crate root exports
+`EvdevAbsInfo`, `Gamepad::evdev_abs_info(code)`, `Gamepad::udev_driver()` and `EvCode::from_evdev(kind, code)` on
+Linux only. Nothing else changes: no event, value or normalisation differs, other platforms compile none of it.
+
+## T22 — gilrs looks a gamepad's mapping row up in SDL's order (`gilrs`)
+
+**Why.** gilrs 0.11.2 finds a row only by the device's exact GUID. SDL 3.4.20 (`SDL_PrivateGetGamepadMappingForGUID`,
+`src/joystick/SDL_gamepad.c:1426-1462`, its matcher 1372-1421) tries the exact GUID, then — for a GUID whose layout
+carries a version (`SDL_JoystickGUIDUsesVersion`, `SDL_joystick.c:3132-3146`) — the first row in list order that
+matches with the version cleared; and a row replaces an older one for the same GUID only at the same or a higher
+priority, keeping its place in the list (`SDL_PrivateAddMappingForGUID`, 2133-2256, the replacement 2199-2246; the
+priorities `SDL_GamepadMappingPriority`, 92-97: default, API, user). The Nacon GC-100's 0110 GUID is an example: its
+0112 row would have matched without the version (T19 added the exact row before this was known).
+
+**What.** `src/mapping/mod.rs`, Linux only: `MappingDb` records each row's origin (`Origin`: the bundled rows as
+SDL's DEFAULT, rows the application adds as API, `SDL_GAMECONTROLLERCONFIG`'s as USER) and the GUIDs' list order;
+`insert_from` keeps a row against a lower-priority one and keeps its place when replaced; `lookup` answers exact, then
+without the version in list order. `src/mapping/select.rs` reads SDL's GUID layout (`sdl_guid`: the standard form of
+`SDL_CreateJoystickGUID`, `SDL_joystick.c:2933-2975`; vendor and product as `SDL_GetJoystickGUIDInfo`, 2860-2921).
+The previous exact `get` stays for the other platforms.
+
+## T23 — a Linux gamepad no row names gets SDL's automatic mapping (`gilrs`)
+
+**Why.** A player's pad without a row in the bundled database (Linux) got gilrs' default mapping, which turns
+`ABS_Z` / `ABS_RZ` into `Axis::LeftZ` / `Axis::RightZ`: the game, which reads `LeftTrigger2` / `RightTrigger2`, had dead
+analog triggers (`Docs/research/controller-input.md`). T19 fixed one pad. SDL itself does not need a row for such a
+pad: when its lookup misses, SDL 3.4.20 builds a mapping from the device's evdev capabilities
+(`SDL_PrivateGetGamepadMapping`, `src/joystick/SDL_gamepad.c:2368-2392` → `SDL_PrivateGenerateAutomaticGamepadMapping`,
+2306-2366 → `LINUX_JoystickGetGamepadMapping`, `src/joystick/linux/SDL_sysjoystick.c:2287-2820`).
+
+**What.** `src/mapping/automatic.rs` translates that rule (it carries SDL's licence notice and SDL's line numbers at
+each step): no `BTN_GAMEPAD`, no mapping (2350); SDL's button, axis and hat indices (`ConfigJoystick`, 1225-1345; a hat
+whose axes span −1…1 is digital, 1192-1223); face buttons with Sony's west/north swap; Back, Start, the stick clicks,
+Guide; the shoulders `BTN_TL`/`BTN_TR`, else digital hat 1, else analog `ABS_HAT1Y`/`ABS_HAT1X`; the triggers
+`ABS_HAT2Y`/`ABS_BRAKE`/`ABS_Z` and `ABS_HAT2X`/`ABS_GAS`/`ABS_RZ`, else digital hat 2, else `BTN_TL2`/`BTN_TR2`
+(2515-2600); the d-pad `BTN_DPAD_*`, else digital hat 0, else analog hat 0, else xpad's `BTN_TRIGGER_HAPPY1…4`
+(2658-2688); the sticks `ABS_X`/`ABS_Y` and `ABS_RX`/`ABS_RY`, else `ABS_Z`/`ABS_RZ` (2725-2732); the paddles
+`BTN_GRIPR`/`GRIPL`/`GRIPR2`/`GRIPL2`, else on a Microsoft pad `BTN_TRIGGER_HAPPY5…8` (2739-2795), and `KEY_RECORD` as
+misc1 (2797-2803). The elements are written in SDL's order (its row string,
+`SDL_gamepad.c:2743`), and an input bound to two elements drives only the first, as SDL's bindings do
+(`HandleJoystickAxis` / `HandleJoystickButton`, 247-321). A digital hat is read as `HandleHat` reads it (1730-1777: the
+range in thirds, growing extremes), its directions on hat 0 as the d-pad axes, which gilrs' d-pad filter turns into the
+d-pad buttons, bound to the native `BTN_DPAD_*` codes as gilrs' parser binds a row's `h0.*`.
+`src/mapping/select.rs` chooses on Linux: a row (T22), else this mapping, else gilrs' default mapping, and logs one
+line per gamepad: its name, GUID, vendor and product, and which of the three it got (the row's origin and whether it
+matched only without the version; the automatic mapping as SDL's elements string, so a player can paste it).
+`Gamepad::mapping_source()` answers the new `MappingSource::Automatic` for it, not `SdlMappings`.
+`src/gamepad.rs` applies the selection and the digital hats' values.
+
+Port choices, each marked `PORT(choice):` at its place: an analog hat 0 used as the d-pad becomes gilrs' `DPadX` /
+`DPadY` (SDL binds both directions to the whole axis, `dpup:a7,dpdown:a7`, which reads up and left as held at rest);
+SDL's hints are at their defaults (`SDL_JOYSTICK_LINUX_HAT_DEADZONES` on, `SDL_JOYSTICK_LINUX_DIGITAL_HATS` off); the
+name is cut at SDL's 127 bytes on a character boundary; a device without `BTN_GAMEPAD` keeps gilrs' default mapping (SDL
+on Linux has no default mapping and would not open it as a gamepad; gilrs keeps offering it as before). Unlike SDL, the
+generated row is not added to the mapping list (SDL adds it at DEFAULT priority, where a later API or user row for that
+GUID replaces it; gilrs' `set_mapping` replaces a gamepad's mapping directly). Not ported: SDL's name-CRC GUIDs for
+devices without a vendor (gilrs' GUIDs carry no name CRC) and the rows' `crc:` field (no Linux row has one).
+
+## T24 — the bundled SDL_GameControllerDB is SDL_GameControllerDB c0f11d40 (`gilrs`)
+
+**Why.** gilrs 0.11.2 bundles an older copy; the newer one has rows for 32 more Linux pads.
+
+**What.** `SDL_GameControllerDB/gamecontrollerdb.txt` is upstream commit `c0f11d40b91f57853ce9714c703e119d8243f91c`
+(2026-11-09, `https://github.com/mdqinc/SDL_GameControllerDB`; the file's SHA-256
+`a2299ef257b68c62b9fcce39fc59b5fb3a5a7068214f766a96c21595b55a11c3`) with T19's comment and row put back before the 0112
+row (upstream still lacks the 0110 GUID): SHA-256 `d414808d077f6dbe74bfe43636402452872ae8c3cde0043e766d257149394a4b`.
+`README.md` is upstream's at that commit; `LICENSE`, `duplicates.py`, `mapping_guide.png` and `check.yml` were already
+identical. Linux rows 718 → 749 (rows with a GUID 717 → 748): 32 added, 40 changed, 1 removed upstream (ODROID Go 2,
+`19000000010000000100000001010000`); no Linux row has a `crc:` field or a hat above 0. The new test
+`every_bundled_linux_row_is_read` parses every Linux row with gilrs' own parser (749 of 749; before the refresh the same
+count gave 718 of 718).
+
 ## Tests of the patched crates
 
 gilrs (2026-11-10, `Game-Data/Converted/handoff/nacon-v032/vendor-tests.log`):
@@ -418,6 +507,19 @@ included. A scratch copy with the original published database restored fails the
 missing-row assertion; restoring the patched database passes. No live vendor source was reverted for that negative
 proof. Physical Bevy trigger-input A/B evidence predates the patch and is described under T19; the root session
 owns the final actual-game and complete-binding acceptance.
+
+gilrs and gilrs-core (2026-11-13, round `triggers`, `Game-Data/Converted/handoff/triggers/vendor_tests.txt`; the
+script `vendor_tests.sh` beside it), each from its folder, standalone target: gilrs-core
+`cargo test --lib --locked`: **1 passed**; gilrs `cargo test --lib --config
+'patch.crates-io.gilrs-core.path="<Engine>/vendor/gilrs-core-0.6.8"'` (its published lock names the registry
+gilrs-core; the script restores both published `Cargo.lock` files after the run): **26 passed, 0 failed**,
+warning-free. New: T23's nine tests on synthetic capability sets (the xpad layout as SDL writes it, with its triggers
+on the trigger buttons; no `BTN_GAMEPAD`; no `ABS_RX`/`ABS_RY`; only `BTN_TL2`/`BTN_TR2`; hats 2 as triggers, digital
+and analog; hat 1 as the shoulders; Sony's face buttons, xpad's d-pad buttons and the Xbox paddles; the hat guess and
+`HandleHat`; the name), T22's three (the lookup order, the priorities, the GUID reading) and T24's whole-database read
+(749 of 749 Linux rows). Before the refresh the same read gave 718 of 718. T21 has no unit test of its own (its facts
+come from ioctls and udev); the `/dev/uinput` pads in `Docs/research/controller-input.md` exercise it on devices the
+kernel made.
 
 Each crate's own tests, run standalone with the features the workspace uses, each against the other patched crates
 (`Game-Data/Converted/handoff/net0/d19/vendor_tests.txt`): `lightyear_transport` 76 + 1 (85 + 1 with `compression_lz4`;

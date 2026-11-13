@@ -1,12 +1,12 @@
-#![allow(dead_code)]
-
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use ssx_assets::content::audio::{AudioScope, MusicDecision};
 use ssx_assets::musicbox::{LicensedMusic, MUSIC_SUBMIX_LEVEL, MusicBox, SongSwitches};
-use ssx_assets::sfx::frontend::{FlowInputs, FlowState, FrontEndMusic, StateMsg, UiContext, UiSounds};
+use ssx_assets::sfx::frontend::{
+    BeatStatus, FlowInputs, FlowState, FrontEndMusic, GlobeWind, PostSlot, StateMsg, UiContext, UiSounds, post_index,
+};
 use ssx_assets::sfx::movie::MovieAudio;
 use ssx_assets::sfx::music_pause::MusicPause;
 use ssx_assets::sfx::settings::AudioSettings;
@@ -111,6 +111,9 @@ pub struct FrontEndAudio {
     plugged: bool,
     flow: FlowState,
     ui: UiSounds,
+    posts: PostSlot,
+    beat: Option<BeatStatus>,
+    globe_wind: GlobeWind,
     last: StateMsg,
     results: (bool, bool),
     movie: Option<Arc<MovieAudio>>,
@@ -151,11 +154,10 @@ pub fn load(big_root: Option<&Path>) -> Option<FrontEndAudioData> {
     let plan = content.music_plan(&AudioScope::FrontEnd);
     let menu_plan = content.music_plan(&AudioScope::MusicMenu);
     let music_mode = std::env::var("SSX_MUSIC").unwrap_or_default().to_ascii_lowercase();
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(5489, |d| d.subsec_nanos());
     let mut music = if matches!(music_mode.as_str(), "off" | "0" | "false") {
         None
     } else {
-        FrontEndMusic::load(big_root, seed)
+        FrontEndMusic::load(big_root, ssx_assets::career::random::Source::Global)
             .map_err(|e| ssx_core::eprintln!("warning: front-end music unavailable: {e:#}"))
             .ok()
     };
@@ -201,6 +203,9 @@ pub fn start(world: &mut World, data: Option<FrontEndAudioData>) {
         menu_plan: data.menu_plan,
         menu: Arc::new(Mutex::new(None)),
         switches: SongSwitches::default(),
+        posts: PostSlot::default(),
+        beat: None,
+        globe_wind: GlobeWind::default(),
         level_loading: false,
         big_root: data.big_root,
     };
@@ -391,7 +396,7 @@ impl FrontEndAudio {
         if let Ok(mut o) = self.out.lock()
             && o.music_tail.take().is_some()
         {
-            info!("music: the ride's song left playing stops for the preview");
+            info!("music: the ride's song left playing stops for the preview (StopMusic)");
         }
     }
 
@@ -450,7 +455,7 @@ impl FrontEndAudio {
         ok
     }
 
-    pub fn frame(&mut self, screen: u32, kind: i32, boot_done: bool, nis: u8) {
+    pub fn frame(&mut self, screen: u32, kind: i32, boot_done: bool, nis: u8, wind: i32, now_ms: f64) {
         match &self.movie {
             Some(f) if !f.stopped() => self.flow.movie_started(),
             Some(_) => {
@@ -465,8 +470,16 @@ impl FrontEndAudio {
         }
         let (results_ready, goal_complete) = self.results;
         let setting_67 = self.setting_67;
-        let msg =
-            self.flow.frame(&FlowInputs { screen, kind, boot_done, nis, results_ready, goal_complete, setting_67 });
+        let msg = self.flow.frame(&FlowInputs {
+            screen,
+            kind,
+            boot_done,
+            nis,
+            results_ready,
+            goal_complete,
+            setting_67,
+            wind,
+        });
         self.screen_state = ssx_assets::sfx::frontend::screen_state(screen, kind, boot_done);
         self.ui.frame();
         let _turn = crate::audio::music::GameTurn::take();
@@ -491,6 +504,11 @@ impl FrontEndAudio {
             }
             e.set_game_state(msg.state);
             e.game_result = msg.result;
+            if let Some(l) = self.globe_wind.state_message(e, msg.wind)
+                && self.verbose
+            {
+                info!("fe audio {l}");
+            }
             self.music_pause.state_msg(&mut e.mixer.graph, msg.state, msg.restart);
             self.music_pause.update(&mut e.mixer.graph);
             for l in self.music_pause.log.drain(..) {
@@ -507,6 +525,22 @@ impl FrontEndAudio {
                     || self.preview.lock().is_ok_and(|p| p.as_ref().is_some_and(|pv| !pv.stopped));
                 fm.module.state_msg(&mut fm.music.rt, &msg, &mut e.settings, playing);
                 fm.module.update(&mut fm.music.rt);
+                let last = self.beat.take();
+                if fm.awake() {
+                    let status = fm.beat_status();
+                    if self.verbose && status.map(|b| (b.beat, b.bar)) != last.map(|b| (b.beat, b.bar)) {
+                        info!("fe audio beat message {status:?} at {now_ms:.0} ms");
+                    }
+                    if let Some(index) = self.posts.update(now_ms, status.map(|b| b.to_beat), msg.state) {
+                        self.ui.fire_posted(e, index, false);
+                        for l in self.ui.log.drain(..) {
+                            if self.verbose {
+                                info!("fe audio {l} at {now_ms:.0} ms");
+                            }
+                        }
+                    }
+                    self.beat = status;
+                }
                 for l in fm.module.log.drain(..).chain(fm.music.rt.log.drain(..).map(|l| l.text)) {
                     if self.verbose {
                         info!("fe music {l}");
@@ -539,6 +573,28 @@ impl FrontEndAudio {
             }
         }
         fired
+    }
+
+    pub fn ui_post(&mut self, id: i32, delay_ms: f32, now_ms: f64) {
+        let Some(index) = post_index(id) else { return };
+        let fire = self.posts.receive(index, delay_ms, now_ms, now_ms);
+        if self.verbose {
+            info!("fe audio post {id:#x} (CSIS {index}) delay {delay_ms:.1} ms at {now_ms:.0} ms");
+        }
+        let Some(index) = fire else { return };
+        let _turn = crate::audio::music::GameTurn::take();
+        let Ok(mut m) = self.out.lock() else { return };
+        let Some(e) = m.sfx.as_mut() else { return };
+        self.ui.fire_posted(e, index, true);
+        for l in self.ui.log.drain(..) {
+            if self.verbose {
+                info!("fe audio {l} at {now_ms:.0} ms");
+            }
+        }
+    }
+
+    pub fn beat(&self) -> Option<BeatStatus> {
+        self.beat
     }
 
     pub fn watch_ui(&mut self, value: impl Fn(u16) -> bool) {

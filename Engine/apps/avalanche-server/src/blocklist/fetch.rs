@@ -15,8 +15,8 @@ use tokio::time::timeout;
 
 use super::Sources;
 
-// TODO(guess): 15 s, the browser's bound for a master's list (an 8 MiB list at about 4.5 Mbit/s); settle: the
-// master's list over real links.
+// PORT(choice): 15 s, the browser's bound for a master's list (an 8 MiB list at about 4.5 Mbit/s); tuning: the master's
+// list over real links; the original has no dedicated server.
 pub const TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_HEAD: usize = 8192;
 const MAX_TEXT: usize = 512;

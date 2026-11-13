@@ -15,9 +15,8 @@ use ssx_rules::subset::TuningLimits;
 
 use crate::config::Config;
 
-mod load;
-
-pub use load::{LoadedStart, MapLoad, START_RIDER, load_resolved, mode_choice, record_rules};
+use ssx_physics::map::server_load::check_toml;
+pub use ssx_physics::map::server_load::{LoadedStart, MapLoad, START_RIDER, load_resolved, mode_choice, record_rules};
 
 pub const MAX_LOADED_MAPS: usize = 256;
 
@@ -227,7 +226,7 @@ pub fn check_record(folder: &Path, id: &str, event_type: u8, gamemode: Option<&s
         Some(t) => t.map_err(|e| ssx_core::text::message(&e).to_string())?,
         None => return Err(format!("{id}: no package of the server's resources provides it")),
     };
-    load::check_toml(folder, &content, id, &toml)?;
+    check_toml(folder, &content, id, &toml)?;
     let (rules, gamemode_title) = record_rules(&content, &cid, &toml, &choice)?;
     let t = rules.event_type();
     Ok(CheckedRecord { toml, event_type: t as u8, event_name: t.name(), gamemode_title })

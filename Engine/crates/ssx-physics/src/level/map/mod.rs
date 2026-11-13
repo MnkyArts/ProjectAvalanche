@@ -6,14 +6,18 @@ mod player;
 #[cfg(test)]
 mod tests;
 
-pub use collision::{CLUSTER_CELL, CLUSTER_TRIANGLES, MapCollisionStats, TERRAIN_SURFACE, add_map_collision};
+pub use collision::{
+    CLUSTER_CELL, CLUSTER_TRIANGLES, MapCollisionStats, TERRAIN_SURFACE, add_map_collision, add_map_collision_with_cap,
+};
 pub use gates::{FINISH_GROUPS, GateStep, Gates};
 pub use heli::MapHeli;
 pub use player::MapPlayer;
+pub mod server_load;
 mod start;
 pub use start::{
-    BoxedInput, ENVELOPE_INPUTS, ENVELOPE_SEQUENCES, MapStart, START_FIRST, START_IDLE, StartControls, StartEnvelope,
-    StartInput, envelope_gears, envelope_sequence, map_start, map_start_after, neutral, sequence_input, start_envelope,
+    BoxedInput, ENVELOPE_INPUTS, ENVELOPE_SEQUENCES, MapStart, START_FIRST, START_IDLE, StartControls, StartDeaths,
+    StartEnvelope, StartInput, deaths_at, envelope_gears, envelope_sequence, map_start, map_start_after, neutral,
+    sequence_input, start_deaths, start_envelope, start_rider,
 };
 
 use std::collections::BTreeMap;
@@ -27,7 +31,9 @@ use ssx_assets::content::maps::{LayoutBase, MapObject};
 use ssx_assets::content::resolve::Found;
 use ssx_assets::track_lighting::LightingPreset;
 use ssx_content::ContentId;
-use ssx_content::map::{BOUNDARY_CELL, BoundaryRaster, Map, Volume, VolumeShape};
+use ssx_content::map::{
+    BOUNDARY_CELL, BoundaryRaster, MAX_COLLISION_TRIANGLES, MAX_DLC_COLLISION_TRIANGLES, Map, Volume, VolumeShape,
+};
 use ssx_rules::locators::DropStart;
 use ssx_rules::placement::Placement;
 
@@ -83,10 +89,24 @@ impl MapLevel {
             s.results = Some(ssx_rules::results::ResultsFlow::Explore);
         }
         let drop = self.world.survival.objectives.as_deref();
-        let scripts = heli::event_scripts(t, self.intro);
+        let scripts = heli::event_scripts(t, self.intro, heli::title_update_free_ride_outro());
         let objectives = crate::objectives::EventObjectives::for_map(big_root, drop, t, &scripts);
         s.objectives = Some(std::sync::Arc::new(objectives));
         s.time_up_result = rules.time_up() == TimeUp::Result;
+        // PORT(choice): a map's free ride is ridden with the title update's Freeride flag (TU2 flow+0x10774: the HUD's
+        // setter 0x82397658 writes only `HUD_RaceStarted` and the meters, objective messages pass unshown at
+        // 0x824A77C0, no explore ghosts at 0x8244C19C, the run loops after its finish at 0x82495e3c instead of posting
+        // results); the disc has no free ride (`ui_drop` event type 8 is never set, 0 of 265) and retail's HUD setter
+        // 0x8238BB00 has no type-8 rule, so without the flag a map's free ride showed the clock, score and trick panels
+        // of a timed event; after the finish (the user's decision, 2026-11-13) a map with its helicopter (`intro =
+        // "heli"`, the `heli_path` pickup) and a mounted title update plays TU2's `outro_standard_celebration.lua` as a
+        // disc drop's Freeride does (`FreerideFinish` → the heli pickup at `nis_outro_locator`, `DO_RestartObjective`),
+        // any other map's free ride rides on after its finish with no outro and no results; the disc has no free-ride
+        // event.
+        s.free_ride = t == crate::event::EventType::FreeRide;
+        if s.free_ride {
+            crate::guess_hit!();
+        }
         self.gates.time_limit_ms = rules.time_limit_ms();
     }
 
@@ -102,10 +122,12 @@ impl MapLevel {
     }
 
     fn check_heli_scripts(&self) -> Result<()> {
-        let Some(t) = self.setup.event_type else { return Ok(()) };
+        if self.setup.event_type.is_none() {
+            return Ok(());
+        }
         let o = self.setup.objectives.as_ref().context("the event's objectives were not built")?;
-        for name in heli::event_scripts(t, self.intro) {
-            if !o.scripts.sources.contains_key(&name) {
+        for name in &o.scripts.list {
+            if !o.scripts.sources.contains_key(name) {
                 bail!("the event's script {name} is not in the data folder ({})", crate::spawn::SCRIPTS_DIR);
             }
         }
@@ -154,6 +176,9 @@ impl MapLevel {
         if mode.rules.loops() {
             self.check_heli_pickup().with_context(|| format!("{}: survive to death", m.map.id))?;
         }
+        if heli::free_ride_picks_up(&self.setup) {
+            self.check_heli_pickup().with_context(|| format!("{}: the free ride's heli pickup", m.map.id))?;
+        }
         Ok(mode)
     }
 }
@@ -200,15 +225,26 @@ pub fn boundary_grid(r: &BoundaryRaster) -> BoundaryGrid {
 
 pub fn load_map_level(big_root: &Path, m: &ResolvedMap, gear_mix: f32) -> Result<MapLevel> {
     let def = &m.map.value.definition;
+    let base_dir = match &m.base {
+        Some(b) => Some(
+            ssx_assets::data_roots::track_dir(big_root, &b.track)
+                .with_context(|| format!("{}: no track folder for {}", m.map.id, b.track))?,
+        ),
+        None => None,
+    };
+    let cap = match &base_dir {
+        Some(dir) if ssx_assets::data_roots::in_packages(dir) => MAX_DLC_COLLISION_TRIANGLES,
+        _ => MAX_COLLISION_TRIANGLES,
+    };
     let mut stats = MapCollisionStats::default();
     let mut add = |c: &mut CollisionWorld| -> Result<()> {
-        stats = add_map_collision(c, def, &m.objects)?;
+        stats = add_map_collision_with_cap(c, def, &m.objects, cap)?;
         Ok(())
     };
     let (mut world, drop) = match &m.base {
         Some(b) => {
-            let dir = big_root.join("data0/data/xenon/gameexplorer").join(&b.track);
-            let w = crate::spawn::track_world_for_drop_with(big_root, &dir, &b.track, gear_mix, b.index, &mut add)
+            let dir = base_dir.as_deref().context("a layout's track folder")?;
+            let w = crate::spawn::track_world_for_drop_with(big_root, dir, &b.track, gear_mix, b.index, &mut add)
                 .with_context(|| format!("{}: the world of {}", m.map.id, b.drop))?;
             (w, b.index)
         }

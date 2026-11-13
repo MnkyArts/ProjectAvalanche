@@ -85,6 +85,7 @@ pub struct GameUi {
     pub input: input::InputProvider,
     pub pointer: pointer::PointerRouter,
     pub event_type: i32,
+    pub free_ride: bool,
     pub gear: [bool; 15],
     pub sounds: Vec<u32>,
     pub tutorial: tutorial::TutorialManager,
@@ -129,6 +130,7 @@ impl GameUi {
             input: input::InputProvider::default(),
             pointer: pointer::PointerRouter::default(),
             event_type: -1,
+            free_ride: false,
             gear: [false; 15],
             sounds: Vec::new(),
             tutorial: Default::default(),
@@ -179,7 +181,29 @@ impl GameUi {
     }
 
     pub fn take_ui_sounds(&mut self) -> Vec<i32> {
-        self.fe.as_mut().map(|f| std::mem::take(&mut f.ui_sounds)).unwrap_or_default()
+        let mut out = self.fe.as_mut().map(|f| std::mem::take(&mut f.ui_sounds)).unwrap_or_default();
+        out.extend(std::mem::take(&mut self.sounds).into_iter().map(|id| id as i32));
+        out
+    }
+
+    pub fn take_ui_posts(&mut self) -> Vec<fe::globe::audio::Post> {
+        self.fe
+            .as_mut()
+            .and_then(|f| f.globe_scene.as_mut())
+            .map(|s| std::mem::take(&mut s.audio.posts))
+            .unwrap_or_default()
+    }
+
+    pub fn fe_audio_message(&mut self, screen: u32, state: i32, beat: Option<fe::globe::audio::Beat>) {
+        let Some(audio) = self.fe.as_mut().and_then(|f| f.globe_scene.as_mut()).map(|s| &mut s.audio) else { return };
+        audio.adopt(screen, state);
+        if let Some(b) = beat {
+            audio.beat_message(b);
+        }
+    }
+
+    pub fn fe_audio_wind(&self) -> i32 {
+        self.fe.as_ref().and_then(|f| f.globe_scene.as_ref()).map_or(0, |s| s.audio.wind_param)
     }
 
     pub fn take_fe_messages(&mut self) -> Vec<fe::FeMessage> {
@@ -241,11 +265,15 @@ impl GameUi {
         }
     }
 
-    pub fn set_drop(&mut self, drop_key: u32, event_type: i32) {
+    pub fn set_drop(&mut self, drop_key: u32, event_type: i32, free_ride: bool, nis_active: bool) {
         self.nav.drop_key = drop_key;
         self.event_type = event_type;
+        self.free_ride = free_ride;
         self.tutorial_level_start();
-        hud::level_start(&mut self.values);
+        hud::level_start(&mut self.values, nis_active);
+        if let Some(fe) = self.fe.as_mut() {
+            fe.level_start.nis = nis_active;
+        }
     }
 }
 

@@ -56,6 +56,7 @@ impl Inventory {
         let data = self.data.clone();
         self.store.update(&data, &ctx, false, self.now_ms);
         self.equip_rider(db, profile, drop, rider);
+        self.store.clear_shown_special();
     }
 
     pub fn equip_rider(&mut self, db: &CareerDb, profile: &Profile, drop: u32, rider: u32) {
@@ -113,6 +114,7 @@ impl Inventory {
     }
 
     pub fn equip(&mut self, db: &CareerDb, profile: &Profile, kind: i64, key: u32, src: u8, slot: usize) {
+        self.store.clear_shown_special();
         if !(0..KINDS as i64).contains(&kind) {
             return;
         }
@@ -187,6 +189,42 @@ impl Inventory {
         self.save_slot(db, profile, RIDER, 0, (self.rider, 0));
     }
 
+    pub fn consume_mods(&mut self, profile: &mut Profile) -> Vec<(u32, u8)> {
+        let empty = fnv1(EMPTY[3].as_bytes());
+        let mut consumed = Vec::new();
+        for slot in 0..self.equipped[3].len() {
+            let (key, src) = self.equipped[3][slot];
+            self.equipped[3][slot] = (empty, 0);
+            if key == empty && src == 0 {
+                continue;
+            }
+            if src == 1 {
+                self.remove_generated(profile, 3, key);
+            } else {
+                profile.owned_items.remove(&key);
+            }
+            consumed.push((key, src));
+        }
+        consumed
+    }
+
+    pub fn remove_generated(&mut self, profile: &mut Profile, kind: usize, key: u32) {
+        let id = match self.store.last_bought {
+            Some((stock, equip_id)) if stock == key => equip_id,
+            _ => key,
+        };
+        let stock = id > 999_999 && self.store.stock.get(kind).is_some_and(|l| l.iter().any(|o| o.id == id));
+        if !stock && !profile.generated.contains_key(&id) {
+            return;
+        }
+        profile.generated.remove(&id);
+        if let Some(shown) = self.store.offered.get_mut(kind)
+            && let Some(i) = shown.iter().position(|&k| k == key)
+        {
+            shown.swap_remove(i);
+        }
+    }
+
     pub fn save_slot(&self, db: &CareerDb, profile: &mut Profile, kind: i64, slot: usize, item: (u32, u8)) {
         if item.1 == 0 && UNSAVED_ITEMS.contains(&item.0) {
             return;
@@ -215,3 +253,46 @@ impl Inventory {
 
 pub const UNSAVED_ITEMS: [u32; 8] =
     [0x8650_5C81, 0x371D_D13C, 0xE318_0443, 0xC492_2193, 0x2002_1A25, 0x2039_B98F, 0x2636_71F3, 0xEED8_4B39];
+
+#[cfg(test)]
+mod tests {
+    use ssx_assets::career::profile::GeneratedItem;
+
+    use super::*;
+
+    #[test]
+    fn leaving_the_drop_consumes_the_mods() {
+        let db = CareerDb::default();
+        let mut inv = Inventory::new(&db);
+        let mut profile = Profile::default();
+        let empty = fnv1(EMPTY[3].as_bytes());
+        inv.category_slots = vec![0, 0, 0, 3, 0];
+        inv.equipped[3] = vec![(0x1234, 1), (empty, 0), (0xABCD, 0)];
+        profile.generated.insert(0x1234, GeneratedItem { equip_id: 0x1234, kind: 3, ..GeneratedItem::default() });
+        profile.owned_items.insert(0xABCD);
+        inv.store.offered[3] = vec![0x1234, 0x5678, 0x9ABC];
+        assert_eq!(inv.consume_mods(&mut profile), [(0x1234, 1), (0xABCD, 0)]);
+        assert_eq!(inv.equipped[3], [(empty, 0), (empty, 0), (empty, 0)]);
+        assert!(!profile.generated.contains_key(&0x1234), "the equip_generated row is gone");
+        assert!(!profile.owned_items.contains(&0xABCD), "the equipment row is gone");
+        assert_eq!(inv.store.offered[3], [0x9ABC, 0x5678], "the last shown entry took its place");
+        assert!(inv.consume_mods(&mut profile).is_empty());
+        assert_eq!(inv.equipped[3], [(empty, 0), (empty, 0), (empty, 0)]);
+        assert_eq!(inv.store.offered[3], [0x9ABC, 0x5678]);
+    }
+
+    #[test]
+    fn the_remove_finds_the_record_first() {
+        let db = CareerDb::default();
+        let mut inv = Inventory::new(&db);
+        let mut profile = Profile::default();
+        profile.generated.insert(7, GeneratedItem { equip_id: 7, kind: 3, ..GeneratedItem::default() });
+        inv.store.last_bought = Some((1_000_042, 7));
+        inv.store.offered[3] = vec![1_000_042, 1_000_043];
+        inv.remove_generated(&mut profile, 3, 1_000_042);
+        assert!(!profile.generated.contains_key(&7), "the alias reached the row");
+        assert_eq!(inv.store.offered[3], [1_000_043]);
+        inv.remove_generated(&mut profile, 3, 1_000_043);
+        assert_eq!(inv.store.offered[3], [1_000_043], "no stock offer and no row: nothing removed");
+    }
+}

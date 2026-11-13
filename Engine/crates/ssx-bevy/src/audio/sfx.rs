@@ -2,14 +2,15 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use ssx_assets::sfx::heli::HeliSounds;
+use ssx_assets::sfx::speech::context::SpeechRandom;
 use ssx_assets::sfx::{RiderAudioInfo, SfxEngine, TrackAudioInfo, rider_audio_info, riding_banks, track_audio_info};
 use ssx_assets::sfx_avalanche::AvalancheSounds;
 use ssx_assets::sfx_game::{EnvironmentSounds, RiderSounds};
 
 use crate::audio::music::{GameAudio, output};
 use crate::audio::sfx_input::{
-    FrameEvents, InputTrack, board_emitter, drive_speech, drop_audio_helicopter, ended_by_death, reverb_zones,
-    ride_audio, rider_voice_emitter, speech_enabled, speech_pilot, speech_setup,
+    FrameEvents, InputTrack, SpeechDrop, SpeechInputs, SpeechLanguage, board_emitter, drive_speech,
+    drop_audio_helicopter, ended_by_death, reverb_zones, ride_audio, rider_voice_emitter, speech_enabled, speech_pilot,
 };
 use crate::ride::Ride;
 
@@ -21,6 +22,8 @@ pub struct Sfx {
     track: InputTrack,
     max_boost: f32,
     last_steps: u64,
+    tags_through: u64,
+    tag_log: bool,
     log_from: usize,
     verbose: bool,
     pending: Option<SpeechPending>,
@@ -53,8 +56,9 @@ struct SpeechPending {
     rider: RiderAudioInfo,
     track: TrackAudioInfo,
     speech: bool,
+    lang: SpeechLanguage,
     deadly_descent: bool,
-    seed: u32,
+    rng: SpeechRandom,
 }
 
 pub struct SfxLevel {
@@ -66,8 +70,8 @@ pub struct SfxLevel {
     max_boost: f32,
     volume: f32,
     verbose: bool,
-    seed: u32,
     event_key: Option<u32>,
+    lang: SpeechLanguage,
     objects: ssx_assets::sfx_game::audio_objects::AudioObjects,
 }
 
@@ -76,20 +80,32 @@ pub fn register(app: &mut App) {
     if app.world().contains_resource::<SfxRegistered>() {
         return;
     }
-    app.insert_resource(SfxRegistered).add_systems(Update, drive_sfx.run_if(resource_exists::<Sfx>));
+    app.insert_resource(SfxRegistered)
+        .init_resource::<SpeechRng>()
+        .add_systems(Update, drive_sfx.run_if(resource_exists::<Sfx>));
 }
 
 #[derive(Resource)]
 struct SfxRegistered;
+
+#[derive(Resource)]
+struct SpeechRng(SpeechRandom);
+
+impl Default for SpeechRng {
+    fn default() -> Self {
+        Self(SpeechRandom::boot())
+    }
+}
 
 pub fn load_level(
     big_root: Option<&Path>,
     track: &str,
     character: &str,
     max_boost: f32,
+    lang: SpeechLanguage,
     screenshot: bool,
 ) -> Option<SfxLevel> {
-    load_level_event(big_root, track, character, max_boost, None, screenshot)
+    load_level_event(big_root, track, character, max_boost, None, lang, screenshot)
 }
 
 pub fn load_level_event(
@@ -98,6 +114,7 @@ pub fn load_level_event(
     character: &str,
     max_boost: f32,
     event_key: Option<u32>,
+    lang: SpeechLanguage,
     screenshot: bool,
 ) -> Option<SfxLevel> {
     let mode = std::env::var("SSX_SFX").unwrap_or_default().to_ascii_lowercase();
@@ -116,9 +133,7 @@ pub fn load_level_event(
         ssx_core::eprintln!("warning: sfx: no audio game info for {character} ({e:#}); the generic one");
         RiderAudioInfo::generic()
     });
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(5489, |d| d.subsec_nanos());
-    let mut mt = crate::render::avalanche::Mt19937::new(seed);
-    let mut banks = match riding_banks(big_root, &info, &rider, &mut |_, n| mt.below(n)) {
+    let mut banks = match riding_banks(big_root, &info, &rider, &mut |_, n| ssx_assets::career::random::below(n)) {
         Ok(b) => b,
         Err(e) => {
             ssx_core::eprintln!("warning: sfx unavailable: {e:#}");
@@ -160,8 +175,8 @@ pub fn load_level_event(
     }
     let verbose = std::env::var("SSX_SFX_LOG").is_ok_and(|v| v == "1");
     engine.set_verbose(verbose);
-    let lang = crate::audio::sfx_input::speech_lang();
-    let decision = ssx_assets::content::GameContent::of(big_root).sound_overrides_for(Some(&lang), Some(character));
+    let decision =
+        ssx_assets::content::GameContent::of(big_root).sound_overrides_for(Some(lang.code()), Some(character));
     if !decision.sounds.is_empty() {
         for id in engine.set_overrides(&decision.sounds) {
             ssx_core::eprintln!("warning: sfx: {id}: no interface of the level's engine defines it");
@@ -186,8 +201,8 @@ pub fn load_level_event(
         max_boost,
         volume,
         verbose,
-        seed,
         event_key,
+        lang,
     })
 }
 
@@ -212,8 +227,9 @@ pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
         rider: l.rider.clone(),
         track: l.info.clone(),
         speech: speech_enabled(),
+        lang: l.lang,
         deadly_descent,
-        seed: l.seed,
+        rng: world.get_resource_or_insert_with(SpeechRng::default).0.clone(),
     });
     world.insert_resource(Sfx {
         rider: RiderSounds::default(),
@@ -222,6 +238,8 @@ pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
         track: InputTrack::default(),
         max_boost: l.max_boost,
         last_steps: 0,
+        tags_through: 0,
+        tag_log: std::env::var("SSX_ANIM_TAG_LOG").is_ok(),
         log_from: 0,
         verbose: l.verbose,
         pending,
@@ -232,12 +250,12 @@ pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
         intro: None,
         big_root: l.big_root,
         geotags_seen: 0,
-        carried: Carried::default(),
         event_key: l.event_key,
         held: None,
         paused_frames: 0,
         objects: l.objects,
         character,
+        carried: Carried::default(),
     });
 }
 
@@ -247,7 +265,6 @@ impl Sfx {
     }
 }
 
-#[allow(dead_code)]
 pub fn end_level(world: &mut World) {
     if !world.contains_resource::<crate::audio::music::frontend::FrontEndAudio>()
         && let Some(g) = world.get_resource::<GameAudio>()
@@ -260,7 +277,8 @@ pub fn end_level(world: &mut World) {
 }
 
 pub fn insert(app: &mut App, big_root: Option<&Path>, track: &str, character: &str, max_boost: f32, screenshot: bool) {
-    let Some(level) = load_level(big_root, track, character, max_boost, screenshot) else { return };
+    let lang = app.world().get_resource::<SpeechLanguage>().copied().unwrap_or_else(|| SpeechLanguage::of(None));
+    let Some(level) = load_level(big_root, track, character, max_boost, lang, screenshot) else { return };
     register(app);
     start_level(app.world_mut(), Some(level));
 }
@@ -322,17 +340,20 @@ impl FirstFrameLoads {
         });
         let speech = p.speech.then(|| {
             let pilot = speech_pilot(&p.big_root, heli)?;
-            let setup = speech_setup(
-                &p.big_root,
-                &p.character,
-                &p.rider,
-                &p.track,
+            let setup = SpeechDrop {
+                big_root: &p.big_root,
+                character: &p.character,
+                rider: &p.rider,
+                track: &p.track,
                 pilot,
-                &ride.session,
+                session: &ride.session,
                 drop,
-                p.deadly_descent,
-                p.seed,
-            );
+                deadly_descent: p.deadly_descent,
+                rng: p.rng,
+                random: ssx_assets::career::random::Source::Global,
+                lang: p.lang,
+            }
+            .setup();
             Ok((ssx_assets::sfx::speech::Speech::load(&p.big_root, &setup)?, setup))
         });
         Self { heli, bank, speech }
@@ -380,17 +401,22 @@ impl IntroLoad {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(bevy::ecs::system::SystemParam)]
+struct SfxWorld<'w, 's> {
+    time: Res<'w, Time>,
+    ride: Option<Res<'w, Ride>>,
+    cameras: Query<'w, 's, &'static GlobalTransform, With<Camera3d>>,
+    drop: Option<Res<'w, crate::audio::music::AudioDrop>>,
+}
+
 fn drive_sfx(
-    time: Res<Time>,
+    world: SfxWorld,
     mut sfx: ResMut<Sfx>,
     game: Res<GameAudio>,
-    ride: Option<Res<Ride>>,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
-    drop: Option<Res<crate::audio::music::AudioDrop>>,
     mut acc: Local<Accum>,
     mut profile_t: Local<f32>,
 ) {
+    let SfxWorld { time, ride, cameras, drop } = world;
     let Some(ride) = ride else { return };
     let mut marks = [std::time::Instant::now(); 4];
     let launched = sfx.event_key;
@@ -437,6 +463,7 @@ fn drive_sfx(
     sfx.last_steps = ride.steps;
     if respawn {
         sfx.carried = Carried::default();
+        sfx.tags_through = 0;
     }
     let carried = std::mem::take(&mut sfx.carried);
     rider_dead |= carried.rider_dead;
@@ -496,6 +523,13 @@ fn drive_sfx(
                 r.eog = crate::audio::sfx_input::end_of_game(&ride.session);
                 (r.time_dilating, r.time_dilation_state_one, r.time_dilation) = ride.session.executed_time_dilation();
                 sfx.rider.update(engine, &r);
+                for tag in ride.audio_tags_after(sfx.tags_through) {
+                    if sfx.tag_log {
+                        info!("anim tag {} (system {}, event {})", tag.name, tag.system, tag.event);
+                    }
+                    engine.fire_event(&tag.name, &[]);
+                }
+                sfx.tags_through = ride.steps;
                 for tag in &nis.tags {
                     engine.fire_event(tag, &[]);
                 }
@@ -523,17 +557,16 @@ fn drive_sfx(
         if step.race_start {
             sfx.rider.race_start(engine);
         }
-        drive_speech(
-            engine,
-            &ride.state,
-            ride.world(),
-            &ride.session,
-            &step,
-            &sfx.track,
-            &r,
-            sfx.speech_time,
-            &mut sfx.speech,
-        );
+        let frame = SpeechInputs {
+            s: &ride.state,
+            world: ride.world(),
+            session: &ride.session,
+            step: &step,
+            input: &sfx.track,
+            r: &r,
+            t: sfx.speech_time,
+        };
+        drive_speech(engine, frame, &mut sfx.speech);
         part(1, &mut from);
         let camera = cameras.iter().next().map(|t| (t.translation().to_array(), (*t.forward()).to_array()));
         let now_ms = sfx.speech_time * 1000.0;

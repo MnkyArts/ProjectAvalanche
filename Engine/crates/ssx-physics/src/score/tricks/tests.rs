@@ -382,6 +382,24 @@ fn tweak_with_r2_and_air_tricks_gate() {
 }
 
 #[test]
+fn classic_x_tweaks_the_grab() {
+    let t = tuning();
+    let grab = classic(false, false, false, true);
+    let mut s = TrickState { classic: true, ..TrickState::default() };
+    (0..20).for_each(|_| s.update(&t, &grab, &air(), 2.0));
+    assert!(s.is_tricking && !s.is_tweaking, "a classic grab first");
+    let x = TrickInput { x: true, tweak: true, ..grab };
+    s.update(&t, &x, &air(), 2.0);
+    assert!(s.is_tweaking && s.tweak_blend == 1.0, "X held: tweaking (blend {:?})", s.tweak_blend);
+    assert_eq!((s.phase, s.tweak_node), (TrickPhase::Enter, true));
+    (0..8).for_each(|_| s.update(&t, &x, &air(), 2.0));
+    assert_eq!((s.phase, s.tweak_node), (TrickPhase::Loop, true));
+    s.update(&t, &grab, &air(), 2.0);
+    assert_eq!((s.phase, s.tweak_node), (TrickPhase::Exit, true), "X released → tweak exit");
+    assert!(!s.is_tweaking);
+}
+
+#[test]
 fn signature_needs_super_tricky_and_counts_ticks_since_release() {
     let t = tuning();
     let sig = TrickInput { y: true, signature: true, ..TrickInput::default() };
@@ -499,13 +517,27 @@ fn classic_grind_tables_match_the_executables_groups() {
 }
 
 #[test]
-fn classic_boost_holds_x_for_twelve_ticks() {
-    let mut ticks = 0.0;
-    for _ in 0..5 {
-        ticks = classic_boost_ticks(ticks, true, 2.0);
-        assert!(!classic_boost_requested(ticks), "{ticks}");
-    }
-    ticks = classic_boost_ticks(ticks, true, 2.0);
-    assert!(classic_boost_requested(ticks), "{ticks}");
-    assert_eq!(classic_boost_ticks(ticks, false, 2.0), 0.0, "a release resets");
+fn the_wipeout_recovery_takes_the_schemes_boost_button() {
+    let x = TrickInput { x: true, ..TrickInput::default() };
+    let r2 = TrickInput { tweak: true, ..TrickInput::default() };
+    let none = TrickInput::default();
+    assert!(
+        wipeout_recovery_input(false, false, true, &x, 1.0) && !wipeout_recovery_input(false, false, true, &r2, 1.0)
+    );
+    assert!(
+        wipeout_recovery_input(false, false, false, &r2, 1.0) && !wipeout_recovery_input(false, false, false, &x, 1.0)
+    );
+    assert!(!wipeout_recovery_input(false, false, true, &x, 0.0), "no boost in the meter");
+    assert!(
+        wipeout_recovery_input(true, false, false, &none, 0.0) && wipeout_recovery_input(false, true, true, &none, 0.0)
+    );
+    assert!(!wipeout_recovery_input(false, false, false, &none, 5.0));
+}
+
+#[test]
+fn the_classic_boost_is_x_held_from_its_first_update() {
+    let x = TrickInput { x: true, ..TrickInput::default() };
+    let r2 = TrickInput { tweak: true, ..TrickInput::default() };
+    assert!(boost_requested(true, &x) && !boost_requested(true, &r2), "classic: X (`BLN_Pad_Classic_Boost`)");
+    assert!(boost_requested(false, &r2) && !boost_requested(false, &x), "standard: R2 (`BLN_Pad_R2_Hold`)");
 }

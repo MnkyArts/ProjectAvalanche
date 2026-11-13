@@ -35,6 +35,10 @@ impl Default for TrickySong {
 }
 
 impl TrickySong {
+    pub fn clip_playing(&self) -> bool {
+        matches!(self.playing, 1 | 3 | 5)
+    }
+
     pub fn new(setting: i32) -> Self {
         Self {
             race_event_type: -1,
@@ -143,10 +147,6 @@ impl TrickySong {
             self.playing = -1;
             self.sample_end = -1;
             self.log.push("TrickySampleEnd".into());
-            if let Some(h) = self.handle.take() {
-                aems.stop(h);
-                self.log.push("released after its sample".into());
-            }
         }
         self.countdown = self.countdown.saturating_sub(1);
         if self.super_tricky && self.race_event_type != SURVIVE_IT && !self.paused && self.countdown == 0 {

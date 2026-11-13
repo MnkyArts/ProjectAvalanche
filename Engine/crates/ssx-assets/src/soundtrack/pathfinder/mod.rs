@@ -247,7 +247,9 @@ impl Pathfinder {
         self.instantiate(e)
     }
 
-    // TODO(guess): the disc's latency is not modelled — a stream never reports 2 (its segments are in memory) and the front-end module's map load (0x830D0BC8: states 1 → 2 → 3) completes at its next update; settle: none needed unless the port streams from a slow medium.
+    // PORT(choice): the disc's latency is not modelled — a stream never reports 2 (its segments are in memory) and the
+    // front-end module's map load (0x830D0BC8: states 1 → 2 → 3) completes at its next update; enough unless the port
+    // streams from a slow medium; the console streams from its disc.
     pub fn stream_state(&self, i: usize) -> u8 {
         if let Some(inbox) = &self.score {
             return if self.players.get(i).and_then(Option::as_ref).is_some() { inbox.state } else { 0 };
@@ -397,6 +399,23 @@ mod tests {
         let ease = Fade { curve: 2, ..up };
         assert_eq!(ease.value(2000).0, Some(95));
         assert_eq!(Fade { curve: 0x7F, ..up }.value(1000), (None, false));
+    }
+
+    #[test]
+    fn a_stopped_stream_reports_no_node_and_zeros_scaled_by_its_pitch() {
+        let mut pf = Pathfinder::new(empty_map(), SegmentLengths::default());
+        assert!(pf.first_status().is_none(), "no player");
+        pf.add_player(1, false);
+        let s = pf.first_status().expect("player 1");
+        assert_eq!((s.node, s.duration, s.beat, s.to_beat, s.beat_number), (None, 0, 0, 0, 0));
+        pf.players[1].as_mut().expect("player 1").pitch = 0x2000;
+        let s = pf.status(1);
+        assert_eq!((s.node, s.bar, s.remaining, s.to_bar), (None, 0, 0, 0), "zeros scaled stay zeros");
+        pf.players[1].as_mut().expect("player 1").pitch = 0;
+        let s = pf.status(1);
+        let m = 0x7FFF_FFFF;
+        assert_eq!([s.duration, s.bar, s.beat, s.remaining, s.to_bar, s.to_beat], [m; 6], "a pitch of 0");
+        assert_eq!((s.node, s.beat_number), (None, 0));
     }
 
     #[test]

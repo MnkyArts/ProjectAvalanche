@@ -108,6 +108,41 @@ fn the_options_override_the_files_member_and_window_reads_no_file() {
 }
 
 #[test]
+fn the_display_member_is_written_off_the_main_thread_and_kept_at_the_exit() {
+    let dir = std::env::temp_dir().join(format!("ssx-bevy-display-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("settings.json");
+    std::fs::write(&file, r#"{"vsync": true}"#).unwrap();
+    let base = DisplaySettings::default();
+    let mut keeper = keeper::Keeper::start(file.clone(), base.clone()).unwrap();
+    let held = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let (started, launcher_file) = (held.clone(), file.clone());
+    let launcher = std::thread::spawn(move || {
+        ssx_assets::settings_file::update_object(&launcher_file, |m| {
+            started.wait();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            m.insert("vsync".into(), serde_json::Value::Bool(false));
+            Ok(())
+        })
+        .unwrap();
+    });
+    held.wait();
+    let t = std::time::Instant::now();
+    for width in [800, 1024, 1600] {
+        keeper.keep(DisplaySettings { window: Some((width, 900)), mode: WindowMode::Borderless, ..base.clone() });
+    }
+    assert!(t.elapsed() < std::time::Duration::from_millis(100), "the requests waited {:?}", t.elapsed());
+    launcher.join().unwrap();
+    keeper.finish();
+    let (kept, notes) = ssx_assets::display::read_member(&file);
+    assert_eq!((kept.window, kept.mode, notes.len()), (Some((1600, 900)), WindowMode::Borderless, 0));
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains(r#""vsync": false"#) || text.contains(r#""vsync":false"#), "the launcher's change: {text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_display_options_are_read_strictly() {
     assert_eq!(mode_arg("Borderless"), Ok(WindowMode::Borderless));
     assert!(fullscreen_arg("windowed").is_err());

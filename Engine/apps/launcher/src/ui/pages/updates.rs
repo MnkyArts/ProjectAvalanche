@@ -149,11 +149,11 @@ impl Launcher {
         if download && let Err(e) = self.update.download(ui.ctx()) {
             self.update = Update::Failed(e);
         }
-        if apply
-            && blocker.is_none()
-            && let Err(e) = self.update.apply()
-        {
-            self.update = Update::Failed(e);
+        if apply && blocker.is_none() {
+            self.settings_save.flush(&mut self.settings, &mut self.saved);
+            if let Err(e) = self.update.apply() {
+                self.update = Update::Failed(e);
+            }
         }
         if discard {
             self.update.discard();

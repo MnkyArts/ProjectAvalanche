@@ -31,12 +31,19 @@ struct Shared {
     level: Option<Engine>,
 }
 
-struct MusicBus(Arc<Mutex<Shared>>);
+struct MusicBus {
+    shared: Arc<Mutex<Shared>>,
+    script_song: bool,
+}
 
 impl MusicSource for MusicBus {
     fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
-        let Ok(mut s) = self.0.lock() else { return };
+        let Ok(mut s) = self.shared.lock() else { return };
+        #[cfg(feature = "scripts")]
+        {
+            self.script_song = s.level.is_some();
+        }
         let volume = s.volume;
         match &mut s.engine {
             Engine::Dd(dd) => dd.music.render(out),
@@ -48,7 +55,7 @@ impl MusicSource for MusicBus {
     }
 
     fn finished(&self) -> bool {
-        let Ok(s) = self.0.lock() else { return true };
+        let Ok(s) = self.shared.lock() else { return true };
         #[cfg(feature = "scripts")]
         let mut s = s;
         let done = match &s.engine {
@@ -64,11 +71,7 @@ impl MusicSource for MusicBus {
     }
 
     fn script_song(&self) -> bool {
-        #[cfg(feature = "scripts")]
-        if let Ok(s) = self.0.lock() {
-            return s.level.is_some();
-        }
-        false
+        self.script_song
     }
 }
 
@@ -237,7 +240,7 @@ pub fn start_level(world: &mut World, level: Option<MusicLevel>, drop_key: Optio
     if let Some(g) = world.get_resource::<GameAudio>()
         && let Ok(mut m) = g.out.lock()
     {
-        m.music = Some(Box::new(MusicBus(shared.clone())));
+        m.music = Some(Box::new(MusicBus { shared: shared.clone(), script_song: false }));
         (m.remix_event_type, m.swapped) = (l.remix_type, true);
     }
     world.insert_resource(Music {
@@ -253,7 +256,6 @@ pub fn start_level(world: &mut World, level: Option<MusicLevel>, drop_key: Optio
     });
 }
 
-#[allow(dead_code)]
 pub fn end_level(world: &mut World) {
     if let Some(music) = world.get_resource::<Music>() {
         let _turn = GameTurn::take();

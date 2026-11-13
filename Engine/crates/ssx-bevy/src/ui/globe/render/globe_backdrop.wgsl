@@ -56,6 +56,19 @@ fn fs_background(in: FullOut) -> @location(0) vec4<f32> {
     return vec4<f32>(sqrt(abs(b.camera.w * t * t)), 1.0);
 }
 
+// PORT(choice): a slot movie keeps its aspect and covers the frame, cropped at the frame's edges (the slot is the
+// port's own; the disc's fe_background is stretched over any frame, its full-screen movies fitted whole with black
+// bars).
+@fragment
+fn fs_background_movie(in: FullOut) -> @location(0) vec4<f32> {
+    let frame = 1.0 / b.sun.zw;
+    let movie = vec2<f32>(textureDimensions(background));
+    let covered = movie * max(frame.x / movie.x, frame.y / movie.y);
+    let uv = (d3d9_uv(in.position) - 0.5) * frame / covered + 0.5;
+    let t = textureSampleLevel(background, clamp_linear, uv, 0.0).rgb;
+    return vec4<f32>(sqrt(abs(b.camera.w * t * t)), 1.0);
+}
+
 const PI: f32 = 3.14159265;
 
 fn sky_atan2(y: f32, x: f32) -> f32 {

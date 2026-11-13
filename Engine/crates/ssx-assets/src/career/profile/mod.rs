@@ -11,6 +11,7 @@ use ssx_formats::rnf::{CampaignGraph, NodeKind};
 use super::data::DropType;
 use super::globe::focus::{self, CampaignGlobe};
 use super::world_tour::{self, MovieWhen};
+use super::{CareerDb, UnlockKind};
 
 pub use campaign::*;
 pub use results::*;
@@ -343,7 +344,8 @@ impl Profile {
         r.value = r.value.saturating_add(n);
     }
 
-    // TODO(guess): a port choice for the port's own older saves, not the game's behaviour (a console save never has these rows); settle: remove once no such save is in use.
+    // PORT(choice): for the port's own older saves, not the game's behaviour; to be removed once no such save is in
+    // use; a console save never has these rows.
     pub fn own_campaign_riders(&mut self, rules: &Rules) {
         let nodes: Vec<(i32, Vec<String>)> = rules
             .graph
@@ -363,6 +365,35 @@ impl Profile {
                 }
             }
         }
+    }
+
+    pub fn apply_unlockables(&mut self, db: &CareerDb) -> Vec<String> {
+        let mut lines = Vec::new();
+        for u in &db.unlockables {
+            match u.kind {
+                UnlockKind::Rider => {
+                    self.unlocked_riders.insert(u.key);
+                    if !self.riders.contains_key(&u.key) {
+                        let created = {
+                            let riders = &self.riders;
+                            RiderStats::created_for(db, u.key, |k| riders.contains_key(&k))
+                        };
+                        self.riders.insert(u.key, created);
+                    }
+                    lines.push(format!("dlc: unlocked rider {} ({:#010x})", u.token, u.key));
+                }
+                UnlockKind::Geotag => {
+                    self.owned_items.insert(u.key);
+                    lines.push(format!("dlc: geotag {} ({:#010x}) in the inventory", u.token, u.key));
+                }
+                UnlockKind::Item => {
+                    self.unlocked_items.insert(u.key);
+                    lines.push(format!("dlc: item {} ({:#010x}) unlocked", u.token, u.key));
+                }
+                UnlockKind::Unknown => {}
+            }
+        }
+        lines
     }
 
     pub fn credits(&self) -> i64 {

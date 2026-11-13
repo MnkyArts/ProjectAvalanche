@@ -13,14 +13,15 @@ use super::throttle::Throttle;
 use crate::http::limits::{Rate, Verdict};
 use crate::http::{HttpState, Reply};
 
-// TODO(guess): 2 a second with a burst of 8 per address and per key (an operator types or a script runs a few commands
+// PORT(choice): 2 a second with a burst of 8 per address and per key (an operator types or a script runs a few commands
 // in a row); 5 failures, then one a minute, per address and per key (MTA locks an address out after repeated wrong
-// passwords); 1 024 keys tracked; settle: the operators' tools and a measured brute-force attempt.
+// passwords); 1 024 keys tracked; tuning: the operators' tools and a measured brute-force attempt; the original has no
+// dedicated server.
 pub const RCON_RATE: Rate = Rate { per_second: 2.0, burst: 8.0 };
 pub const RCON_FAILURES: Rate = Rate { per_second: 1.0 / 60.0, burst: 5.0 };
 pub const TRACKED_KEYS: usize = 1024;
-// TODO(guess): 5 s (a command runs within a tick; `bans reload` reads a file of at most 16 MiB); settle: the slowest
-// command on a loaded server.
+// PORT(choice): 5 s (a command runs within a tick; `bans reload` reads a file of at most 16 MiB); tuning: the slowest
+// command on a loaded server; the original has no dedicated server.
 pub const WORLD_ANSWER: Duration = Duration::from_secs(5);
 
 pub struct RconLimits {

@@ -270,12 +270,25 @@ pub(super) fn transition(s: &mut RiderState, w: &World, stick: Vec2, dt: f32, gr
         RideState::Riding => {
             if s.get_going.is_some() {
             } else if (if s.graph.driven { s.graph.carving_stopped } else { s.stopped })
-                && get_going(w, stick, s.stick_prev)
+                && get_going(s.reverse_camera.is_some(), stick, s.stick_prev)
             {
                 let items = get_going_blend(GET_GOING_ANGLE).unwrap_or_default();
                 s.get_going = Some(GetGoing { ticks: 0.0, items });
                 (s.stopped, s.nested_stable) = (false, false);
-            } else if !c.is_close && !s.recovering_from_uber_bail() && can_go_airborne_from_grind_trick(s) {
+            } else if !c.is_close
+                && !s.recovering_from_uber_bail()
+                && (if s.graph.driven {
+                    s.graph.allow_airborne
+                } else {
+                    // TODO(guess): the no-graph unit-test path stands in for the four `SEQ_bail_ground_*` actors'
+                    // `BLN_AllowAirborne` `BoolGameStateTag` (Time 0, Duration 20, Value false, Mode 1, ResetOnLeave)
+                    // with `landing.ticks > 20`; `TagTracker_WindowTest` 0x8319E1D0 keeps a tag active through
+                    // `Time + Duration`, and the leave is deferred to the next update (tick 22 in the `ride_sim`
+                    // trace). A ride's graph supplies that signal. Settle: a unit-test fixture with the tag set.
+                    !s.landing.is_bailing() || s.landing.ticks > crate::landing::BAIL_ALLOW_AIRBORNE_TICKS
+                })
+                && can_go_airborne_from_grind_trick(s)
+            {
                 s.state = RideState::Airborne;
                 s.first_air_tick = true;
                 s.stopped = false;
@@ -350,8 +363,8 @@ pub fn stop_test(
         && (pulling_back || accel <= c.stop_accel_threshold || (is_stopped && !go))
 }
 
-pub fn get_going(_w: &World, stick: Vec2, prev: Vec2) -> bool {
-    get_going_gesture(stick, prev)
+pub fn get_going(reverse_camera: bool, stick: Vec2, prev: Vec2) -> bool {
+    if reverse_camera { omni_get_going_gesture(stick, prev) } else { get_going_gesture(stick, prev) }
 }
 
 pub fn get_going_gesture(stick: Vec2, prev: Vec2) -> bool {
@@ -361,5 +374,10 @@ pub fn get_going_gesture(stick: Vec2, prev: Vec2) -> bool {
         let back = a > 210f32.to_radians() && a < 330f32.to_radians();
         (0.25..=1.0).contains(&mag) && !back
     };
+    inside(stick) && !inside(prev)
+}
+
+pub fn omni_get_going_gesture(stick: Vec2, prev: Vec2) -> bool {
+    let inside = |s: Vec2| (0.25..=1.0).contains(&s.length().min(1.0));
     inside(stick) && !inside(prev)
 }

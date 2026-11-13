@@ -50,7 +50,6 @@ impl FrontEnd {
         }
     }
 
-    // TODO(guess): a movie stays in the manager through one FE update after its request before its end is taken (the new-game flow polls it; a failed open ended at once and the flow waited for good); settle: the order of the new-game update (0x825908F0) and the movie manager's (0x823FB648) in the frame.
     pub fn movie_finished(&mut self, env: &mut FeEnv) {
         if self.movie.is_some() && !self.movie_seen {
             self.movie_end = true;

@@ -71,6 +71,7 @@ pub struct DropPanel {
     pub level: String,
     pub warning: i32,
     pub time_of_day: i32,
+    pub event_type_raw: i32,
 }
 
 impl Default for DropPanel {
@@ -105,6 +106,7 @@ impl Default for DropPanel {
             level: String::new(),
             warning: 0,
             time_of_day: 0,
+            event_type_raw: -1,
         }
     }
 }
@@ -328,10 +330,11 @@ impl UiValues {
     }
 }
 
-#[allow(dead_code)]
 pub mod id {
+    pub const EQUIPMENT_LIMITED_TIME_OFFER: u16 = 0x66;
     pub const FE_OFFSET_X: u16 = 0x97;
     pub const FE_OFFSET_Y: u16 = 0x98;
+    pub const FLOW_RECEIVE_NOTIFICATIONS: u16 = 0xA6;
     pub const HUDMESSAGE_DROPS_SURVIVED_LABEL: u16 = 0xCF;
     pub const HUDMESSAGE_DROPS_SURVIVED_TEXT: u16 = 0xD0;
     pub const HUDMESSAGE_IS_ENABLED: u16 = 0xD1;
@@ -402,6 +405,7 @@ pub mod id {
     pub const NIS_TITLE_MESSAGE: u16 = 0x119;
     pub const NO_NIS_PROMPT: u16 = 0x11A;
     pub const NIS_IS_ACTIVE: u16 = 0x1B7;
+    pub const PAUSE_MENU_DISABLE: u16 = 0x1BB;
     pub const OXYGEN_TANK_LEVEL: u16 = 0x11B;
     pub const PLAYER_DESCENT: u16 = 0x11C;
     pub const PLAYER_DESCENT_WITH_LAPS: u16 = 0x11D;

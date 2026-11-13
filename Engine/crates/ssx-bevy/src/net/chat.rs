@@ -9,8 +9,8 @@ use super::session::NetSession;
 use crate::shell::game_mode::GameUiRes;
 use crate::shell::live::{LiveLevel, LiveSession};
 
-// TODO(guess): 32 lines a frame (the layer shows 6 and keeps 32); settle: none (a bound on what a server can make a
-// frame do).
+// PORT(choice): 32 lines a frame (the layer shows 6 and keeps 32), a bound on what a server can make a frame do; the
+// original has no chat.
 const LINES_PER_FRAME: usize = 32;
 
 #[derive(Default)]

@@ -184,13 +184,13 @@ pub(super) fn spawn_hud(mut commands: Commands) {
 
 const RIDE_CONTROLS: &str = "A/D or Left/Right steer (air: spin) | S/Down brake, W/Up tuck (air: flip) | Space jump (on \
 release; air: A grab) | grabs I/J/L/K = Y/X/B/A (ground / rail: J/L = X/B nose / tail press) | Shift R2 (boost / tweak) | Ctrl L2 (grind) | Ctrl+Shift signature (L2+R2) \
-| E R1 (wingsuit) | hold Backspace rewind | pad: left stick, right stick grabs and up = jump, A/B/X/Y, R2, L2 grind, L2+R2, \
+| E R1 (wingsuit) | hold Backspace rewind | Num8/4/6/2 right stick (grabs, up = jump) | pad: left stick, right stick grabs and up = jump, A/B/X/Y, R2, L2 grind, L2+R2, \
 R1 wingsuit, L1 rewind | R respawn | N rail \
 debug | Tab chase/fly | F wireframe | H overlay";
 
 const RIDE_CONTROLS_CLASSIC: &str = "Classic: D-pad or A/D carve (air: spin) | S/Down brake, W/Up tuck (air: flip) | Space A jump \
-(on release; air: A wingsuit hold 8) | Q/E/Z/X = LB/RB/LT/RT grabs (exact shoulder sets; pad right stick up/down = nose/tail) | J X \
-(boost hold 12 / tweak) | Ctrl Y grind hold 10 | L B rewind hold 12 | Ctrl+Shift signature | pad: D-pad, shoulders, right \
+(on release; air: A held wingsuit) | Q/E/Z/X = LB/RB/LT/RT grabs (exact shoulder sets; right stick (Num8/4/6/2) up/down = nose/tail) | J X \
+(boost / tweak) | Ctrl Y grind | L B rewind | Ctrl+Shift signature | pad: D-pad, shoulders, right \
 stick up/down nose/tail | R respawn | N rail debug | Tab chase/fly | F wireframe | H overlay";
 
 fn death_hud(ride: &Ride) -> String {
@@ -466,10 +466,10 @@ pub(super) fn update_hud(
                 .and_then(|l| l.intro.as_ref())
                 .is_some_and(|i| { matches!(i.scene, ssx_physics::nis::Scene::Ready { .. }) }) =>
             {
-                "INTRO: in the helicopter's door (W / A / right stick up: GO)"
+                "INTRO: in the helicopter's door (W / A / right stick up, Num8: GO)"
             }
             _ if s.start.as_ref().is_some_and(|l| l.intro.is_some()) => "INTRO: the jump",
-            _ if s.start.as_ref().is_some_and(|l| l.idle()) => "LEVEL START (W / A / right stick up: GO)",
+            _ if s.start.as_ref().is_some_and(|l| l.idle()) => "LEVEL START (W / A / right stick up, Num8: GO)",
             _ if s.start.is_some() => "GO",
             _ if ride.rewinding => "REWIND",
             _ if ride.session.event_ended => "EVENT OVER",

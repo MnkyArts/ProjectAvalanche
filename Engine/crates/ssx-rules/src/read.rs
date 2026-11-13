@@ -3,9 +3,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-// TODO(guess): 64 MiB, a port limit about ten times the disc's largest rules file (6 484 944 bytes); a folder whose
-// file is larger is refused, so a damaged or hostile data folder cannot make the reader hold more; settle: the largest
-// rules file an operator's disc or a later data format needs.
+// PORT(choice): 64 MiB, a port limit about ten times the disc's largest rules file (6 484 944 bytes); a folder whose
+// file is larger is refused, so a damaged or hostile data folder cannot make the reader hold more; tuning: the largest
+// rules file an operator's disc or a later data format needs; the original has no dedicated server.
 pub const MAX_FILE_BYTES: u64 = 64 << 20;
 
 pub fn read_file(path: &Path) -> Result<Vec<u8>> {

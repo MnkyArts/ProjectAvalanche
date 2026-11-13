@@ -212,13 +212,13 @@ pub struct GameCaps {
     pub frame_bound: Duration,
 }
 
-// TODO(guess): the draw caps (1024 calls a frame, 512 per package, 2048 glyphs, 16 stages of pixels), 256 markers and
+// PORT(choice): the draw caps (1024 calls a frame, 512 per package, 2048 glyphs, 16 stages of pixels), 256 markers and
 // 64 key binds per package, 32 sounds a frame (8 per package), one HUD message and one `playMusic` a second per package
-// and the frame bound of 20 ms are port choices, not the game's (it has no mod scripts). The draw caps keep what the
-// UI's render list spends on the scripts' layer near 2 ms a frame at worst: measured with eight packages drawing
-// 4 088 rects moving every frame (about 0.8 µs of the UI's CPU each) and 4 088 four-glyph texts changing every frame
-// (about 0.7 µs a glyph), development machine; a full scoreboard is a few hundred calls. Settle: measure real HUD and
-// gamemode packages (M8) on the target machines.
+// and the frame bound of 20 ms are the port's. The draw caps keep what the UI's render list spends on the scripts'
+// layer near 2 ms a frame at worst: measured with eight packages drawing 4 088 rects moving every frame (about 0.8 µs
+// of the UI's CPU each) and 4 088 four-glyph texts changing every frame (about 0.7 µs a glyph), development machine; a
+// full scoreboard is a few hundred calls; tuning: measure real HUD and gamemode packages (M8) on the target machines;
+// the game has no mod scripts.
 pub const GAME_CAPS: GameCaps = GameCaps {
     draw_calls: 1024,
     draw_calls_package: 512,

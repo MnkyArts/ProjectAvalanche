@@ -310,6 +310,7 @@
   "TXT_AVA_DATA_NO_MOVIES": "Your game data was set up by an earlier version and has no movies and no content index.",
   "TXT_AVA_DATA_INDEX_DAMAGED": "The content index of your game data is damaged.",
   "TXT_AVA_DATA_MARKER_DAMAGED": "The setup record of your game data is damaged.",
+  "TXT_AVA_DATA_FILES_DAMAGED": "Files of your game data are missing or damaged.",
   "TXT_AVA_DATA_UNFINISHED": "The setup of your game data has not finished.",
   "TXT_AVA_DATA_MISSING": "No game data is set up.",
   "TXT_AVA_DATA_TODO_REPAIR": "In the launcher, open Settings, Game Data and choose Repair game data (it reads your SSX disc image again).",

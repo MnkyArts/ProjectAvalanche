@@ -47,6 +47,7 @@ pub struct GlobeView {
     pub post: Option<Arc<FePost>>,
     pub dt: f32,
     pub dump: Option<Arc<PathBuf>>,
+    pub backdrop_movie: Option<bevy::prelude::Handle<bevy::prelude::Image>>,
 }
 
 #[derive(Clone, Debug, Default)]

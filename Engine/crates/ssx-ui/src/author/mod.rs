@@ -38,7 +38,9 @@ impl std::error::Error for LayoutError {}
 pub mod limits {
     use super::json::Limits;
 
-    // TODO(guess): a port choice — the layout limits below are set far above the port's own layouts (the keyboard: 4 imports, 2 symbols, 8 children, 16 inputs, 4.3 KiB) and below what a frame can draw; settle: the layouts phase 7's resources bring, measured.
+    // PORT(choice): the layout limits below are set far above the port's own layouts (the keyboard: 4 imports, 2
+    // symbols, 8 children, 16 inputs, 4.3 KiB) and below what a frame can draw; tuning: the layouts phase 7's resources
+    // bring, measured; the original has no such layouts.
 
     pub const JSON: Limits = Limits { max_bytes: 256 * 1024, max_depth: 16, max_values: 20_000, max_string: 4096 };
     pub const NAME: usize = 64;

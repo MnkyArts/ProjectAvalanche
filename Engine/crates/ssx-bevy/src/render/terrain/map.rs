@@ -15,7 +15,9 @@ use super::{
     Bounds, LoadedTrack, MeshLayers, Piece, TexturedTerrain, TrackStats, game_vertex_normals, load_snow_noise,
 };
 
-// TODO(guess): a port choice — a map's rail has no baked occlusion, so a7 is 1.0 (no occlusion); the disc's a7 is baked per vertex (101 values on the rail meshes, 1.0 the most common: 22 996 of terrain_rail_red_mat's 49 160 vertices); settle: an author's occlusion for a rail node (an attribute like the terrain's `_AVA_TERRAIN_B`).
+// PORT(choice): a map's rail has no baked occlusion, so a7 is 1.0 (no occlusion); an author's occlusion for a rail node
+// (an attribute like the terrain's `_AVA_TERRAIN_B`) would set it; the disc's a7 is baked per vertex (101 values on the
+// rail meshes, 1.0 the most common: 22 996 of terrain_rail_red_mat's 49 160 vertices).
 const RAIL_WEIGHTS: [f32; 8] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
 
 const RAIL_MATERIAL_A6_ZERO: &str = "terrain_rail_damn_pipe_mat";

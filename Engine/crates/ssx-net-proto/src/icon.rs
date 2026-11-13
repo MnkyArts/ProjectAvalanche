@@ -3,12 +3,13 @@ use std::io::Cursor;
 use sha2::{Digest, Sha256};
 
 pub const ICON_SIDE: u32 = 96;
-// TODO(guess): 64 KiB, the 36 864 bytes of 96 x 96 RGBA stored without compression plus the PNG's chunks and room
-// for palettes and metadata; FiveM's own cap of its icon was not read here (no network); settle: the icons operators
-// make.
+// PORT(choice): 64 KiB, the 36 864 bytes of 96 x 96 RGBA stored without compression plus the PNG's chunks and room for
+// palettes and metadata; FiveM's own cap of its icon was not read here (no network); tuning: the icons operators make;
+// the original has no server browser.
 pub const MAX_ICON_BYTES: usize = 64 * 1024;
-// TODO(guess): 1 MiB, far above what a 96-pixel image of 16-bit RGBA needs (a row of 769 bytes and the 32 KiB window)
-// and far below what hurts a client; settle: none (a bound on hostile input, measured by the tests' largest icon).
+// PORT(choice): 1 MiB, far above what a 96-pixel image of 16-bit RGBA needs (a row of 769 bytes and the 32 KiB window)
+// and far below what hurts a client, a bound on hostile input, measured by the tests' largest icon; the original has no
+// server browser.
 const DECODER_BYTES: usize = 1024 * 1024;
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 

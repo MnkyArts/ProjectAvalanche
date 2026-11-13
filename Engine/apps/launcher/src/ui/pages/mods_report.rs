@@ -39,7 +39,10 @@ impl Launcher {
         }
         if !r.skipped.is_empty() {
             widgets::heading(ui, "Skipped at the start");
-            let lines = r.skipped.iter().map(|k| format!("{}: {}", k.folder, super::mods::below_mods(&k.reason)));
+            let lines = r
+                .skipped
+                .iter()
+                .map(|k| format!("{}: {}", k.folder, super::mods::below_mods(&self.app_dir, &k.reason)));
             capped(ui, theme::ERROR, lines.collect::<Vec<_>>().into_iter());
         }
         if !r.blocklists.is_empty() {

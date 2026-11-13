@@ -34,9 +34,10 @@ pub const STORAGE_FOLDER: &str = "script-data";
 
 const JOBS: usize = 64;
 
-// TODO(guess): 30 s; each call of a change is cut at the server's call backstop (400 ms) and each chain at 800 ms, so a
-// change of up to about 25 resources whose scripts each spend a whole call and a whole chain starting still answers, a
-// larger change of such scripts is refused (and undone by the thread); settle: the start times of real servers' sets.
+// PORT(choice): 30 s; each call of a change is cut at the server's call backstop (400 ms) and each chain at 800 ms, so
+// a change of up to about 25 resources whose scripts each spend a whole call and a whole chain starting still answers,
+// a larger change of such scripts is refused (and undone by the thread); tuning: the start times of real servers' sets;
+// the original runs no mod scripts.
 pub(crate) const ANSWER_BOUND: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]

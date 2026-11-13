@@ -23,6 +23,7 @@ pub struct CheckOptions<'a> {
     pub texture_limits: texture::Limits,
     pub shader_check: Option<&'a Path>,
     pub script_check: Option<&'a Path>,
+    pub map_check: Option<&'a Path>,
 }
 
 pub struct Report {
@@ -49,6 +50,8 @@ pub fn check(dir: &Path, opts: &CheckOptions<'_>) -> Result<Report> {
         super::tracks::check(&mut c, &m, dir, &crate::setup::big_root(opts.data), opts.app_dir);
         super::rider::check(&mut c, &m, dir, &crate::setup::big_root(opts.data), opts.app_dir);
         super::scripts::check(&mut c, &m, opts.script_check);
+        let others = super::tricks::other_dirs(opts.app_dir, opts.with);
+        super::map_start::check(&mut c, &crate::setup::big_root(opts.data), &others, opts.map_check);
         super::movie::check(&mut c, dir);
         super::data::check(&mut c, &m, dir, &crate::setup::big_root(opts.data));
         super::data::check_earlier(&mut c, &m, dir, &crate::setup::big_root(opts.data));
@@ -198,7 +201,8 @@ fn check_ids(c: &mut Checked, m: &Manifest, opts: &CheckOptions<'_>) {
             Some(
                 *id == ssx_content::sky::scattering_id()
                     || super::m6::is_port_id(id)
-                    || super::super::markers::PortMarkers.has(id),
+                    || super::super::markers::PortMarkers.has(id)
+                    || super::super::fmv::port::is_slot(id),
             )
         } else if ns == m.resource.name {
             Some(m.add.contains_key(id))
@@ -210,13 +214,18 @@ fn check_ids(c: &mut Checked, m: &Manifest, opts: &CheckOptions<'_>) {
             continue;
         };
         match known {
-            Some(true) => {}
+            Some(true) => {
+                if let Some(note) = super::super::fmv::port::slot_note(id) {
+                    push(c, Severity::Note, MANIFEST_FILE, at, format!("{section} {id}: {note}"));
+                }
+            }
             Some(false) => {
                 let whose = match ns {
                     BASE_NAMESPACE => "the base game has no such id (`ssx-assets content ids` lists them)".to_string(),
                     PORT_NAMESPACE => "the port's own content is `ava:sky/scattering`, its built views \
-                                       (`ava:ui/views/ava_*`), strings (`ava:string/txt_ava_*`) and markers \
-                                       (`ava:marker/{ring, cylinder, arrow, chevron, beam, gate}`)"
+                                       (`ava:ui/views/ava_*`), strings (`ava:string/txt_ava_*`), markers \
+                                       (`ava:marker/{ring, cylinder, arrow, chevron, beam, gate}`) and its movie \
+                                       slot (`ava:movie/fe_background`)"
                         .to_string(),
                     _ => format!("{ns}'s [add] has no such id"),
                 };

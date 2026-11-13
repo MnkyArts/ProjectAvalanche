@@ -9,7 +9,8 @@ use ssx_assets::sfx::output::feed::{ALSA_ORDER, DeviceFeed, DeviceFormat, IN_ORD
 use ssx_assets::sfx::output::sim::{SimDevice, SimSpec};
 use ssx_assets::sfx::output::{Output, RATE, stats};
 
-// TODO(guess): a port choice (the console's XAudio takes 256-sample frames); settle: the player logs' `audio:` lines from more machines (`SSX_AUDIO_BUFFER=<frames>` tries another).
+// PORT(choice): 0.05 s of device buffer; tuning: the player logs' `audio:` lines from more machines
+// (`SSX_AUDIO_BUFFER=<frames>` tries another); the console's XAudio takes 256-sample frames.
 const BUFFER_SECONDS: f64 = 0.05;
 
 #[derive(Default)]

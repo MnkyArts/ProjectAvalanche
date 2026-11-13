@@ -239,7 +239,9 @@ impl Shell {
         }
     }
 
-    // TODO(guess): the quit path for a level that cannot load (the game has no reachable error screen: neither its nav event `go_to_error_screen` nor its message 0x4211FC81 has a live sender — the one sender, 0x82481B28, has no caller; a console disc has no missing level); settle: none (a port choice).
+    // PORT(choice): the quit path for a level that cannot load; the game has no reachable error screen (neither its nav
+    // event `go_to_error_screen` nor its message 0x4211FC81 has a live sender — the one sender, 0x82481B28, has no
+    // caller), and a console disc has no missing level.
     fn level_lost(&mut self, ui: &mut GameUi) {
         error!("shell: the level did not come up: back to the front end (no result is posted)");
         ui.fe_call(|fe, env| {
@@ -314,7 +316,8 @@ impl Shell {
         let ge_drop = fe.career.event(l.drop).map(|e| e.drop).context("the launched drop has no event")?;
         info!("shell: game setup (0x82498BA0): {}", l.setup.describe(&fe.career));
         let n = self.rides + 1;
-        let track_dir = self.big_root.join("data0/data/xenon/gameexplorer").join(&l.track);
+        let track_dir = ssx_assets::data_roots::track_dir(&self.big_root, &l.track)
+            .with_context(|| format!("{}: no track folder (the disc's data0 or a mounted package)", l.track))?;
         let drop_index = game_level::drop_index(&self.big_root, &l.track, ge_drop)?;
         let spec = LevelSpec {
             track_dir,
@@ -329,6 +332,7 @@ impl Shell {
             aspect: self.aspect,
             ride: Some(level::RideOptions {
                 event_key: Some(l.drop),
+                free_ride: l.free_ride,
                 collected_geotags: fe.profile.collected_geotags.iter().copied().collect(),
                 game: true,
                 classic: ui.values.int(ssx_ui::game::values::id::SETTINGS_GAMEPLAY_CONTROLLER_SCHEME) != 0,
@@ -365,6 +369,7 @@ impl Shell {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let big_root = self.big_root.clone();
+        let speech_lang = self.speech_lang;
         let song_flags = fe.music.switches();
         let block_in = fe.career.event(l.drop).map(|e| {
             use ssx_assets::sfx::speech::launch;
@@ -389,6 +394,7 @@ impl Shell {
                         &spec.character,
                         data.max_boost(),
                         event,
+                        speech_lang,
                         false,
                     );
                     let game = game_level::LevelLoad::load(opts, &data)?;

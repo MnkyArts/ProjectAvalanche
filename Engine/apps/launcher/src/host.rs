@@ -83,7 +83,11 @@ impl Default for HostSettings {
 
 impl HostSettings {
     pub fn folder(&self) -> PathBuf {
-        self.folder.clone().unwrap_or_else(|| crate::settings::app_dir().join("Server"))
+        self.folder_in(&crate::settings::app_dir())
+    }
+
+    pub fn folder_in(&self, app_dir: &Path) -> PathBuf {
+        self.folder.clone().unwrap_or_else(|| app_dir.join("Server"))
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -264,13 +268,14 @@ pub fn run(h: &HostSettings) -> Invocation {
     Invocation { program: crate::command::server_exe(), args, env: Vec::new() }
 }
 
-// TODO(guess): 2 000 lines (the viewer's output list's), 400 characters a line, 6 s for the server's own stop (its 2 s
-// grace, the master's goodbye at most 3 s, a second's margin); settle: a busy server's stop measured.
+// PORT(choice): 2 000 lines (the viewer's output list's), 400 characters a line, 6 s for the server's own stop (its 2 s
+// grace, the master's goodbye at most 3 s, a second's margin); tuning: a busy server's stop measured; the original has
+// no launcher.
 const LINES: usize = 2000;
 const LINE: usize = 400;
 pub const STOP_WAIT: Duration = Duration::from_secs(6 + HOST_ROUND_END_SECS as u64 + 5 + 2);
-// TODO(guess): 15 s (the server's own default is 60 s; a player stopping a server of their own, or closing the
-// launcher, waits at most STOP_WAIT, 28 s); settle: players' stops of hosted servers.
+// PORT(choice): 15 s (the server's own default is 60 s; a player stopping a server of their own, or closing the
+// launcher, waits at most STOP_WAIT, 28 s); tuning: players' stops of hosted servers; the original has no launcher.
 pub const HOST_ROUND_END_SECS: u32 = 15;
 
 pub struct Process {
@@ -563,9 +568,9 @@ impl HostMaps {
     }
 }
 
-// TODO(guess): 256 maps and 32 packages (port caps: round net6's delivery carries at most 256 resources a server —
-// `ssx_content::delivery::MAX_RESOURCES` —, the test maps' requirements are 0 and 1); settle: players' mods folders
-// once maps are shared.
+// PORT(choice): 256 maps and 32 packages (port caps: round net6's delivery carries at most 256 resources a server —
+// `ssx_content::delivery::MAX_RESOURCES` —, the test maps' requirements are 0 and 1); tuning: players' mods folders
+// once maps are shared; the original has no launcher.
 pub const MAX_HOST_MAPS: usize = 256;
 const MAX_MAP_PACKAGES: usize = 32;
 

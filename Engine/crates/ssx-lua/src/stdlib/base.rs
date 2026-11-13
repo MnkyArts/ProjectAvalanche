@@ -162,7 +162,8 @@ pub fn open(l: &mut Lua) {
         if let Some(Value::Num(n)) = arg(a, 1)
             && *n == 0.0
         {
-            // TODO(guess): Lua keeps one globals table per thread; this state has one, so `setfenv(0, t)` replaces it for every thread; settle: none needed — no script on the disc does it.
+            // PORT(choice): this state has one globals table, so `setfenv(0, t)` replaces it for every thread; no
+            // script on the disc does it; Lua keeps one globals table per thread.
             l.globals = t;
             return none();
         }
@@ -244,7 +245,8 @@ pub fn open(l: &mut Lua) {
                 Ok(r)
             }
             Err(e) => {
-                // TODO(guess): Lua runs the handler at the error point (the stack still there for `debug.traceback`); here it runs after the unwind; settle: only matters for tracebacks, which no game script reads.
+                // PORT(choice): here the handler runs after the unwind; it only matters for tracebacks, which no game
+                // script reads; Lua runs the handler at the error point (the stack still there for `debug.traceback`).
                 let hv = l.call(h, &[error_value(e)]).map(|r| r.into_iter().next().unwrap_or_default());
                 let hv = hv.unwrap_or_else(error_value);
                 Ok(vec![Value::Bool(false), hv])
@@ -326,7 +328,8 @@ fn getfunc(l: &Lua, a: &[Value]) -> LuaResult<Value> {
 
 fn collectgarbage(l: &mut Lua, a: &[Value]) -> LuaResult<Vec<Value>> {
     let opt = l.opt_str(a, 1, "collect")?.to_str_lossy();
-    // TODO(guess): "count" reports our object count × 64 bytes, not the game allocator's bytes; settle: not reproducible (only the front end's telemetry reads it).
+    // PORT(choice): "count" reports our object count × 64 bytes, not the game allocator's bytes, which are not
+    // reproducible (only the front end's telemetry reads it).
     let kb = (l.heap.live() * 64) as f64 / 1024.0;
     match opt.as_str() {
         "stop" => l.gc_stopped = true,

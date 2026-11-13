@@ -86,7 +86,7 @@ impl RiderGraph {
         self.put_bool("BLN_TriggerUberBailGateOpen", s.uber_gate_timer <= 0.0);
         self.put("FLT_TriggerUberCrashGatingTimer", s.uber_gate_timer);
         self.put_bool("BLN_carving_state_request_stop", s.request_stop);
-        self.put_bool("BLN_Pad_GetGoing", crate::rider::get_going_gesture(input.stick(), s.stick_prev));
+        self.put_bool("BLN_Pad_GetGoing", crate::rider::get_going_gesture(start.raw_stick, s.stick_prev));
         self.put("FLT_DPad_Char_Rel_Angle", crate::rootmotion::GET_GOING_ANGLE);
         self.put_bool("BLN_start_uber_bail_recover", true);
         self.put_bool("BLN_is_recovering_from_uber_bail", s.recovering_from_uber_bail());
@@ -120,7 +120,7 @@ impl RiderGraph {
         self.put_bool("BLN_IsGrindTrickStarting", g.starting);
         self.put_bool("BLN_IsGrindTrick", g.is_grind_trick());
         self.put_bool("BLN_IsGrindTrickEnter", g.is_grind_trick_enter());
-        self.put_bool("BLN_Pad_L2_Hold", s.grind.button);
+        self.put_bool("BLN_Pad_L2_Hold", s.grind.l2_hold);
         self.put("INT_GrindGroup", g.group as f32);
         self.write_air_trick_pad(s, input, tricks, start, dt);
     }
@@ -163,7 +163,7 @@ impl RiderGraph {
         self.put("INT_TrickGestureLength", t.gesture_len as f32);
         self.put_bool("BLN_IsAwesome", s.score.is_awesome);
         self.put_bool("BLN_IsSuperAwesome", s.score.is_super_awesome);
-        let stick = stick_axes(input.stick());
+        let stick = stick_axes(s.pad_stick);
         self.put("FLT_Pad_LStickXAxis", stick.x);
         self.put("FLT_Pad_LStickYAxis", stick.y);
         self.put_bool("BLN_Pad_A_Hold", input.jump);
@@ -197,8 +197,6 @@ impl RiderGraph {
         self.put_bool("BLN_ice_axe_deployed", ia.deployed);
         self.put_bool("BLN_ice_axe_chopped", ia.chopped);
         self.put("FLT_IceAxe_BlendWeight", ia.blend_weight);
-        // The carving controller's bite (chopped, the blend ≥ 0.9, |lean| ≥ 0.2), written every carving update through
-        // the asset's pin +0x1D0 (`CarvingController_Update` 0x82CD36D4…0x82CD36F8).
         self.put_bool("BLN_carving_ice_axe_effects_enabled", ia.frame.active);
         self.put("FLT_ice_axe_layer_weight", ia.layer_weight);
         self.put("FLT_ice_axe_chop_weight_left", ia.chop_weight[0]);

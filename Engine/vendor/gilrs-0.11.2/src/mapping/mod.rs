@@ -7,6 +7,13 @@
 #![cfg_attr(target_os = "windows", allow(dead_code))]
 
 mod parser;
+// Project Avalanche patch T22 / T23: SDL's mapping lookup order and its automatic gamepad mapping (Linux).
+#[cfg(target_os = "linux")]
+pub(crate) mod automatic;
+#[cfg(target_os = "linux")]
+pub(crate) mod select;
+#[cfg(target_os = "linux")]
+use select::sdl_guid;
 
 use crate::ev::{self, Axis, AxisOrBtn, Button};
 use gilrs_core::native_ev_codes as nec;
@@ -47,6 +54,56 @@ pub struct Mapping {
     name: String,
     default: bool,
     hats_mapped: u8,
+    // Project Avalanche patch T23: the axes SDL's automatic mapping reads as digital hats (SDL's `HandleHat`), and
+    // whether this is that mapping.
+    #[cfg(target_os = "linux")]
+    digital_hats: FnvHashMap<EvCode, DigitalHat>,
+    #[cfg(target_os = "linux")]
+    automatic: bool,
+}
+
+/// Project Avalanche patch T23: an axis of a hat SDL reads as digital (`GuessIfAxesAreDigitalHat`,
+/// SDL 3.4.20 `src/joystick/linux/SDL_sysjoystick.c:1192-1223`), with `HandleHat`'s state (1730-1777): the
+/// `hat_axis_correct` minimum and maximum, which grow to a value beyond them. `press`: for a hat direction bound to a
+/// button, the side (−1 or +1) that presses it; `None` for the d-pad's axes.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DigitalHat {
+    pub(crate) minimum: i32,
+    pub(crate) maximum: i32,
+    pub(crate) press: Option<i8>,
+}
+
+#[cfg(target_os = "linux")]
+impl DigitalHat {
+    /// `HandleHat`'s position of the raw `value` on this axis: −1, 0 or +1. SDL's hat dead zones are on
+    /// (`SDL_HINT_JOYSTICK_LINUX_HAT_DEADZONES`' default): between the centre and a third of the extreme is centred.
+    // PORT(choice): SDL's hints SDL_JOYSTICK_LINUX_HAT_DEADZONES (default on) and SDL_JOYSTICK_LINUX_DIGITAL_HATS
+    // (default off) are taken at their defaults and not read from the environment (gilrs reads no SDL hint but
+    // SDL_GAMECONTROLLERCONFIG); the console read XInput pads only, which have no evdev hats.
+    pub(crate) fn position(&mut self, value: i32) -> i8 {
+        if value < 0 {
+            if value <= self.minimum {
+                self.minimum = value;
+                -1
+            } else if value < self.minimum / 3 {
+                -1
+            } else {
+                0
+            }
+        } else if value > 0 {
+            if value >= self.maximum {
+                self.maximum = value;
+                1
+            } else if value > self.maximum / 3 {
+                1
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
 }
 
 impl Mapping {
@@ -56,6 +113,10 @@ impl Mapping {
             name: String::new(),
             default: false,
             hats_mapped: 0,
+            #[cfg(target_os = "linux")]
+            digital_hats: FnvHashMap::default(),
+            #[cfg(target_os = "linux")]
+            automatic: false,
         }
     }
 
@@ -166,6 +227,10 @@ impl Mapping {
             name: String::new(),
             default: true,
             hats_mapped: 0,
+            #[cfg(target_os = "linux")]
+            digital_hats: FnvHashMap::default(),
+            #[cfg(target_os = "linux")]
+            automatic: false,
         }
     }
 
@@ -259,6 +324,10 @@ impl Mapping {
             name: name.to_owned(),
             default: false,
             hats_mapped: 0,
+            #[cfg(target_os = "linux")]
+            digital_hats: FnvHashMap::default(),
+            #[cfg(target_os = "linux")]
+            automatic: false,
         };
 
         Ok((mapping, sdl_mappings))
@@ -425,6 +494,25 @@ impl Mapping {
     pub fn hats_mapped(&self) -> u8 {
         self.hats_mapped
     }
+
+    /// Project Avalanche patch T23: whether this is SDL's automatic mapping (`select`).
+    #[cfg(target_os = "linux")]
+    pub fn is_automatic(&self) -> bool {
+        self.automatic
+    }
+
+    /// Project Avalanche patch T23: for an axis the automatic mapping reads as a digital hat, the raw `value` as SDL
+    /// reads it — for a d-pad axis the hat's position −1, 0 or +1, for a hat direction bound to a button 1.0 when the
+    /// hat points that way, else 0.0; `None` for every other axis (read as gilrs reads it).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn digital_hat_value(&mut self, code: EvCode, value: i32) -> Option<f32> {
+        let hat = self.digital_hats.get_mut(&code)?;
+        let position = hat.position(value);
+        Some(match hat.press {
+            Some(side) => f32::from(u8::from(position == side)),
+            None => f32::from(position),
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -463,28 +551,135 @@ impl Display for ParseSdlMappingError {
 #[derive(Debug)]
 pub struct MappingDb {
     mappings: HashMap<Uuid, String>,
+    // Project Avalanche patch T22: each row's origin, and the GUIDs in SDL's list order (`s_pSupportedGamepads`: a new
+    // GUID is appended, a replaced row keeps its place; SDL 3.4.20 `src/joystick/SDL_gamepad.c:2199-2246`).
+    #[cfg(target_os = "linux")]
+    origins: HashMap<Uuid, Origin>,
+    #[cfg(target_os = "linux")]
+    order: Vec<Uuid>,
+}
+
+/// Project Avalanche patch T22: where a row came from, in SDL's priority order (`SDL_GamepadMappingPriority`:
+/// DEFAULT < API < USER, `src/joystick/SDL_gamepad.c:92-97`): the bundled database, `GilrsBuilder::add_mappings`, the
+/// `SDL_GAMECONTROLLERCONFIG` environment variable (SDL's hint of that name).
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Origin {
+    Database,
+    Application,
+    Environment,
+}
+
+/// Project Avalanche patch T22: a row [`MappingDb::lookup`] found: its text, origin and GUID, and whether it matched
+/// only without the version.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Found<'a> {
+    pub(crate) row: &'a str,
+    pub(crate) origin: Origin,
+    pub(crate) guid: Uuid,
+    pub(crate) without_version: bool,
 }
 
 impl MappingDb {
     pub fn new() -> Self {
         MappingDb {
             mappings: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            origins: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            order: Vec::new(),
         }
     }
 
     pub fn add_included_mappings(&mut self) {
-        self.insert(include_str!(concat!(
-            env!("OUT_DIR"),
-            "/gamecontrollerdb.txt"
-        )));
+        let rows = include_str!(concat!(env!("OUT_DIR"), "/gamecontrollerdb.txt"));
+        // Project Avalanche patch T22: the bundled rows rank as SDL's DEFAULT mappings.
+        #[cfg(target_os = "linux")]
+        self.insert_from(rows, Origin::Database);
+        #[cfg(not(target_os = "linux"))]
+        self.insert(rows);
     }
 
     pub fn add_env_mappings(&mut self) {
         if let Ok(mapping) = env::var("SDL_GAMECONTROLLERCONFIG") {
+            // Project Avalanche patch T22: the variable's rows rank as SDL's USER mappings (its hint).
+            #[cfg(target_os = "linux")]
+            self.insert_from(&mapping, Origin::Environment);
+            #[cfg(not(target_os = "linux"))]
             self.insert(&mapping);
         }
     }
 
+    // Project Avalanche patch T22: rows the application adds rank as SDL's API mappings.
+    #[cfg(target_os = "linux")]
+    pub fn insert(&mut self, s: &str) {
+        self.insert_from(s, Origin::Application);
+    }
+
+    /// Project Avalanche patch T22: `insert` as SDL's `SDL_PrivateAddMappingForGUID` keeps rows (SDL 3.4.20
+    /// `src/joystick/SDL_gamepad.c:2199-2246`): a row replaces the one with its GUID only at the same or a higher
+    /// priority, in that row's place; a new GUID goes to the end.
+    #[cfg(target_os = "linux")]
+    fn insert_from(&mut self, s: &str, origin: Origin) {
+        for mapping in s.lines() {
+            let pat = "platform:";
+            if let Some(offset) = mapping.find(pat).map(|o| o + pat.len()) {
+                let s = &mapping[offset..];
+                let end = s.find(',').unwrap_or(s.len());
+
+                if &s[..end] != SDL_PLATFORM_NAME {
+                    continue;
+                }
+            }
+
+            let Some(uuid) = mapping
+                .split(',')
+                .next()
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            match self.origins.get(&uuid) {
+                Some(&existing) if existing > origin => continue,
+                Some(_) => {}
+                None => self.order.push(uuid),
+            }
+            self.origins.insert(uuid, origin);
+            self.mappings.insert(uuid, mapping.to_owned());
+        }
+    }
+
+    /// Project Avalanche patch T22: SDL's lookup of a device's row (`SDL_PrivateGetGamepadMappingForGUID`, SDL 3.4.20
+    /// `src/joystick/SDL_gamepad.c:1426-1462` with `SDL_PrivateMatchGamepadMappingForGUID` 1372-1421): the exact GUID;
+    /// else, for a GUID that names a vendor and a product (`SDL_JoystickGUIDUsesVersion`, `SDL_joystick.c:3132-3146`),
+    /// the first row in SDL's list order whose GUID equals it with both versions cleared. No Linux row of the bundled
+    /// database carries SDL's `crc:` field and gilrs' GUIDs carry no name CRC, so SDL's CRC passes are these two.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn lookup(&self, uuid: Uuid) -> Option<Found<'_>> {
+        let found = |guid: Uuid, without_version: bool| {
+            Some(Found {
+                row: self.mappings.get(&guid)?,
+                origin: *self.origins.get(&guid)?,
+                guid,
+                without_version,
+            })
+        };
+        if self.mappings.contains_key(&uuid) {
+            return found(uuid, false);
+        }
+        if !sdl_guid::uses_version(uuid.as_bytes()) {
+            return None;
+        }
+        let want = sdl_guid::without_version(uuid.as_bytes());
+        let guid = *self
+            .order
+            .iter()
+            .find(|g| !g.is_nil() && sdl_guid::without_version(g.as_bytes()) == want)?;
+        found(guid, true)
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub fn insert(&mut self, s: &str) {
         for mapping in s.lines() {
             let pat = "platform:";
@@ -505,6 +700,9 @@ impl MappingDb {
         }
     }
 
+    // Project Avalanche patch T22: on Linux the mapping is looked up in SDL's order (`lookup`); the exact row stays for
+    // the other platforms and the tests.
+    #[cfg(any(not(target_os = "linux"), test))]
     pub fn get(&self, uuid: Uuid) -> Option<&str> {
         self.mappings.get(&uuid).map(String::as_ref)
     }
@@ -734,7 +932,9 @@ mod tests {
         let mut db = MappingDb::new();
         db.add_included_mappings();
         let guid = Uuid::parse_str("03000000853200000706000010010000").unwrap();
-        let row = db.get(guid).expect("the physical Nacon GC-100 0110 is bundled");
+        let row = db
+            .get(guid)
+            .expect("the physical Nacon GC-100 0110 is bundled");
         let buttons = [
             nec::BTN_SOUTH,
             nec::BTN_EAST,
@@ -798,10 +998,158 @@ mod tests {
         let existing = Uuid::parse_str("03000000853200000706000012010000").unwrap();
         let added = db.get(guid).unwrap().to_owned();
         let prior = db.get(existing).expect("the original 0112 entry remains");
-        assert_eq!(added.split_once(',').unwrap().1, prior.split_once(',').unwrap().1);
-        assert_eq!(db.get(Uuid::parse_str("03000000853200000706000013010000").unwrap()), None);
-        assert_eq!(db.get(Uuid::parse_str("03000000853200000806000010010000").unwrap()), None);
+        assert_eq!(
+            added.split_once(',').unwrap().1,
+            prior.split_once(',').unwrap().1
+        );
+        assert_eq!(
+            db.get(Uuid::parse_str("03000000853200000706000013010000").unwrap()),
+            None
+        );
+        assert_eq!(
+            db.get(Uuid::parse_str("03000000853200000806000010010000").unwrap()),
+            None
+        );
         db.insert("03000000853200000706000010010000,Not Linux,lefttrigger:b0,platform:Windows,");
         assert_eq!(db.get(guid), Some(added.as_str()));
+    }
+
+    // Project Avalanche patch T22: SDL's lookup order and row priorities.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lookup_matches_sdl_exact_then_without_version_in_list_order() {
+        let guid = |s: &str| Uuid::parse_str(s).unwrap();
+        let mut db = MappingDb::new();
+        db.insert_from(
+            "03000000341200007856000000020000,Pad v0200,a:b0,platform:Linux,\n\
+             03000000341200007856000000010000,Pad v0100,a:b1,platform:Linux,\n\
+             03000000341200007856000000030000,Pad v0300 Windows,a:b2,platform:Windows,\n\
+             03000000000000007856000000010000,No vendor,a:b3,platform:Linux,",
+            Origin::Database,
+        );
+        let exact = db.lookup(guid("03000000341200007856000000010000")).unwrap();
+        assert!(exact.row.contains("Pad v0100") && !exact.without_version);
+        // No exact row: the first row in list order with the same GUID but the version.
+        let other = db.lookup(guid("03000000341200007856000010010000")).unwrap();
+        assert!(other.row.contains("Pad v0200") && other.without_version);
+        assert_eq!(other.guid, guid("03000000341200007856000000020000"));
+        // A row for another platform is not in the list.
+        assert!(
+            db.lookup(guid("03000000341200007856000000030000"))
+                .unwrap()
+                .without_version
+        );
+        // Without a vendor (or a product) SDL does not drop the version.
+        assert!(db
+            .lookup(guid("03000000000000007856000000020000"))
+            .is_none());
+        assert!(db
+            .lookup(guid("03000000341200000000000000010000"))
+            .is_none());
+        // Another bus is another device.
+        assert!(db
+            .lookup(guid("05000000341200007856000000010000"))
+            .is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rows_replace_by_sdls_priority_and_keep_their_place() {
+        let id = "03000000341200007856000000010000";
+        let first = Uuid::parse_str(id).unwrap();
+        let mut db = MappingDb::new();
+        db.insert(&format!("{id},From the application,a:b0,"));
+        db.insert_from(
+            &format!("{id},From the database,a:b1,\n03000000341200007856000000020000,Later,a:b2,"),
+            Origin::Database,
+        );
+        let found = db.lookup(first).unwrap();
+        assert_eq!(
+            (found.origin, found.row.contains("application")),
+            (Origin::Application, true)
+        );
+        db.insert_from(
+            &format!("{id},From the environment,a:b3,"),
+            Origin::Environment,
+        );
+        let found = db.lookup(first).unwrap();
+        assert_eq!(
+            (found.origin, found.row.contains("environment")),
+            (Origin::Environment, true)
+        );
+        db.insert(&format!("{id},Application again,a:b4,"));
+        assert_eq!(db.lookup(first).unwrap().origin, Origin::Environment);
+        // The replaced row keeps its place before the later one.
+        let without_version = db
+            .lookup(Uuid::parse_str("03000000341200007856000000090000").unwrap())
+            .unwrap();
+        assert_eq!(without_version.guid, first);
+        assert_eq!(db.len(), 2);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sdl_guid_reading() {
+        let g = |s: &str| *Uuid::parse_str(s).unwrap().as_bytes();
+        assert_eq!(
+            sdl_guid::vendor(&g("030000004c050000cc09000011810000")),
+            0x054c
+        );
+        assert!(sdl_guid::uses_version(&g(
+            "030000004c050000cc09000011810000"
+        )));
+        // Bus 0x20 and up (other than 0xff) is not SDL's standard form.
+        assert_eq!(sdl_guid::vendor(&g("200000004c050000cc09000011810000")), 0);
+        assert_eq!(
+            sdl_guid::vendor(&g("ff0000004c050000cc09000011810000")),
+            0x054c
+        );
+        // An MFi GUID's version bits are its buttons.
+        assert!(!sdl_guid::uses_version(&g(
+            "030000004c050000cc09000011816d00"
+        )));
+        assert_eq!(
+            sdl_guid::without_version(&g("030000004c050000cc09000011810000")),
+            g("030000004c050000cc09000000000000")
+        );
+    }
+
+    // Project Avalanche patch T24: every Linux row of the bundled database (SDL_GameControllerDB c0f11d40 with T19's
+    // row) is kept by the database and read by the row parser.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_bundled_linux_row_is_read() {
+        let rows: Vec<&str> = include_str!(concat!(env!("OUT_DIR"), "/gamecontrollerdb.txt"))
+            .lines()
+            .collect();
+        let mut db = MappingDb::new();
+        db.add_included_mappings();
+        let buttons: Vec<EvCode> = (0..64)
+            .map(|i| EvCode::from_evdev(0x01, 0x120 + i))
+            .collect();
+        let axes: Vec<EvCode> = (0..64).map(|i| EvCode::from_evdev(0x03, i)).collect();
+        let read = rows
+            .iter()
+            .filter(|row| Mapping::parse_sdl_mapping(row, &buttons, &axes).is_ok())
+            .count();
+        // SDL's "xinput" row names no device GUID (SDL applies it to XInput devices, which only Windows has).
+        let named: Vec<&&str> = rows
+            .iter()
+            .filter(|row| {
+                row.split(',')
+                    .next()
+                    .and_then(|g| Uuid::parse_str(g).ok())
+                    .is_some()
+            })
+            .collect();
+        println!(
+            "bundled Linux rows: {}, with a GUID: {}, in the database: {}, read: {read}",
+            rows.len(),
+            named.len(),
+            db.len()
+        );
+        assert_eq!((db.len(), read), (named.len(), rows.len()));
+        assert_eq!((rows.len(), named.len()), (749, 748));
+        assert!(rows.iter().any(|row| row.starts_with("xinput,")));
     }
 }

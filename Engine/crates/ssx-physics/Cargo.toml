@@ -15,6 +15,9 @@ ssx-lua.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 ssx-rules.workspace = true
+ssx-gameplay.workspace = true
+ssx-net-proto.workspace = true
+ssx-core.workspace = true
 
 [lints]
 workspace = true

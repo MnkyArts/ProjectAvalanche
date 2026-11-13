@@ -270,3 +270,56 @@ fn the_gear_store_offers_the_drops_main_gear_even_when_worn() {
     assert_eq!(DropInfo { required: vec![0, 5], weights: vec![60, 20], ..Default::default() }.main_gear(), Some(1));
     assert_eq!(DropInfo { required: vec![6, 4], weights: vec![30, 60], ..Default::default() }.main_gear(), Some(3));
 }
+
+#[test]
+fn a_purchase_keeps_the_store_order_and_the_front_special() {
+    use ssx_assets::career::store::{Request, Store, StoreContext, StoreData};
+    let db = CareerDb::default();
+    let mut profile = Profile::default();
+    profile.add_credits(1_000_000, true);
+    let mut loc = Localization::empty(Language::English);
+    let mut group = gear_template(100, -1);
+    group.members = vec![1, 3];
+    let mut data = StoreData {
+        templates: [(1, gear_template(1, 1)), (3, gear_template(3, 3)), (100, group)].into(),
+        ..Default::default()
+    };
+    data.tables.groups = vec![0, 0, 100, 0, 0];
+    data.tables.durations = vec![10, 30, 90];
+    let mut inv = Inventory::new(&db);
+    (inv.data, inv.store) = (data.clone(), Store::new(11));
+    let ctx = StoreContext { rider: 9, gear_types: (1 << 1) | (1 << 3), ..inv.store_context(&db, &profile, None) };
+    let special = inv.store.generate(&data, &ctx, 2, &Request { special: true, ..Request::NORMAL }, 0).unwrap();
+    inv.store.offered[2].push(special);
+    inv.store.refresh(&data, &ctx, 0);
+    inv.build_lists(&db, &profile, &mut loc, None, &ctx, 2);
+    let keys = |l: &[UiItem]| l.iter().map(|u| u.key).collect::<Vec<_>>();
+    let before = keys(&inv.store_list);
+    assert_eq!((before.len(), before[0]), (4, special), "the special leads the page");
+    assert_eq!(inv.store.shown_special, Some((2, special)), "0x824943F0 records the front special");
+    let due = inv.store.find(2, special).unwrap().expires_ms;
+    assert_eq!(inv.store.shown_special_left(5_000), Some(due - 5_000));
+
+    let bought = before[2];
+    let equip_id = profile
+        .buy_offer(&mut inv.store, &data, &ctx, OfferPurchase { kind: 2, id: bought, clock_s: 1, now_ms: 0 })
+        .unwrap();
+    inv.put_bought_first(&db, &profile, &mut loc, None, 2, (bought, 1));
+    inv.refresh_lists(&db, &profile, &mut loc, None, &ctx, 2);
+    let after = keys(&inv.store_list);
+    assert_eq!(&after[..3], [before[0], before[1], before[3]], "the order stays, the bought entry left");
+    assert_eq!(after.len(), 4);
+    assert!(!before.contains(&after[3]), "the fill generated one new offer at the end");
+    assert_eq!(inv.owned_list[0].key, equip_id, "the bought item leads the owned list");
+    assert!(inv.inventory_list.iter().any(|u| u.key == equip_id));
+    assert_eq!(inv.store.shown_special, Some((2, special)), "still in front: recorded again");
+
+    let equip_special = profile
+        .buy_offer(&mut inv.store, &data, &ctx, OfferPurchase { kind: 2, id: special, clock_s: 1, now_ms: 0 })
+        .unwrap();
+    inv.put_bought_first(&db, &profile, &mut loc, None, 2, (special, 1));
+    inv.refresh_lists(&db, &profile, &mut loc, None, &ctx, 2);
+    assert_eq!(inv.store_list[0].key, before[1]);
+    assert_eq!(inv.store.shown_special, None);
+    assert_eq!(keys(&inv.owned_list)[..2], [equip_special, equip_id]);
+}

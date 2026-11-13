@@ -8,6 +8,7 @@ mod audio;
 pub mod career;
 #[cfg(feature = "pipeline")]
 pub mod content;
+pub use ssx_rules::data_roots;
 mod disc;
 pub mod display;
 #[cfg(feature = "pipeline")]
@@ -27,7 +28,7 @@ mod vaults;
 pub use actors::{character, ghosts, helicopter, nis};
 #[cfg(feature = "pipeline")]
 pub use anim::{
-    anim_clip, anim_db, anim_eval, anim_graph, anim_leaf, anim_pose, anim_rigops, anim_space, rig_anim, rigamate,
+    anim_clip, anim_db, anim_eval, anim_graph, anim_leaf, anim_pose, anim_rigops, anim_space, rig_anim, rigamate, tags,
 };
 #[cfg(feature = "pipeline")]
 pub use audio::{

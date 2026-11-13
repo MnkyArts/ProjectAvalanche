@@ -92,6 +92,14 @@ impl Animator {
         self.root.set_time(&env, &self.gs, t);
     }
 
+    pub fn take_audio_tags(&mut self) -> Vec<AudioTagEvent> {
+        std::mem::take(&mut self.gs.audio_tags)
+    }
+
+    pub fn clear_audio_tags(&mut self) {
+        self.gs.audio_tags.clear();
+    }
+
     pub fn update(&mut self, dt: f32) {
         let env = Env {
             g: &self.graph,

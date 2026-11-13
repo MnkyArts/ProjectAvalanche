@@ -67,6 +67,7 @@ fn race(rivals: Vec<u32>) -> EventManager {
         objectives: None,
         message: Default::default(),
         time_up_result: false,
+        free_ride: false,
     };
     EventManager::new(setup)
 }
@@ -146,6 +147,38 @@ fn a_pause_holds_the_clock_but_not_the_results_after_the_finish() {
     let posted = (0..70).position(|_| m.update_paused(&mut timer, &inputs(-900.0, false, true)).results);
     assert_eq!(posted, Some(48), "the finish message's intro, second and outro, then the results");
     assert_eq!(m.state, EventState::Results);
+}
+
+#[test]
+fn a_free_ride_keeps_its_events_finish_and_loops_after_it() {
+    let mut m = race(vec![1]);
+    m.setup.free_ride = true;
+    assert!(m.loops_after_finish() && m.setup.event_type != Some(EventType::SurviveToDeath));
+    let mut timer = DeathTimer::default();
+    m.on_trigger_race_start(&mut timer);
+    for _ in 0..30 {
+        m.update(&mut timer, &inputs(-10.0, false, false));
+    }
+    assert!(m.clock.ms() > 0, "the event's clock runs");
+    assert!(m.update(&mut timer, &inputs(-900.0, true, false)).crossed && m.state == EventState::Finished);
+    let mut i = inputs(-900.0, false, true);
+    for _ in 0..70 {
+        assert!(!m.update(&mut timer, &i).results, "no results at a free ride's finish");
+    }
+    assert!(m.allow_outro && m.result.is_none() && m.state == EventState::Finished);
+    i.nis_outro_active = true;
+    m.update(&mut timer, &i);
+    assert_eq!(m.state, EventState::LoopOutro);
+    i.nis_outro_active = false;
+    let u = m.update(&mut timer, &i);
+    assert!(u.looped && m.request_loop_to_top && m.state == EventState::LoopRestart);
+    m.on_trigger_race_start(&mut timer);
+    m.on_entered_gameplay();
+    timer.on_rider_dead(&RiderDead { by_death_volume: true, ..RiderDead::default() }, false, 0, false);
+    let ends =
+        (0..200).find(|_| m.update(&mut timer, &inputs(-10.0, false, false)).timer == Some(DeathTimerEvent::EventEnds));
+    assert!(matches!(ends, Some(119..=120)), "{ends:?}");
+    assert!(m.result.as_ref().is_some_and(|r| r.failed) && m.state == EventState::Idle);
 }
 
 #[test]

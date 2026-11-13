@@ -2,8 +2,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::app::Launcher;
 use crate::art::{Slot, Source};
-use crate::command;
-use crate::settings::{self, Settings};
+use crate::settings::Settings;
 use crate::ui::footer;
 use crate::ui::theme::{self, Face, size};
 use crate::ui::widgets::{self, Kind};
@@ -232,10 +231,14 @@ impl Launcher {
         );
     }
 
-    pub fn files_section(&self, ui: &mut Ui) {
-        let app = settings::app_dir();
-        let save = command::save_path();
-        let save_note = if save.is_file() { "the game's profile" } else { "none yet: Play starts a new profile" };
+    pub fn files_section(&mut self, ui: &mut Ui) {
+        if self.files_frame != self.frame.checked_sub(1) {
+            self.save_exists = self.save_path.is_file();
+        }
+        self.files_frame = Some(self.frame);
+        let app = self.app_dir.clone();
+        let save = self.save_path.clone();
+        let save_note = if self.save_exists { "the game's profile" } else { "none yet: Play starts a new profile" };
         let rows = [
             ("App folder", app.clone(), "settings, saves, the log"),
             ("Settings", Settings::path(), "every choice made here"),

@@ -104,6 +104,9 @@ impl Launcher {
             && (!self.auto_launch || viewer_done)
             && !self.auto_play_pending
             && !self.mods.busy()
+            && !self.dlc.busy()
+            && !self.tuner.busy()
+            && !self.tu.busy()
             && self.host.script.is_empty()
             && self.host.scripted_done()
             && (self.page != Page::Host || self.host.drops.is_some() == self.data_ready);
@@ -133,6 +136,7 @@ impl eframe::App for Launcher {
     }
 
     fn on_exit(&mut self) {
+        self.settings_save.flush(&mut self.settings, &mut self.saved);
         if let Some(server) = &mut self.host.server {
             server.stop_and_wait();
         }
@@ -140,6 +144,16 @@ impl eframe::App for Launcher {
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let due = self.frame >= 12 && self.frame.is_multiple_of(4) && self.window_pixels.is_none();
+        if self.scroll != 0.0 && self.frame == 14 {
+            raw_input.events.push(egui::Event::PointerMoved(egui::Pos2::new(640.0, 500.0)));
+            raw_input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::Vec2::new(0.0, -self.scroll),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::default(),
+            });
+            self.scroll = 0.0;
+        }
         if let Some((key, shift)) = due.then(|| self.scripted_keys.pop_front()).flatten() {
             for pressed in [true, false] {
                 let modifiers = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::default() };
@@ -159,6 +173,21 @@ impl eframe::App for Launcher {
         let opened = self.page == Page::Mods && self.last_page != Page::Mods;
         if self.mods.poll() || opened || self.mods.base_changed(&big) {
             self.refresh_mods(&ctx);
+        }
+        if self.dlc.poll() || self.dlc.needs_refresh(&self.dlc_root, &big) {
+            self.refresh_dlc(&ctx);
+        }
+        let tuner_ended = self.tuner.poll();
+        if tuner_ended || self.tuner.needs_refresh(&self.tuner_root) {
+            self.refresh_tuner(&ctx);
+        }
+        let closed = !self.save_synced && self.viewer.as_ref().is_some_and(|v| v.status().is_some());
+        if tuner_ended || closed {
+            self.save_synced |= closed;
+            self.save_exists = self.save_path.is_file();
+        }
+        if self.tu.poll() || self.tu.needs_refresh(&self.tu_root, &big) {
+            self.refresh_tu(&ctx);
         }
         self.last_page = self.page;
         let loading = self.gallery.loading;
@@ -195,7 +224,13 @@ impl eframe::App for Launcher {
         let painter = ui.painter().clone();
         ui::backdrop::draw(&painter, &l, &self.gallery);
         ui::header::draw(&painter, &l, &self.gallery);
-        if let Some(item) = ui::menu::show(ui, &l, self.cursor, self.data_ready, self.forced_hover.as_deref()) {
+        if let Some(item) = ui::menu::show(
+            ui,
+            &l,
+            self.cursor,
+            crate::data_state::menu_play(&self.data_state),
+            self.forced_hover.as_deref(),
+        ) {
             self.activate(&ctx, item, false);
         }
         match self.page {
@@ -207,6 +242,7 @@ impl eframe::App for Launcher {
         }
         ui::footer::draw(&painter, &l, &self.status());
         self.settings_question(&ctx);
+        self.settings_frame(&ctx);
         self.keys(&ctx);
         self.screenshot_step(&ctx);
     }

@@ -28,6 +28,7 @@ pub struct Demuxer<R> {
     segment_end: u64,
     cluster: Option<(u64, i64)>,
     first_cluster: Option<Header>,
+    first_cluster_at: Header,
     pending: VecDeque<Packet>,
     last_video: Option<i64>,
     last_audio: Option<i64>,
@@ -55,6 +56,7 @@ impl<R: Read + Seek> Demuxer<R> {
             segment_end,
             cluster: None,
             first_cluster: Some(first),
+            first_cluster_at: first,
             pending: VecDeque::new(),
             last_video: None,
             last_audio: None,
@@ -65,6 +67,18 @@ impl<R: Read + Seek> Demuxer<R> {
 
     pub fn info(&self) -> &MovieInfo {
         &self.info
+    }
+
+    pub fn restart(&mut self) -> Result<()> {
+        self.r.seek_to(self.first_cluster_at.body)?;
+        self.cluster = None;
+        self.first_cluster = Some(self.first_cluster_at);
+        self.pending.clear();
+        self.last_video = None;
+        self.last_audio = None;
+        self.video_frames = 0;
+        self.audio_packets = 0;
+        Ok(())
     }
 
     pub fn next_packet(&mut self) -> Result<Option<Packet>> {

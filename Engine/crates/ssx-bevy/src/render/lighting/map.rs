@@ -5,7 +5,9 @@ use ssx_assets::track_lighting::LightingPreset;
 
 use super::{Directions, GameLighting, fade, light_state, preset_key, service};
 
-// TODO(guess): a port choice — a new track without `lighting` is lit by the disc's `default_lighting` (7 of the disc's drops use it, each with `default_postfx`; the executable holds the name once, at 0x8219DCC8, with no reference, and loads its key 0xFA263423 nowhere); settle: none (the game has no level without a drop), a map names its lighting.
+// PORT(choice): a new track without `lighting` is lit by the disc's `default_lighting` (7 of the disc's drops use it,
+// each with `default_postfx`; the executable holds the name once, at 0x8219DCC8, with no reference, and loads its key
+// 0xFA263423 nowhere); a map names its lighting; the game has no level without a drop.
 pub const NEW_TRACK_LIGHTING: &str = "ssx:lighting/default_lighting";
 
 impl GameLighting {

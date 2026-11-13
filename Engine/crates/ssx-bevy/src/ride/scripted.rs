@@ -99,6 +99,8 @@ impl Ride {
 
     pub(super) fn scripted_controls(&mut self) {
         self.rewind_pad = RewindPad::default();
+        self.l2_hold = false;
+        self.autoplay_sat_out = false;
         if self.autoplay
             && let Some(m) = self.map.as_mut()
         {
@@ -115,6 +117,7 @@ impl Ride {
             let intro = self.state.start.as_ref().and_then(|l| l.intro.as_ref());
             if intro.is_some_and(|i| i.cabin.is_some()) {
                 self.autoplay_waited += 1;
+                self.autoplay_sat_out = true;
                 (self.input, self.tricks) = (Input::default(), TrickInput::default());
                 (self.r2, self.l2, self.r1) = (0.0, false, false);
                 return;
@@ -182,10 +185,14 @@ impl Ride {
             (input.steer, input.tuck, input.brake) = (a.x, a.y.max(0.0), (-a.y).max(0.0));
             if self.classic {
                 input.dpad = a.clamp(Vec2::splat(-1.0), Vec2::splat(1.0));
+                input.dpad_held = input.dpad != Vec2::ZERO;
             }
         }
         let grab_ok = self.state.air.air_time > self.world.tuning.player.max_in_air_jump_ticks;
-        let mut tricks = if in_air {
+        let mut tricks = if in_air && self.classic {
+            let [lb, rb, lt, rt] = self.shoulders.filter(|_| grab_ok).unwrap_or_default();
+            TrickInput { lb, rb, lt, rt, x: self.tweak, tweak: self.tweak, ..TrickInput::default() }
+        } else if in_air {
             TrickInput {
                 right_stick: if grab_ok { self.grab.unwrap_or(Vec2::ZERO) } else { Vec2::ZERO },
                 tweak: self.tweak,
@@ -227,6 +234,7 @@ impl Ride {
             }
         }
         self.l2 = self.grind_fixed && held;
+        self.l2_hold = self.l2;
         self.r1 = self.scripted_r1();
         (self.input, self.tricks) = (input, tricks);
     }
@@ -260,6 +268,7 @@ fn autoplay_input(ride: &Ride) -> (Input, TrickInput) {
         (input.steer, input.tuck, input.brake) = (1.0, 0.0, 0.0);
         if s.tricks.classic {
             input.dpad = Vec2::X;
+            input.dpad_held = true;
         }
     }
     if s.state != RideState::Riding && s.air.air_time < 0.5 * 60.0 {

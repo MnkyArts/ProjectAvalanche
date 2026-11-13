@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use ssx_formats::ant_anim::euler_xyz_to_quat;
-use ssx_formats::attrib::{Schema, Value, Vault, collection};
+use ssx_formats::attrib::Value;
 use ssx_formats::crsf::{CrsfFile, Mat4, SceneGraph};
 
 use crate::object_mesh::ObjectMesh;

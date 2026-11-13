@@ -1,8 +1,8 @@
 use crate::DecodeError;
 use crate::round::{ProgressReport, REPORT_SIZE};
 
-// TODO(guess): 200 bytes, a few lines of the game's popup text; settle: the notice and refusal popups' text fields
-// (phase F2), their width and line count at the fonts' widest glyphs.
+// PORT(choice): 200 bytes, a few lines of the game's popup text; tuning: the notice and refusal popups' text fields
+// (phase F2), their width and line count at the fonts' widest glyphs; the original has no dedicated server.
 pub const MAX_CONTROL_TEXT: usize = 200;
 
 pub const MAX_CONTROL_SIZE: usize = 4 + BAN_END + MAX_CONTROL_TEXT;

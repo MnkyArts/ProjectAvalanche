@@ -13,7 +13,6 @@ use ssx_formats::vp6::Decoder;
 type FrameMsg = (usize, Vec<u8>);
 
 pub struct Vp6Movie {
-    pub name: String,
     rx: Mutex<Receiver<FrameMsg>>,
     next: Option<FrameMsg>,
     pub image: Handle<Image>,
@@ -84,10 +83,6 @@ pub fn movie_language(lang: &str) -> Option<[u8; 2]> {
 }
 
 impl Vp6Movie {
-    pub fn open(name: &str, paths: &[PathBuf], images: &mut Assets<Image>) -> Result<Self> {
-        Self::open_lang(name, paths, images, None)
-    }
-
     pub fn open_lang(name: &str, paths: &[PathBuf], images: &mut Assets<Image>, lang: Option<[u8; 2]>) -> Result<Self> {
         let path = paths.iter().find(|p| p.is_file()).with_context(|| format!("movie {name} not found"))?;
         let head = read_head(path)?;
@@ -117,7 +112,6 @@ impl Vp6Movie {
             decode_video(&data, &tx);
         });
         Ok(Vp6Movie {
-            name: name.to_string(),
             rx: Mutex::new(rx),
             next: None,
             image,

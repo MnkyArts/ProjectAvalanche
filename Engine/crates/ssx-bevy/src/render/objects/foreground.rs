@@ -59,8 +59,6 @@ impl MaterialExtension for ForegroundExtension {
         SHADER_PATH.into()
     }
 
-    /// `terrain_foreground.fx` is class 1: `forward` at every distance and no GBUF/prelight pass
-    /// (object-shaders.md "Instance passes"); the base material's prepass would write depth before the terrain.
     fn enable_prepass() -> bool {
         false
     }

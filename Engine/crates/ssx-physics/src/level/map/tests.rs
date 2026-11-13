@@ -131,6 +131,37 @@ fn checkpoint(z: f32, order: u32) -> ssx_content::map::Volume {
 }
 
 #[test]
+fn a_start_inside_a_death_volume_names_it() {
+    let mut world = crate::testutil::world(CollisionWorld::default());
+    let below = ssx_content::map::Volume {
+        node: "course/below".into(),
+        name: "death".into(),
+        order: 0,
+        shape: VolumeShape::Box { centre: [0.0, -1.5, 5.0], rotation: [0.0, 0.0, 0.0, 1.0], half_extents: [10.0; 3] },
+    };
+    world.triggers.volumes.push(trigger_volume(&below, "death", 0));
+    let deaths = [below];
+    let inside = deaths_at(&world.triggers, &deaths, Vec3::new(0.0, -0.4, 5.0));
+    assert_eq!((inside.nodes.as_slice(), inside.base), (["course/below".to_string()].as_slice(), 0));
+    assert!(!inside.is_empty());
+    let beside =
+        deaths_at(&world.triggers, &deaths, Vec3::new(0.0, 8.5 + crate::triggers::PLAYER_TOUCH_RADIUS + 0.01, 5.0));
+    assert!(beside.is_empty(), "{beside:?}");
+    let base = ssx_content::map::Volume {
+        node: String::new(),
+        name: "death".into(),
+        order: 0,
+        shape: VolumeShape::Sphere { centre: [100.0, 0.0, 0.0], radius: 5.0 },
+    };
+    world.triggers.volumes.push(trigger_volume(&base, "death", 1));
+    let at_base = deaths_at(&world.triggers, &deaths, Vec3::new(100.0, 0.0, 0.0));
+    assert_eq!((at_base.nodes.len(), at_base.base), (0, 1));
+    let gate = trigger_volume(&checkpoint(300.0, 0), "", 0);
+    world.triggers.volumes.push(gate);
+    assert!(deaths_at(&world.triggers, &deaths, Vec3::new(0.0, 0.0, 300.0)).is_empty());
+}
+
+#[test]
 fn the_finish_opens_after_the_gates_in_order() {
     let mut world = crate::testutil::world(CollisionWorld::default());
     let finish = ssx_content::map::Volume {
@@ -300,4 +331,20 @@ fn map_entities_are_placed_as_scene_instances_and_hostile_ones_refused() {
     let stats = place(&mut TriggerSet::default(), &at_cap).expect("the cap itself is placed");
     assert_eq!(stats.bodies, MAX_MAP_BODIES);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_free_ride_lists_the_title_updates_outro_only_with_the_helicopter() {
+    use crate::event::EventType;
+    use ssx_content::map::Intro;
+    let has = |t, intro, tu| heli::event_scripts(t, intro, tu).iter().any(|s| s == heli::OUTRO_STANDARD);
+    assert!(has(EventType::FreeRide, Intro::Heli, true));
+    assert!(!has(EventType::FreeRide, Intro::Heli, false));
+    assert!(!has(EventType::FreeRide, Intro::Spawn, true));
+    assert!(!has(EventType::RaceClock, Intro::Heli, true));
+    assert!(!has(EventType::SurviveToDeath, Intro::Heli, true));
+    assert_eq!(
+        heli::event_scripts(EventType::FreeRide, Intro::Spawn, true),
+        vec![crate::objectives::EVENT_TYPE_SCRIPT]
+    );
 }

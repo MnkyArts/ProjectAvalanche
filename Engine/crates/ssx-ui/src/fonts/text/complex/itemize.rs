@@ -10,8 +10,8 @@ use crate::bidi::{self, Class, class};
 use crate::library::Library;
 use crate::ot::OtFont;
 
-// TODO(guess): a port choice — 31 characters per drawn cluster, from UAX #15's stream-safe text format (a starter and
-// at most 30 non-starters); settle: none (port feature).
+// PORT(choice): 31 characters per drawn cluster, from UAX #15's stream-safe text format (a starter and at most 30
+// non-starters); the original has no fallback fonts.
 pub const MAX_CLUSTER_CHARS: usize = 31;
 
 #[derive(Clone)]
@@ -204,9 +204,9 @@ fn han_runs(
     }
 }
 
-// TODO(guess): a port choice — UAX #24's Script_Extensions are not read: a Common / Inherited cluster joins the run
-// before it (as HarfBuzz's own itemizers do), so a shared punctuation mark is shaped with its neighbours; settle: none
-// (port feature).
+// PORT(choice): UAX #24's Script_Extensions are not read: a Common / Inherited cluster joins the run before it (as
+// HarfBuzz's own itemizers do), so a shared punctuation mark is shaped with its neighbours; the original has no
+// fallback fonts.
 fn resolve_scripts(clusters: &mut [Cluster]) {
     let real = |s: Script| s != Script::Common && s != Script::Inherited && s != Script::Unknown;
     let mut last: Option<Script> = None;

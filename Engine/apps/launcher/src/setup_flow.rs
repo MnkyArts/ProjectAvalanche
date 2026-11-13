@@ -56,7 +56,6 @@ impl Launcher {
             });
         }
         self.displays.poll();
-        self.settings_frame();
         if self.job.is_some() || self.checking.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }

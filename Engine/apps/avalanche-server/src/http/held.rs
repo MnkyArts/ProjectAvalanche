@@ -9,15 +9,16 @@ use subtle::ConstantTimeEq;
 
 use crate::bridge::HeldJoin;
 
-// TODO(guess): 1 s (the protocol allows 0.5 to 5 s): a decision reaches the player a second after it is made at most,
-// and 64 held joins cost the server 64 sealed asks a second; settle: the connecting screen with a held join over real
-// links (phase F2's popup) and a full server's held joins measured.
+// PORT(choice): 1 s (the protocol allows 0.5 to 5 s): a decision reaches the player a second after it is made at most,
+// and 64 held joins cost the server 64 sealed asks a second; tuning: the connecting screen with a held join over real
+// links (phase F2's popup) and a full server's held joins measured; the original has no dedicated server.
 pub const ASK_AFTER_MS: u16 = 1_000;
 
-// TODO(guess): the pause and 14 s; settle: asks over real links (phase 5's servers), their slowest measured.
+// PORT(choice): the pause and 14 s; tuning: asks over real links (phase 5's servers), their slowest measured; the
+// original has no dedicated server.
 pub const TICKET_WINDOW: Duration = Duration::from_millis(ASK_AFTER_MS as u64 + 14_000);
 
-// TODO(guess): 4; settle: phase 4's public servers' joins per address.
+// PORT(choice): 4; tuning: phase 4's public servers' joins per address; the original has no dedicated server.
 pub const MAX_HELD_PER_ADDRESS: usize = 4;
 
 pub const MAX_TICKETS: usize = ssx_script::host::server::joins::MAX_HELD;

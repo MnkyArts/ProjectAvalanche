@@ -14,7 +14,6 @@ pub struct NativeState {
     pub sd_moves: HashMap<crate::display::InstanceId, bool>,
     pub sd_scales: HashMap<crate::display::InstanceId, [f64; 3]>,
     pub hud_wide: HashMap<crate::display::InstanceId, (bool, f64)>,
-    pub hud_extra: f64,
 }
 
 impl NativeState {

@@ -2,16 +2,18 @@ use ssx_net_proto::{NetPose, PoseFlag};
 
 use crate::tiers::SampleOrder;
 
-// TODO(guess): 20 km; the largest over the disc's 727 ghosts is 3 338 m and over eight recorded rides of every kind
-// 3 686 m (examples/pose_bounds.rs in ssx-net, 2026-10-23); settle: the extents of the maps a server may run.
+// PORT(choice): 20 km; the largest over the disc's 727 ghosts is 3 338 m and over eight recorded rides of every kind 3
+// 686 m (examples/pose_bounds.rs in ssx-net, 2026-10-23); tuning: the extents of the maps a server may run; the
+// original has no validation.
 pub const MAX_COORDINATE_M: f32 = 20_000.0;
 
-// TODO(guess): 0.001; every one of the disc's 329 230 blocks and the rides' 33 906 has length 1.000000 (the packer
-// stores the pose's unit quaternion); settle: none needed unless another client packs differently.
+// PORT(choice): 0.001; every one of the disc's 329 230 blocks and the rides' 33 906 has length 1.000000 (the packer
+// stores the pose's unit quaternion), enough unless another client packs differently; the original has no validation.
 pub const ROTATION_LENGTH_TOLERANCE: f32 = 0.001;
 
-// TODO(guess): 8 m per tick (480 m/s); the disc's largest stored speed is 2.71 and root step 2.49 m per tick, the rides'
-// 1.34 (pose_bounds, 2026-10-23); settle: phase 3's speed envelope from the rider tuning's top speeds.
+// PORT(choice): 8 m per tick (480 m/s); the disc's largest stored speed is 2.71 and root step 2.49 m per tick, the
+// rides' 1.34 (pose_bounds, 2026-10-23); tuning: phase 3's speed envelope from the rider tuning's top speeds; the
+// original has no validation.
 pub const MAX_SPEED_PER_TICK: f32 = 8.0;
 
 const TICKS_PER_STEP: f32 = 2.0;

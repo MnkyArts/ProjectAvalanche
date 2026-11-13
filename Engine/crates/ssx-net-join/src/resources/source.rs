@@ -14,8 +14,8 @@ use ureq::tls::{RootCerts, TlsConfig};
 use ureq::unversioned::resolver::{ResolvedSocketAddrs, Resolver};
 use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 
-// TODO(guess): 5 s to connect, 2 s for a mirror's name (the join's and the masters' bounds); settle: downloads of
-// players on public servers.
+// PORT(choice): 5 s to connect, 2 s for a mirror's name (the join's and the masters' bounds); tuning: downloads of
+// players on public servers; the original has no dedicated server.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HEADERS: usize = 8 * 1024;

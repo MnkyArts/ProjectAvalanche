@@ -12,8 +12,8 @@ pub const CONNECTING: &str = "ava_connecting";
 pub const CONNECTING_CLOSE: &str = "ava_connecting_close";
 pub const DOWNLOADING: &str = "ava_downloading";
 pub const DOWNLOADING_CLOSE: &str = "ava_downloading_close";
-// TODO(guess): 6 lines (the popup's body holds about eight lines of the game's font at 720p); settle: the popup
-// with a server of many resources, looked at.
+// PORT(choice): 6 lines (the popup's body holds about eight lines of the game's font at 720p); tuning: the popup with a
+// server of many resources, looked at; the original has no server browser.
 pub const DOWNLOAD_LINES: usize = 6;
 pub const MESSAGE: &str = "ava_browser_message";
 pub const LINK_CONFIRM: &str = "ava_link_confirm";

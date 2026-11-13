@@ -10,9 +10,15 @@ on:
   merge_group:
   workflow_dispatch:
 
+# A full run — a snapshot push (a commit pushed directly, not one GitHub made for a merged pull request, whose subject
+# starts with "Snapshot ") or a manual dispatch — is a group of its own: a later push to its branch (a merged pull
+# request) never cancels it, and it cancels nothing; the release job downloads its packages. Every other run cancels
+# its ref's older run, except on main.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # keep runs on main from cancelling each other; every other ref cancels its stale run
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' ||
+    (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+    github.event.head_commit.committer.email != 'noreply@github.com')) && format('full-{0}', github.run_id) || 'fast' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # the jobs read the code (the release job asks for more itself)
@@ -87,7 +93,9 @@ jobs:
     needs: changes
     # The fast gate: every PR that changes code, the merge queue, snapshot pushes and manual runs. The full
     # Windows/Linux matrix is below and only runs on a deliberate `Snapshot …` push or a manual dispatch — never
-    # on a PR or a merge-queue run.
+    # on a PR or a merge-queue run, nor on a merged PR's push whatever its title: a snapshot is a commit pushed
+    # directly (only the admins may), so its committer is not GitHub's `noreply@github.com`, which every commit GitHub
+    # makes for a merged pull request (squash, merge queue) carries.
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'push' ||
@@ -143,7 +151,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -288,7 +297,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -378,7 +388,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     needs: [windows, windows-server]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -413,7 +424,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -483,7 +495,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -622,7 +635,8 @@ jobs:
     if: |
       github.ref_type != 'tag' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ')))
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Snapshot ') &&
+        github.event.head_commit.committer.email != 'noreply@github.com'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # a bare Ubuntu: no ALSA, udev, Wayland, xkbcommon, GTK or X11 development packages (the check job installs them)
@@ -689,6 +703,7 @@ jobs:
           # the commit the tag names (an annotated tag's object is not the commit)
           commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF" --jq .sha)
           subject=$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit" --jq .commit.message | head -1)
+          committer=$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit" --jq .commit.committer.email)
           case "$subject" in
             "Snapshot "*) ;;
             *)
@@ -696,6 +711,12 @@ jobs:
               exit 1
               ;;
           esac
+          # (as the full matrix's gate: a commit GitHub made is a merged pull request's, whatever its title)
+          if [ "$committer" = "noreply@github.com" ]; then
+            echo "$GITHUB_REF_NAME names $commit, a commit GitHub made for a merged pull request, not a snapshot"
+            echo "pushed directly: tag a snapshot commit"
+            exit 1
+          fi
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
           # no branch filter: the snapshot's full run is on the release branch (or main after the release merge)
           query="head_sha=$commit&event=push&status=success&per_page=1"

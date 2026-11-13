@@ -239,6 +239,7 @@ fn highlight_action(fe: &mut FrontEnd, env: &mut FeEnv, action: &str, param: &Ac
             fe.equipment.pending = Some((List::Inventory, index));
             env.nav_events.push("equip_sell_confirm_popup".into());
         }
+        "A_EquipmentPurchaseRiderLevel" => purchase_rider_level(fe, env, i64::from(fctiwz(param.number))),
         "A_EquipmentShowHelp" => crate::game::fe::hint::gear_help(fe, env, param.number, true),
         _ => {}
     }

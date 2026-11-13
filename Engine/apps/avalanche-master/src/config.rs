@@ -9,10 +9,11 @@ use toml::Spanned;
 use crate::forwarded::{MAX_TRUSTED, Network, Trusted};
 use crate::names::{HostName, MAX_TRUSTED_HOSTS};
 
-// TODO(guess): a port choice — 27900, away from the game ports (27450 and up, each with its query port + 1) and LAN
-// discovery's 35450; a public master behind a name usually takes 443; settle: none (the operator's choice).
+// PORT(choice): 27900, away from the game ports (27450 and up, each with its query port + 1) and LAN discovery's 35450;
+// a public master behind a name usually takes 443 (the operator's choice); the original has no master server.
 pub const DEFAULT_PORT: u16 = 27900;
-// TODO(guess): 4 096 servers by default (MTA's master lists a few thousand); settle: the size of real masters' lists.
+// PORT(choice): 4 096 servers by default (MTA's master lists a few thousand); tuning: the size of real masters' lists;
+// the original has no master server.
 pub const DEFAULT_MAX_SERVERS: usize = 4096;
 pub const DEFAULT_MAX_PER_ADDRESS: usize = 16;
 pub const MAX_PER_ADDRESS: usize = 256;

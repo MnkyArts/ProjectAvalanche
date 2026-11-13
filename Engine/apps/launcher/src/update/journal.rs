@@ -16,9 +16,9 @@ const JOURNAL: &str = "journal";
 const COMMITTED: &str = "committed";
 const MAGIC: &str = "project-avalanche update journal 1";
 const MAX_JOURNAL: u64 = 4096;
-// TODO(guess): 20 tries 100 ms apart (2 s), the updater 0.2.0's own choice, for the exited launcher's image to be
-// unmapped and a virus scanner to let go of a new file; settle: time both on Windows with Defender on (the helper
-// logging each try it needs).
+// PORT(choice): 20 tries 100 ms apart (2 s), the updater 0.2.0's own choice, for the exited launcher's image to be
+// unmapped and a virus scanner to let go of a new file; tuning: time both on Windows with Defender on (the helper
+// logging each try it needs); the original has no launcher.
 const TRIES: u32 = 20;
 const TRY_WAIT: Duration = Duration::from_millis(100);
 

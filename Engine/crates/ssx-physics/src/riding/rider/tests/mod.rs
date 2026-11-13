@@ -6,6 +6,7 @@ use crate::{DT_TICKS, KMH_PER_M_PER_TICK};
 mod air;
 mod boost_press;
 mod prewind;
+mod reverse_camera;
 
 fn ride(w: &World, s: &mut RiderState, input: &Input, steps: usize, mut each: impl FnMut(&RiderState)) {
     for _ in 0..steps {
@@ -461,4 +462,21 @@ fn the_classic_scheme_steers_with_the_left_stick() {
         turn(false, Input { dpad: Vec2::X, ..Input::default() }) < 1e-3,
         "the standard D-pad is not a carving input"
     );
+}
+
+#[test]
+fn l2s_two_matchers_reach_the_step_apart() {
+    let theta = 5f32.to_radians();
+    let w = world(plane(2500.0, theta));
+    let at = Vec3::new(0.0, 2000.0 * theta.tan() + 1.0, -2000.0);
+    let mut s = moving(&w, at, Vec3::Z, 0.1);
+    s.grind.pad_l2_hold = true;
+    step(&mut s, &w, &Input::default(), DT_TICKS);
+    assert!(s.grind.l2_hold && !s.grind.button, "L2 ∈ [0.2, 0.5): the hold, not the grind button");
+    s.grind.set_l2(true);
+    step(&mut s, &w, &Input::default(), DT_TICKS);
+    assert!(s.grind.l2_hold && s.grind.button, "a full press: both");
+    s.grind.release_l2();
+    step(&mut s, &w, &Input::default(), DT_TICKS);
+    assert!(!s.grind.l2_hold && !s.grind.button, "released: neither");
 }

@@ -9,7 +9,7 @@ use ssx_formats::attrib::{Value, fnv1};
 
 use super::data::{CLASS_PEAK, CLASS_RANGE, CLASS_UI_DROP, Vaults};
 use crate::track_lighting::{LightingPreset, RECOVERED_FIELD_NAMES};
-use crate::vault_db::{Db, Material, refs, single, with_track_db};
+use crate::vault_db::{Db, Material, refs, single, with_attribdb, with_track_db};
 
 pub const CLASS_GLOBE: u32 = fnv1(b"globe");
 const CLASS_LIGHTING: u32 = fnv1(b"ge_globallightingparams");
@@ -244,7 +244,7 @@ impl GlobeData {
         let objects: Vec<(Option<u32>, u32)> = std::iter::once((None, self.globe.object))
             .chain(self.ranges.iter().map(|r| (Some(r.key), r.midground)))
             .collect();
-        let (meshes, lighting) = with_track_db(big_root, "alps0101", |db| {
+        let (meshes, lighting) = with_attribdb(big_root, |db| {
             let mut meshes = Vec::new();
             for (range, object) in &objects {
                 if *object != 0 {
@@ -300,7 +300,7 @@ fn postfx_name(v: &Vaults, key: u32) -> String {
     if key == 0 { String::new() } else { v.name("postfx", key) }
 }
 
-fn object_meshes(db: &Db<'_>, object: u32) -> Result<Vec<ObjectMesh>> {
+fn object_meshes(db: &Db, object: u32) -> Result<Vec<ObjectMesh>> {
     let mut out = Vec::new();
     let Some(models) = db.field(CLASS_GAMEOBJECT, object, 0xB43A_3598)? else { return Ok(out) };
     let Some(model) = refs(&models.data).into_iter().find(|r| r.class == CLASS_MODEL && r.collection != 0) else {
@@ -326,7 +326,7 @@ fn object_meshes(db: &Db<'_>, object: u32) -> Result<Vec<ObjectMesh>> {
     Ok(out)
 }
 
-fn object_particles(db: &Db<'_>, big_root: &Path, object: u32) -> Result<Vec<ParticleFx>> {
+fn object_particles(db: &Db, big_root: &Path, object: u32) -> Result<Vec<ParticleFx>> {
     let mut out = Vec::new();
     let Some(models) = db.field(CLASS_GAMEOBJECT, object, 0xB43A_3598)? else { return Ok(out) };
     let Some(model) = refs(&models.data).into_iter().find(|r| r.class == CLASS_MODEL && r.collection != 0) else {
@@ -335,8 +335,8 @@ fn object_particles(db: &Db<'_>, big_root: &Path, object: u32) -> Result<Vec<Par
     let Some(list) = db.field(CLASS_MODEL, model.collection, fnv1(b"ParticleNodes"))? else { return Ok(out) };
     for r in refs(&list.data).into_iter().filter(|r| r.collection != 0) {
         let node = crate::particles::particle_node(db, r.collection)?;
-        let Some(vfx) = node.lynx.as_ref() else { continue };
-        let (sys, _) = crate::particles::load_node_files(big_root, &node)?;
+        let Some((sys, _)) = crate::particles::load_node_files_optional(big_root, &node)? else { continue };
+        let vfx = node.lynx.as_ref().expect("a loaded node has its effect");
         let effect = sys.effect(&vfx.definition).cloned().with_context(|| format!("no effect {}", vfx.definition))?;
         out.push(ParticleFx { node, effect });
     }
@@ -352,18 +352,16 @@ pub fn lighting_presets(big_root: &Path, track: &str) -> Result<std::collections
 fn disc_lighting_presets(big_root: &Path, track: &str) -> Result<std::collections::BTreeMap<u32, LightingPreset>> {
     with_track_db(big_root, track, |db| {
         let mut out = std::collections::BTreeMap::new();
-        for vault in 0..2 {
-            for (key, _) in db.collections_of(vault, CLASS_LIGHTING).collect::<Vec<_>>() {
-                if let std::collections::btree_map::Entry::Vacant(e) = out.entry(key) {
-                    e.insert(preset(db, key)?);
-                }
+        for (key, _) in db.collections_of_all(CLASS_LIGHTING) {
+            if let std::collections::btree_map::Entry::Vacant(e) = out.entry(key) {
+                e.insert(preset(db, key)?);
             }
         }
         Ok(out)
     })
 }
 
-fn preset(db: &Db<'_>, key: u32) -> Result<LightingPreset> {
+fn preset(db: &Db, key: u32) -> Result<LightingPreset> {
     let mut p = LightingPreset { name: db.collection_name(key), ..Default::default() };
     for f in db.fields(CLASS_LIGHTING, key)? {
         let name = match RECOVERED_FIELD_NAMES.iter().find(|(k, _)| *k == f.key) {

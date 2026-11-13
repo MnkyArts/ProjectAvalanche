@@ -11,7 +11,7 @@ pub fn status(state: &State) -> (Color32, &'static str) {
         State::Missing => (theme::WARN, "Not set up"),
         State::Unfinished => (theme::WARN, "Setup unfinished"),
         State::NoIndex | State::IndexDamaged(_) => (theme::WARN, "Repair needed"),
-        State::NoMovies | State::MarkerDamaged(_) => (theme::ERROR, "Repair needed"),
+        State::NoMovies | State::MarkerDamaged(_) | State::FilesDamaged(_) => (theme::ERROR, "Repair needed"),
     }
 }
 
@@ -51,6 +51,12 @@ pub fn notice(state: &State) -> Option<(Color32, String)> {
              file is compared with the image, only what differs is written again.",
             detail(why)
         ),
+        State::FilesDamaged(why) => format!(
+            "Files of this folder are missing or damaged ({}): the game cannot start on it. Select your disc image \
+             and click Repair game data: the archives (or the movies) that hold them are read from the image again, \
+             only what differs is written again.",
+            detail(why)
+        ),
     };
     let colour = if state.playable() { theme::WARN } else { theme::ERROR };
     Some((colour, text))
@@ -68,6 +74,11 @@ pub fn hero_unplayable(state: &State) -> (&'static str, &'static str, &'static s
             "The setup record of this data folder is damaged: repair it from your disc image.",
             "REPAIR NEEDED",
         ),
+        State::FilesDamaged(_) => (
+            "REPAIR GAME DATA",
+            "Files of this data folder are missing or damaged: repair it from your disc image.",
+            "REPAIR NEEDED",
+        ),
         State::Unfinished => {
             ("SET UP GAME DATA", "The setup stopped before it finished: start it again to resume.", "SETUP NEEDED")
         }
@@ -79,6 +90,16 @@ pub fn hero_unplayable(state: &State) -> (&'static str, &'static str, &'static s
     }
 }
 
+pub fn menu_play(state: &State) -> &'static str {
+    if state.playable() {
+        "START THE GAME"
+    } else if state.needs_repair() {
+        "REPAIR THE GAME DATA FIRST"
+    } else {
+        "SET UP THE GAME DATA FIRST"
+    }
+}
+
 pub const HERO_JOIN_REPAIR: &str = "Multiplayer needs a repair of the game data first: Settings, Game data.";
 
 #[cfg(test)]
@@ -87,9 +108,13 @@ mod tests {
 
     #[test]
     fn each_state_names_its_repair() {
-        for state in
-            [State::NoIndex, State::IndexDamaged("x".into()), State::NoMovies, State::MarkerDamaged("y".into())]
-        {
+        for state in [
+            State::NoIndex,
+            State::IndexDamaged("x".into()),
+            State::NoMovies,
+            State::MarkerDamaged("y".into()),
+            State::FilesDamaged("z".into()),
+        ] {
             assert_eq!(status(&state).1, "Repair needed", "{state:?}");
             assert_eq!(button(&state), "Repair game data", "{state:?}");
             assert!(notice(&state).is_some_and(|(_, t)| t.contains("Repair game data")), "{state:?}");
@@ -98,6 +123,16 @@ mod tests {
         assert_eq!(button(&State::Missing), "Extract game data");
         assert_eq!(button(&State::Unfinished), "Extract game data");
         assert!(notice(&State::Missing).is_none());
+        assert_eq!(hero_unplayable(&State::FilesDamaged("z".into())).0, "REPAIR GAME DATA");
+        for state in [State::NoMovies, State::MarkerDamaged("y".into()), State::FilesDamaged("z".into())] {
+            assert_eq!(hero_unplayable(&state).0, "REPAIR GAME DATA", "{state:?}");
+            assert_eq!(menu_play(&state), "REPAIR THE GAME DATA FIRST", "{state:?}");
+        }
+        for state in [State::Missing, State::Unfinished] {
+            assert_eq!(hero_unplayable(&state).0, "SET UP GAME DATA", "{state:?}");
+            assert_eq!(menu_play(&state), "SET UP THE GAME DATA FIRST", "{state:?}");
+        }
+        assert_eq!(menu_play(&State::NoIndex), "START THE GAME");
     }
 
     #[test]

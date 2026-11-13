@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ssx_formats::speech::ctx::{Context, Contexts, Value};
 use ssx_formats::speech::evt::EventSystem;
@@ -12,10 +12,31 @@ use super::vm::{self, VmHost};
 pub struct Lcg(pub u32);
 
 impl Lcg {
+    pub fn seeded(seed: u32) -> Self {
+        Lcg(if seed == 0 { 0xAAAA_AAAA } else { seed })
+    }
+
     pub fn below(&mut self, n: u32) -> u32 {
         let x = u64::from(self.0) * 0x41C6_4E6D + 0x3039;
         self.0 = x as u32;
         ((((x >> 16) & 0xFFFF_FFFF) * u64::from(n)) >> 32) as u32
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SpeechRandom(Arc<Mutex<Lcg>>);
+
+impl SpeechRandom {
+    pub fn boot() -> Self {
+        Self(Arc::new(Mutex::new(Lcg(crate::career::random::time_base()))))
+    }
+
+    pub fn seeded(seed: u32) -> Self {
+        Self(Arc::new(Mutex::new(Lcg::seeded(seed))))
+    }
+
+    pub fn with<R>(&self, f: impl FnOnce(&mut Lcg) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -387,6 +408,16 @@ mod tests {
         assert_eq!(g.0, 0x3039);
         let x = 0x3039u64 * 0x41C6_4E6D + 0x3039;
         assert_eq!(g.below(100), ((((x >> 16) & 0xFFFF_FFFF) * 100) >> 32) as u32);
+    }
+
+    #[test]
+    fn the_speech_rng_is_seeded_once_and_shared() {
+        assert_eq!(Lcg::seeded(0).0, 0xAAAA_AAAA);
+        assert_eq!(Lcg::seeded(7).0, 7);
+        let (a, mut g) = (SpeechRandom::seeded(7), Lcg::seeded(7));
+        let b = a.clone();
+        let drawn = [a.with(|r| r.below(100)), b.with(|r| r.below(100)), a.with(|r| r.below(100))];
+        assert_eq!(drawn, [g.below(100), g.below(100), g.below(100)]);
     }
 
     #[test]

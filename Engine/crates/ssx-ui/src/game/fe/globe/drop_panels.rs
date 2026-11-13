@@ -136,18 +136,17 @@ pub(super) fn write_explore_drop(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
         v.set_int(0x92, silver.value as i32);
         v.set_int(0x6E, bronze.value as i32);
     }
-    let mut rows = Vec::new();
     let ascending = matches!(e.event_type, 5..=7);
+    let kind = value_kind(e.event_type) as u8;
+    let mut medal_rows = Vec::new();
     for (i, g) in board.into_iter().enumerate() {
         let value = g.value;
-        let score = if ascending { loc.race_time(value) } else { loc.int(i64::from(value)) };
         let rider = fe.career.riders.iter().find(|r| r.key == g.character);
-        let name = rider.map(|r| crate::game::leaderboard::ghost_name(loc, &r.title)).unwrap_or_default();
-        rows.push(crate::game::values::LeaderboardRow {
+        medal_rows.push(crate::game::values::LeaderboardRow {
             value: value as i32,
-            name,
-            icon: rider.map(|r| r.icon.clone()).unwrap_or_default(),
-            score,
+            name: rider.map(|r| crate::game::leaderboard::ghost_name(loc, &r.title)).unwrap_or_default(),
+            icon: rider.map(|r| r.round_icon.clone()).unwrap_or_default(),
+            score: crate::game::leaderboard::value_text(loc, kind, value as i32, !ascending),
             rank_text: (i + 1).to_string(),
             reward: loc.currency(0, true),
             medal: 2 - i as i32,
@@ -155,13 +154,37 @@ pub(super) fn write_explore_drop(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
             ..Default::default()
         });
     }
-    v.set(0x7B, crate::game::values::UiValue::Rows(rows.clone()));
-    v.set(0x7A, crate::game::values::UiValue::Rows(rows));
+    v.set(0x7B, crate::game::values::UiValue::Rows(medal_rows));
+    let mut board_rows = Vec::new();
+    if let Some(value) = fe.profile.explore_scores.get(&drop).map(|s| s.score).filter(|&s| s != u32::MAX) {
+        board_rows.push(crate::game::values::LeaderboardRow {
+            value: value as i32,
+            name: v.str(0x22B).to_string(),
+            icon: v.str(0x22C).to_string(),
+            score: crate::game::leaderboard::value_text(loc, kind, value as i32, !ascending),
+            rank_text: "1".to_string(),
+            reward: loc.currency(0, true),
+            medal: -1,
+            rank: 1,
+            is_player: true,
+            ..Default::default()
+        });
+    }
+    v.set(0x7A, crate::game::values::UiValue::Rows(board_rows));
     super::panel::write_cost(fe, env, drop);
     write_rival_panel(fe, env, drop);
 }
 
+fn drop_focus(career: &ssx_assets::career::CareerDb, drop: u32) -> Option<(u32, u32, u32)> {
+    let e = career.event(drop)?;
+    let (peak, range) = career.peak_and_range(e);
+    career.peak(peak).map(|_| (range, peak, drop))
+}
+
 pub fn drop_node_selected(fe: &mut FrontEnd, env: &mut FeEnv, drop: u32) {
+    if let Some(focus) = drop_focus(&fe.career, drop) {
+        (fe.globe.range, fe.globe.peak, fe.globe.drop) = focus;
+    }
     match fe.game_mode {
         1 => write_campaign_drop(fe, env, drop),
         0 => {
@@ -260,4 +283,91 @@ pub(super) fn write_rival_panel(fe: &FrontEnd, env: &mut FeEnv, drop: u32) {
     env.values.set_str(0x85, name);
     env.values.set_int(0x91, value as i32);
     env.values.set(RIVAL_PANEL, UiValue::Rival(Box::new(panel)));
+}
+
+#[cfg(test)]
+mod tests {
+    use ssx_assets::career::data::Drop;
+    use ssx_assets::career::{CareerDb, DropType, Event, Peak};
+    use ssx_formats::attrib::fnv1;
+
+    fn peak(key: u32, range: u32) -> Peak {
+        Peak {
+            key,
+            name: String::new(),
+            range,
+            title: String::new(),
+            info: String::new(),
+            image: String::new(),
+            selectable: true,
+            campaign_type: 1,
+            unk_flag: false,
+            unk_floats: [0.0; 3],
+        }
+    }
+
+    fn event(key: u32, drop: u32, peak_ref: u32) -> Event {
+        Event {
+            key,
+            name: String::new(),
+            drop,
+            event_type: 0,
+            drop_type: DropType::Explore,
+            mode: String::new(),
+            slot: String::new(),
+            peak_short: String::new(),
+            hud_title: String::new(),
+            hud_body: String::new(),
+            goal_body: String::new(),
+            results_title: String::new(),
+            results_body: String::new(),
+            unlock_text: String::new(),
+            deadly_descent: false,
+            warning: 0,
+            time_of_day: 0,
+            cost: 0,
+            difficulty: 0,
+            reward: 0,
+            places: None,
+            targets: Vec::new(),
+            required: Vec::new(),
+            unk_b683b553: Vec::new(),
+            rivals: Vec::new(),
+            forced: Vec::new(),
+            unk_63180fcc: false,
+            unk_89d02fa4: false,
+            unk_12bccfb5: 0,
+            unk_0b03fc19: None,
+            unk_98e9ebcc: Vec::new(),
+            custom_status: 0,
+            unk_links: [0; 3],
+            peak_ref,
+            helicopter: 0,
+        }
+    }
+
+    #[test]
+    fn a_drop_selected_outside_the_globe_takes_the_globe_focus_of_its_peak() {
+        let (range, ge_drop) = (0x5000, 0x6000);
+        let peak_key = fnv1(b"whitehorn");
+        let drop = Drop {
+            key: ge_drop,
+            track: "rockies0101".into(),
+            track_key: 0,
+            peak: "whitehorn".into(),
+            title: String::new(),
+            selectable: true,
+            difficulty: 0,
+        };
+        let db = CareerDb {
+            peaks: vec![peak(peak_key, range), peak(0x7000, 0x5001)],
+            drops: vec![drop],
+            events: vec![event(0x100, ge_drop, 0), event(0x101, ge_drop, 0x7000), event(0x102, ge_drop, 0x7777)],
+            ..Default::default()
+        };
+        assert_eq!(super::drop_focus(&db, 0x100), Some((range, peak_key, 0x100)));
+        assert_eq!(super::drop_focus(&db, 0x101), Some((0x5001, 0x7000, 0x101)));
+        assert_eq!(super::drop_focus(&db, 0x102), None);
+        assert_eq!(super::drop_focus(&db, 0x999), None);
+    }
 }

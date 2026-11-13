@@ -12,8 +12,8 @@ use ssx_content::delivery::range::{ByteRange, RangeError, parse_range};
 use super::{HttpState, Reply};
 use crate::bridge::Shared;
 
-// TODO(guess): 32 KiB/s (a 256 kbit/s line; a slower reader resumes with a range on its next connection); settle: the
-// downloads of players on public servers.
+// PORT(choice): 32 KiB/s (a 256 kbit/s line; a slower reader resumes with a range on its next connection); tuning: the
+// downloads of players on public servers; the original has no dedicated server.
 pub const MIN_FILE_RATE: u64 = 32 << 10;
 const CHUNK: usize = 256 << 10;
 pub const MAX_REPORT_BODY: usize = 256;

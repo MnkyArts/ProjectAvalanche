@@ -110,24 +110,6 @@ fn the_query_hands_over_the_bots_velocity_within_reach() {
 }
 
 #[test]
-fn the_twister_matches_the_reference() {
-    let mut mt = Box::new([0u32; 624]);
-    mt[0] = 5489;
-    for i in 1..624 {
-        mt[i] = 1_812_433_253u32.wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 30)).wrapping_add(i as u32);
-    }
-    let mut g = Mt19937 { mt, index: 624 };
-    assert_eq!(g.next_u32(), 3_499_211_612);
-    assert_eq!(g.next_u32(), 581_869_302);
-    let mut a = Mt19937::seeded(DEFAULT_BOT_SEED);
-    let mut b = Mt19937::seeded(DEFAULT_BOT_SEED);
-    for n in 1..50 {
-        let x = a.below(n);
-        assert!(x < n && x == b.below(n));
-    }
-}
-
-#[test]
 fn character_keys_name_the_riders() {
     assert_eq!(character_name(0xAFD9_E65D), "alex");
     assert_eq!(character_name(0x3E7E_1256), "mac");

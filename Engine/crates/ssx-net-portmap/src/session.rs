@@ -38,8 +38,9 @@ impl Session {
     }
 }
 
-// TODO(guess): a permanent mapping added again every 30 minutes, a granted lifetime renewed at half and at least a
-// second apart; settle: real gateways that forget mappings (a restart) and grant short ones.
+// PORT(choice): a permanent mapping added again every 30 minutes, a granted lifetime renewed at half and at least a
+// second apart; tuning: real gateways that forget mappings (a restart) and grant short ones; the original has no
+// dedicated server.
 pub fn renew_after(lifetime: u32) -> Duration {
     if lifetime == 0 {
         return Duration::from_secs(1800);

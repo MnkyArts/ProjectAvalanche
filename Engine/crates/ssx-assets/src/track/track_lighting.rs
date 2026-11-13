@@ -97,7 +97,7 @@ pub fn disc_track_drops(big_root: &Path, track: &str) -> Result<Vec<Drop>> {
     let track_key = fnv1(&format!("{track}_track"));
     with_track_db(big_root, track, |db| {
         let mut out = Vec::new();
-        for (key, _) in db.collections_of(1, CLASS_DROP).collect::<Vec<_>>() {
+        for (key, _) in db.collections_of_all(CLASS_DROP) {
             let fields = db.fields(CLASS_DROP, key)?;
             let get = |k: u32| fields.iter().find(|f| f.key == k).and_then(|f| single(&f.data));
             let text = |k: u32| fields.iter().find(|f| f.key == k).and_then(|f| single_text(&f.data));
@@ -125,7 +125,7 @@ pub fn disc_track_drops(big_root: &Path, track: &str) -> Result<Vec<Drop>> {
     })
 }
 
-pub(crate) fn preset(db: &Db<'_>, key: u32, postfx: Option<&str>) -> Result<LightingPreset> {
+pub(crate) fn preset(db: &Db, key: u32, postfx: Option<&str>) -> Result<LightingPreset> {
     let mut name = db.collection_name(key);
     if let Some(base) = postfx.and_then(|p| p.strip_suffix("_postfx")) {
         let candidates = [format!("{base}_lighting"), format!("{base}_pre_lighting")];

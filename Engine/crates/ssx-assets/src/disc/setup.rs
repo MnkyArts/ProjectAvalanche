@@ -82,6 +82,7 @@ pub struct DiscCheck {
     pub archives: Vec<(String, u64)>,
     pub movies: Vec<(String, u64)>,
     pub fingerprint: String,
+    pub xex_header: Option<Vec<u8>>,
 }
 
 impl DiscCheck {
@@ -180,6 +181,7 @@ pub(super) fn check_disc(disc: &mut Disc<File>) -> Result<DiscCheck> {
         h.update(&[n.entry.attributes]);
     }
     h.update(&xex[..xex.len().min(0x10000)]);
+    let xex_header = xex.get(..XEX_HEADER_BYTES).map(<[u8]>::to_vec);
     Ok(DiscCheck {
         layout: disc.layout,
         image_size: disc.image_size,
@@ -188,7 +190,32 @@ pub(super) fn check_disc(disc: &mut Disc<File>) -> Result<DiscCheck> {
         archives,
         movies,
         fingerprint: format!("{:016x}", h.0),
+        xex_header,
     })
+}
+
+pub const XEX_HEADER_BYTES: usize = crate::content::title_update::MAX_RETAIL_HEADER_BYTES;
+pub const MARKER_XEX_HEADER: &str = "xex_header";
+
+pub fn xex_header_hex(header: &[u8]) -> String {
+    use std::fmt::Write;
+    header.iter().fold(String::with_capacity(header.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+pub fn marker_xex_header(marker: &Value) -> Option<Vec<u8>> {
+    let text = marker.get(MARKER_XEX_HEADER)?.as_str()?.as_bytes();
+    if text.len() != XEX_HEADER_BYTES * 2 {
+        return None;
+    }
+    let digit = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    text.as_chunks::<2>().0.iter().map(|&[hi, lo]| Some(digit(hi)? << 4 | digit(lo)?)).collect()
 }
 
 pub(super) fn movie_files(disc: &Disc<File>) -> Vec<(String, Extent)> {
@@ -291,6 +318,29 @@ mod tests {
         let mut h = Fnv::new();
         h.update(b"a");
         assert_eq!(h.0, 0xAF63_DC4C_8601_EC8C);
+    }
+
+    #[test]
+    fn the_markers_xex_header_is_read_strictly() {
+        let header: Vec<u8> = (0..XEX_HEADER_BYTES).map(|i| (i * 7 % 251) as u8).collect();
+        let hex = xex_header_hex(&header);
+        assert_eq!(hex.len(), XEX_HEADER_BYTES * 2);
+        let with = |v: Value| serde_json::json!({ "format": 2, MARKER_XEX_HEADER: v });
+        assert_eq!(marker_xex_header(&with(Value::from(hex.clone()))), Some(header));
+        let bad = [
+            Value::from(&hex[..hex.len() - 2]),
+            Value::from(&hex[..hex.len() - 1]),
+            Value::from(format!("{hex}00")),
+            Value::from(format!("g{}", &hex[1..])),
+            Value::from(hex.to_uppercase()),
+            Value::from(format!("{} {}", &hex[..10], &hex[11..])),
+            Value::from(1234),
+            Value::Null,
+        ];
+        for v in bad {
+            assert_eq!(marker_xex_header(&with(v.clone())), None, "{}", v.to_string().get(..40).unwrap_or(""));
+        }
+        assert_eq!(marker_xex_header(&serde_json::json!({ "format": 2 })), None, "a marker without it");
     }
 
     #[test]

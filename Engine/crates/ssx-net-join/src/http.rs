@@ -15,8 +15,8 @@ use zeroize::Zeroizing;
 use crate::identity::PlayerIdentity;
 use crate::known::{KnownError, KnownServers, Trust};
 
-// TODO(guess): 10 s per request, 5 s to connect; settle: the join over real links from the server browser's
-// connecting popup (phases F2 and 5).
+// PORT(choice): 10 s per request, 5 s to connect; tuning: the join over real links from the server browser's connecting
+// popup (phases F2 and 5); the original has no real-time multiplayer.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_HEADERS: usize = 8 * 1024;

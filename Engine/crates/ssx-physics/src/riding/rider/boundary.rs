@@ -28,7 +28,11 @@ impl BoundaryGrid {
 
     pub fn load(track_dir: &Path) -> Option<Self> {
         let track = track_dir.file_name()?.to_str()?;
-        let data = std::fs::read(track_dir.join(format!("{track}_track_boundary.spdt"))).ok()?;
+        let name = format!("{track}_track_boundary.spdt");
+        let data = match ssx_assets::data_roots::overlay_track_file(track, &name) {
+            Some(path) => std::fs::read(path).ok()?,
+            None => std::fs::read(track_dir.join(&name)).ok()?,
+        };
         Self::from_spdt(&SpdtFile::parse(&data).ok()?)
     }
 

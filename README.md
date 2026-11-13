@@ -158,7 +158,8 @@ cargo test -p ssx-movie --features sandbox-probe --test sandbox   # the movie de
 
 Comments marked `TODO(guess)` mark behaviour that is approximated rather than decoded from the original game;
 each names the game-code address or the open question that would settle it. Contributions that decode one are
-welcome.
+welcome. Comments marked `PORT(choice)` record the port's own decisions where the original has nothing to decode
+(the PC's input and windows, the launcher, mods and online play), each with what the console had instead.
 
 ## Contributing
 

@@ -98,7 +98,9 @@ impl DropScripts {
         if self.sources.contains_key(name) {
             return;
         }
-        let path = big_root.join(crate::spawn::SCRIPTS_DIR).join(name.replace('\\', "/"));
+        let rel = name.replace('\\', "/");
+        let path = ssx_assets::data_roots::find(big_root, &format!("data/common/scripts/{rel}"))
+            .unwrap_or_else(|| big_root.join(crate::spawn::SCRIPTS_DIR).join(&rel));
         if let Ok(src) = std::fs::read(path) {
             self.sources.insert(name.to_string(), Arc::from(src));
         }
@@ -476,6 +478,9 @@ impl ObjectiveWorld for SessionWorld<'_> {
     }
     fn ui_flag(&mut self, id: u16) -> Option<bool> {
         self.ui_flags.get(&id).copied().or((id == UI_HUD_READY).then_some(true))
+    }
+    fn free_ride(&mut self) -> Option<bool> {
+        Some(self.event.setup.free_ride)
     }
     fn drop_message(&mut self) -> Option<DropMessage> {
         Some(self.event.setup.message.clone())

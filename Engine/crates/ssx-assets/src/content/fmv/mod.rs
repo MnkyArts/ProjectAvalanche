@@ -1,6 +1,7 @@
 pub mod disc;
 pub mod export;
 pub mod ffmpeg;
+pub mod port;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -79,11 +80,9 @@ impl GameContent {
 
     pub(super) fn mount_fmv(&self, registry: &mut Registry) -> bool {
         let mut mounted = lock(&self.fmv.mounted);
-        if *mounted || !provides_kind(registry, Kind::Movie) {
+        if *mounted || !self.mount_fmv_preview(registry) {
             return false;
         }
-        let Some(d) = self.disc_movies() else { return false };
-        registry.mount(Layer::Base, 0, Box::new(Shared(d)));
         *mounted = true;
         true
     }
@@ -92,8 +91,10 @@ impl GameContent {
         if !provides_kind(registry, Kind::Movie) {
             return false;
         }
-        let Some(d) = self.disc_movies() else { return false };
-        registry.mount(Layer::Base, 0, Box::new(Shared(d)));
+        registry.mount(Layer::Port, 0, Box::new(port::PortMovies));
+        if let Some(d) = self.disc_movies() {
+            registry.mount(Layer::Base, 0, Box::new(Shared(d)));
+        }
         true
     }
 }
@@ -117,6 +118,9 @@ impl GameContent {
                 }
                 match src.load(id) {
                     Ok(Asset::Value(v)) => {
+                        if v.downcast_ref::<port::EmptySlot>().is_some() {
+                            return None;
+                        }
                         if let Some(d) = v.downcast_ref::<DiscMovie>() {
                             return Some(Fmv::Disc(d.path.clone()));
                         }
@@ -189,3 +193,6 @@ pub fn dev_problem(source: &dyn ssx_content::Source, id: &ContentId) -> Option<S
         .and_then(|(f, len)| ssx_content::movie::walk(f, len, &limits).map_err(|e| format!("{id}: {e}")));
     walked.err()
 }
+
+#[cfg(test)]
+mod tests;

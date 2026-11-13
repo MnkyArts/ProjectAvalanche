@@ -61,6 +61,7 @@ pub(super) fn feed_step(
     mut ui: ResMut<GameUiRes>,
     cams: Query<(&Camera, &GlobalTransform), With<FlyCam>>,
     mut audio: Option<ResMut<FrontEndAudio>>,
+    mut ghost_models: Option<ResMut<crate::rider::ghosts::Ghosts>>,
     (link, bots, paused_frames): (
         Option<ResMut<CameraTypeLink>>,
         Option<Res<crate::ride::bots::Bots>>,
@@ -81,12 +82,12 @@ pub(super) fn feed_step(
     l.fed = ride.steps;
     let Some(e) = ride.last_exec else { return };
     let ui = &mut ui.0;
-    // TODO(guess): a port choice — the game's pause holds the simulation and with it every write the simulation makes
-    // into the UI (0x823D2590: the step +0x22, the scripts +0x1BC, the score manager +0x1DC; in game mode 3 also the
-    // live-event manager, 0x823833E8 → 0x82422640), so a ride never steps under it; a session's ride does, and its HUD
-    // feed and tutorial step write into held copies of the value table, the HUD's messages, the gear slots and the
-    // screen fader that the pause's end hands over (each value's last, the messages in order, the held fader when a
-    // fade message reached it); settle: none (the original has no ride stepping under a pause).
+    // PORT(choice): a session's ride steps under the pause, and its HUD feed and tutorial step write into held copies
+    // of the value table, the HUD's messages, the gear slots and the screen fader that the pause's end hands over (each
+    // value's last, the messages in order, the held fader when a fade message reached it); the game's pause holds the
+    // simulation and with it every write the simulation makes into the UI (0x823D2590: the step +0x22, the scripts
+    // +0x1BC, the score manager +0x1DC; in game mode 3 also the live-event manager, 0x823833E8 → 0x82422640), so a ride
+    // never steps under it.
     let held = l.live && l.paused;
     if held && l.sim_hold.is_none() {
         l.sim_hold = Some(SimHold::new(ui));
@@ -99,16 +100,24 @@ pub(super) fn feed_step(
     }
     let clock = &ride.session.event.clock;
     let (ghosts, racers) = l.ghosts.step(clock.seconds, clock.ms(), &ride.world().triggers, &mut ui.loc);
-    l.feed.ghosts =
-        if ssx_physics::event::shows_explore_ghosts(ride.session.event.setup.event_type, ride.session.bots.is_some()) {
-            ghosts
-        } else {
-            Vec::new()
-        };
+    let mut ghosts = ghosts;
+    if let Some(g) = ghost_models.as_mut() {
+        let t = g.drawn_time(&ride);
+        let drawn = g.drawn(t);
+        ghosts.retain_mut(|b| match drawn.iter().find(|(id, _)| *id == b.id) {
+            Some((_, p)) => {
+                b.position = p.to_array();
+                true
+            }
+            None => false,
+        });
+    }
+    let explore = ssx_physics::event::shows_explore_ghosts(ride.session.event.setup.event_type);
+    l.feed.ghosts = if explore { ghosts } else { Vec::new() };
+    l.feed.ghost_racers = if explore { racers } else { Vec::new() };
     if let Some(b) = bots.as_deref() {
         l.feed.ghosts.extend(b.live.billboards());
     }
-    l.feed.ghost_racers = racers;
     l.feed.camera = cams.iter().next().map(|(c, t)| hud_camera(c, t));
     match l.sim_hold.as_mut() {
         Some(hold) => {
@@ -129,7 +138,20 @@ pub(super) fn feed_step(
             if let ssx_physics::session::geotags::GeotagEvent::Collected { id, value, .. } = ev {
                 let row = l.geotag_rows.iter().find(|r| r.id == *id);
                 let paid = match (row, ui.fe.as_mut()) {
-                    (Some(row), Some(fe)) => fe.profile.collect_geotag(g.data.track_key, row),
+                    (Some(row), Some(fe)) => {
+                        let paid = fe.profile.collect_geotag(g.data.track_key, row);
+                        if paid.is_some() {
+                            let collected = fe.profile.collected_geotags.len();
+                            ssx_ui::game::fe::notify::post_geotag(
+                                fe,
+                                &mut ui.loc,
+                                *value,
+                                collected,
+                                g.data.disc_total,
+                            );
+                        }
+                        paid
+                    }
                     _ => None,
                 };
                 info!("level: geotag {id} picked up ({value} credits): paid {paid:?}");

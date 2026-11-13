@@ -5,8 +5,8 @@ use ssx_net_proto::operator::Expiry;
 
 pub const MAX_REASON_BYTES: usize = 200;
 pub const MAX_BY_BYTES: usize = 9 + crate::acl::MAX_RESOURCE_BYTES;
-// TODO(guess): 16 MiB, room for the entries' caps (65 536 bans of about 200 bytes) with their comments; settle: the
-// ban lists of long-running public servers.
+// PORT(choice): 16 MiB, room for the entries' caps (65 536 bans of about 200 bytes) with their comments; tuning: the
+// ban lists of long-running public servers; the original has no dedicated server.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_DURATION_SECS: u64 = 100 * 365 * 86_400;
 

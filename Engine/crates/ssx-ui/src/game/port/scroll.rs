@@ -56,7 +56,10 @@ pub fn publish_window(cx: &mut Ctx, view: &Value, logic: &Logic, name: &str, win
             } else if step == -1.0 {
                 call_method(cx, &bar, "Previous", &[])?;
             } else if step != 0.0 {
-                // TODO(guess): a port choice — a window that jumps (a wrap from the last row to the first, a page key, the list made again) is placed by `SetPosition` without the arrow's pulse; the disc's one paged list (`activityfeedtracklisting`, 0x17bc…0x19c7) only ever steps one row (`Next` / `Previous` with the pulse) or starts again at 0 with a new total; settle: none (no paged list of the disc jumps).
+                // PORT(choice): a window that jumps (a wrap from the last row to the first, a page key, the list made
+                // again) is placed by `SetPosition` without the arrow's pulse; no paged list of the disc jumps: the
+                // disc's one paged list (`activityfeedtracklisting`, 0x17bc…0x19c7) only ever steps one row (`Next` /
+                // `Previous` with the pulse) or starts again at 0 with a new total.
                 call_method(cx, &bar, "SetPosition", &[Value::Number(first)])?;
             }
         }

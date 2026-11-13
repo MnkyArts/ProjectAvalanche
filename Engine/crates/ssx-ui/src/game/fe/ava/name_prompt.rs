@@ -188,7 +188,10 @@ impl GameUi {
         {
             let name = join_name(fe);
             fe.note(format!("name prompt: the profile shows {name:?}"));
-            // TODO(guess): a port choice — the profile's shown name (`USER_gamertag`, UI 0x22B, which the sign-in 0x82393A18 writes from Live's gamertag, unchanged for the session) follows the player name the moment it is confirmed; written after the seen flags' clearing (0x8256C9A8), so `userdata`'s next update (0x825BA5E8) sees the change and republishes `dp_user_data` (the dock's `username`); settle: none (no Live in the port).
+            // PORT(choice): the profile's shown name follows the player name the moment it is confirmed; written after
+            // the seen flags' clearing (0x8256C9A8), so `userdata`'s next update (0x825BA5E8) sees the change and
+            // republishes `dp_user_data` (the dock's `username`); no Live in the port: the game's `USER_gamertag` (UI
+            // 0x22B) is written by the sign-in 0x82393A18 from Live's gamertag, unchanged for the session.
             self.values.set_str(USER_GAMERTAG, name);
         }
         self.name_prompt_waiting()

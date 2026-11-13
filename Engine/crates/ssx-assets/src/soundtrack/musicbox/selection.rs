@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, bail, ensure};
 use ssx_formats::reader::Reader;
+use ssx_formats::speech::grf::Graffiti;
 
 use super::{MusicBox, RaceType};
 use crate::sfx::speech::context::Lcg;
@@ -100,10 +101,14 @@ impl RaceEvent {
 
 impl MusicBox {
     pub fn candidates(&self, ev: &RaceEvent) -> Vec<u32> {
-        let sel = self.selections.events.iter().find(|e| e.name == EVENT);
-        let (Some(sel), Some(event)) = (sel, self.events.event(EVENT)) else { return Vec::new() };
+        let Some(event) = self.events.event(EVENT) else { return Vec::new() };
         let values = ev.values();
-        let mut rules: Vec<&Rule> = sel.rules.iter().collect();
+        let mut rules: Vec<&Rule> = self
+            .selections
+            .iter()
+            .flat_map(|sel| sel.events.iter().filter(|e| e.name == EVENT))
+            .flat_map(|e| &e.rules)
+            .collect();
         let mut max = rules.iter().map(|r| r.priority).max().unwrap_or(0);
         let (mut level, mut out) = (1i32, Vec::new());
         while out.is_empty() && !rules.is_empty() {
@@ -145,30 +150,38 @@ impl MusicBox {
     }
 
     pub fn query(&self, tags: &[(u32, u32, bool)]) -> Vec<u32> {
-        let n = tags.len() as u32;
-        let lookup = |&(tag, value, bits): &(u32, u32, bool)| -> Option<Vec<u32>> {
-            if !bits {
-                return self.graffiti.find(tag, value, n).map(|e| e.samples.clone());
-            }
-            let mut v: Option<Vec<u32>> = None;
-            for bit in (0..32).map(|k| 1u32 << k).filter(|b| value & b != 0) {
-                if let Some(e) = self.graffiti.find(tag, bit, n) {
-                    let v = v.get_or_insert_with(Vec::new);
-                    v.extend(e.samples.iter().filter(|s| !v.contains(s)).copied().collect::<Vec<_>>());
-                }
-            }
-            v
-        };
-        let Some(mut set) = tags.first().and_then(lookup) else { return Vec::new() };
-        for t in &tags[1..] {
-            if set.is_empty() {
-                break;
-            }
-            let other = lookup(t).unwrap_or_default();
-            set.retain(|s| other.contains(s));
+        let mut out = Vec::new();
+        for db in &self.graffiti {
+            out.extend(query_db(db, tags));
         }
-        set
+        out
     }
+}
+
+fn query_db(db: &Graffiti, tags: &[(u32, u32, bool)]) -> Vec<u32> {
+    let n = tags.len() as u32;
+    let lookup = |&(tag, value, bits): &(u32, u32, bool)| -> Option<Vec<u32>> {
+        if !bits {
+            return db.find(tag, value, n).map(|e| e.samples.clone());
+        }
+        let mut v: Option<Vec<u32>> = None;
+        for bit in (0..32).map(|k| 1u32 << k).filter(|b| value & b != 0) {
+            if let Some(e) = db.find(tag, bit, n) {
+                let v = v.get_or_insert_with(Vec::new);
+                v.extend(e.samples.iter().filter(|s| !v.contains(s)).copied().collect::<Vec<_>>());
+            }
+        }
+        v
+    };
+    let Some(mut set) = tags.first().and_then(lookup) else { return Vec::new() };
+    for t in &tags[1..] {
+        if set.is_empty() {
+            break;
+        }
+        let other = lookup(t).unwrap_or_default();
+        set.retain(|s| other.contains(s));
+    }
+    set
 }
 
 #[derive(Clone, Debug)]
@@ -189,12 +202,7 @@ impl Session {
             let v = v.trim();
             v.strip_prefix("0x").map_or_else(|| v.parse().ok(), |h| u32::from_str_radix(h, 16).ok())
         });
-        let clock = || {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0xAAAA_AAAA, |d| d.as_nanos() as u32)
-        };
-        Self::seeded(fixed.unwrap_or_else(clock))
+        Self::seeded(fixed.unwrap_or_else(crate::career::random::time_base))
     }
 
     pub fn seed(&self) -> u32 {

@@ -35,6 +35,7 @@ pub(super) struct Pipelines {
     pub(super) earth: CachedRenderPipelineId,
     pub(super) halo: CachedRenderPipelineId,
     pub(super) background: CachedRenderPipelineId,
+    pub(super) background_movie: CachedRenderPipelineId,
     pub(super) sky: CachedRenderPipelineId,
     pub(super) quarter: CachedRenderPipelineId,
     pub(super) luminance: CachedComputePipelineId,
@@ -312,6 +313,8 @@ pub(super) fn init(
         })
     };
     let background = full("ssx_globe_background", &shaders.backdrop, &backdrop_layout, "fs_background", HDR_FORMAT);
+    let background_movie =
+        full("ssx_globe_background_movie", &shaders.backdrop, &backdrop_layout, "fs_background_movie", HDR_FORMAT);
     let sky = full("ssx_globe_sky", &shaders.backdrop, &backdrop_layout, "fs_sky", HDR_FORMAT);
     let quarter = full("ssx_globe_quarter", &shaders.post, &quarter_layout, "fs_quarter", HDR_FORMAT);
     let threshold = full("ssx_globe_threshold", &shaders.post, &tone_layout, "fs_threshold", LDR_FORMAT);
@@ -480,6 +483,7 @@ pub(super) fn init(
         earth,
         halo,
         background,
+        background_movie,
         sky,
         quarter,
         luminance,

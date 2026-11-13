@@ -9,7 +9,8 @@ use crate::path::check_package_path;
 
 pub const UNCONFIRMED: &str = "unconfirmed";
 pub const MOUNTED: &str = "mounted";
-// TODO(guess): 16 slots, a port cap (one per running game; test clients on one machine use 2); settle: none needed.
+// PORT(choice): 16 slots, a port cap (one per running game; test clients on one machine use 2); the original loads no
+// packages.
 pub const MOUNT_SLOTS: usize = 16;
 const PARTIAL_TRIES: usize = 8;
 

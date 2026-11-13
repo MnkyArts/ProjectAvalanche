@@ -9,10 +9,12 @@ use ssx_content::texture::{
 };
 use ssx_content::{Asset, ContentId, Kind, Layer, LoadError, PackageSource, Registry, Source};
 
+use super::dlc::DlcSet;
 use super::models::DiscModels;
 use super::mods::{self, ModsReport};
 use super::objects::DiscRecords;
 use super::textures::DiscTextures;
+use super::title_update::TuSet;
 use super::track_packages::TrackPackages;
 
 pub const TEXTURE_CACHE: &str = "Cache/Textures";
@@ -45,6 +47,10 @@ pub struct GameContent {
     pub(super) data: super::data::DataCache,
     pub(super) anims: super::anims::AnimCache,
     pub(super) tricks: super::tricks::TrickCache,
+    dlc_sources: Mutex<Vec<String>>,
+    dlc_set: RwLock<Option<Arc<DlcSet>>>,
+    tu_sources: Mutex<Vec<String>>,
+    tu_set: RwLock<Option<Arc<TuSet>>>,
 }
 
 pub(super) type TrackCell = OnceLock<Arc<TrackPackages>>;
@@ -142,6 +148,10 @@ impl GameContent {
             data: Default::default(),
             anims: Default::default(),
             tricks: Default::default(),
+            dlc_sources: Mutex::new(Vec::new()),
+            dlc_set: RwLock::new(None),
+            tu_sources: Mutex::new(Vec::new()),
+            tu_set: RwLock::new(None),
         }
     }
 
@@ -175,6 +185,23 @@ impl GameContent {
         }
         registry.mount(Layer::Port, 0, Box::new(super::level::PortSkies));
         registry.mount(Layer::Port, 0, Box::new(super::markers::PortMarkers));
+        if let Some(set) = self.dlc_set.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+            self.dlc_sources_into(&mut registry, &set);
+        }
+        if let Some(entry) = self
+            .tu_set
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|s| s.mounted().cloned())
+            && let Ok(t) = DiscTextures::index_archive(&entry.root)
+        {
+            registry.mount(
+                Layer::Base,
+                TU_PRIORITY,
+                Box::new(Named { name: "title-update".into(), inner: Arc::new(t) }),
+            );
+        }
         let mut report = mods::mount_enabled(&mut registry, app_dir);
         if let Some(r) = &self.records
             && provides_records(&registry)
@@ -436,6 +463,144 @@ impl GameContent {
         self.mount_client_mods_except(app_dir, None)
     }
 
+    pub fn mount_dlc(&self, root: &Path) -> DlcMountReport {
+        let set = Arc::new(super::dlc::DlcSet::load(root));
+        super::dlc::set_active_roots(set.roots());
+        *self.dlc_set.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(set.clone());
+        let mut registry = self.registry.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in std::mem::take(&mut *self.dlc_sources.lock().unwrap_or_else(std::sync::PoisonError::into_inner)) {
+            registry.unmount_named(Layer::Base, &name);
+        }
+        let (mounted, mut notes) = self.dlc_sources_into(&mut registry, &set);
+        if mounted.iter().any(|m| m.records)
+            && let Some(records) = &self.records
+            && !self.records_mounted.swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            registry.mount(Layer::Base, 0, Box::new(Shared(records.clone())));
+        }
+        for m in &mounted {
+            notes.push(format!(
+                "dlc: mounted {} ({}) at base priority {}: {} textures, {} models, objects and materials {}",
+                m.display,
+                m.name,
+                m.priority,
+                m.textures,
+                m.models,
+                if m.records { "yes" } else { "no" }
+            ));
+        }
+        self.dlc_sources.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(mounted.iter().flat_map(
+            |m| [format!("{}/textures", m.name), format!("{}/models", m.name), format!("{}/records", m.name)],
+        ));
+        DlcMountReport { set, mounted, notes }
+    }
+
+    pub fn mount_title_update(&self, tu_root: &Path, big_root: &Path) -> TuMountReport {
+        let header = super::title_update::retail_header(big_root);
+        let set = Arc::new(TuSet::load(tu_root, header.as_deref()));
+        super::title_update::set_active(set.clone());
+        crate::data_roots::set_title_update(set.mounted_root());
+        let mut notes = set.line_strings();
+        let mut textures = 0;
+        let mut registry = self.registry.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in std::mem::take(&mut *self.tu_sources.lock().unwrap_or_else(std::sync::PoisonError::into_inner)) {
+            registry.unmount_named(Layer::Base, &name);
+        }
+        if let Some(entry) = set.mounted() {
+            match DiscTextures::index_archive(&entry.root) {
+                Ok(t) => {
+                    textures = t.len();
+                    for (id, files) in &t.collisions {
+                        notes.push(format!("title update: {id} names {} files; left out", files.len()));
+                    }
+                    let name = format!("title-update/{}", entry.folder);
+                    registry.mount(
+                        Layer::Base,
+                        TU_PRIORITY,
+                        Box::new(Named { name: name.clone(), inner: Arc::new(t) }),
+                    );
+                    self.tu_sources.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(name);
+                }
+                Err(e) => notes.push(format!("title update: textures: {e:#}")),
+            }
+        }
+        *self.tu_set.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(set.clone());
+        TuMountReport { set, textures, notes }
+    }
+
+    pub fn tu_set(&self) -> Option<Arc<TuSet>> {
+        self.tu_set.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    fn dlc_sources_into(&self, registry: &mut Registry, set: &DlcSet) -> (Vec<DlcMounted>, Vec<String>) {
+        let mut mounted = Vec::new();
+        let mut notes = set.line_strings();
+        let packages = set.mounted();
+        let indexed = index_dlc_packages(&packages, &set.root);
+        for (index, (package, sources)) in packages.iter().zip(indexed).enumerate() {
+            let priority = i32::try_from(packages.len() - index).map_or(i32::MAX, |p| p.saturating_add(TU_PRIORITY));
+            let name = package.info.name.clone();
+            let mut entry = DlcMounted {
+                name: name.clone(),
+                display: package.display_name().to_string(),
+                priority,
+                textures: 0,
+                models: 0,
+                records: false,
+            };
+            match sources.textures {
+                Ok(t) => {
+                    entry.textures = t.len();
+                    for (id, files) in &t.collisions {
+                        notes.push(format!("dlc: {name}: {id} names {} files; left out", files.len()));
+                    }
+                    registry.mount(
+                        Layer::Base,
+                        priority,
+                        Box::new(Named { name: format!("{name}/textures"), inner: Arc::new(t) }),
+                    );
+                }
+                Err(e) => notes.push(format!("dlc: {name}: textures: {e:#}")),
+            }
+            match sources.models {
+                Ok(DlcModels { models, records, usable }) => {
+                    entry.models = models.len();
+                    registry.mount(
+                        Layer::Base,
+                        priority,
+                        Box::new(Named { name: format!("{name}/models"), inner: models }),
+                    );
+                    match usable {
+                        Ok(unknown) => {
+                            entry.records = true;
+                            for (class, count) in unknown {
+                                notes.push(format!(
+                                    "dlc: {name}: {count} collections of class {class:#010x} are left out (the \
+                                     disc's schema does not define it); the rest of its objects and materials mount"
+                                ));
+                            }
+                            registry.mount(
+                                Layer::Base,
+                                priority,
+                                Box::new(Named { name: format!("{name}/records"), inner: records }),
+                            );
+                        }
+                        Err(e) => notes.push(format!(
+                            "dlc: {name}: objects and materials are not mounted ({e}); the disc's remain"
+                        )),
+                    }
+                }
+                Err(e) => notes.push(format!("dlc: {name}: models: {e:#}")),
+            }
+            mounted.push(entry);
+        }
+        (mounted, notes)
+    }
+
+    pub fn dlc_roots(&self) -> Vec<std::path::PathBuf> {
+        super::dlc::active_roots()
+    }
+
     pub fn with_registry<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
         f(&self.registry.read().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
@@ -573,6 +738,85 @@ impl GameContent {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TuMountReport {
+    pub set: Arc<TuSet>,
+    pub textures: usize,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DlcMountReport {
+    pub set: Arc<super::dlc::DlcSet>,
+    pub mounted: Vec<DlcMounted>,
+    pub notes: Vec<String>,
+}
+
+const TU_PRIORITY: i32 = 1;
+
+struct DlcIndexed {
+    textures: anyhow::Result<DiscTextures>,
+    models: anyhow::Result<DlcModels>,
+}
+
+struct DlcModels {
+    models: Arc<DiscModels>,
+    records: Arc<DiscRecords>,
+    usable: Result<BTreeMap<u32, usize>, String>,
+}
+
+fn index_dlc_packages(packages: &[&super::dlc::DlcEntry], dlc_root: &Path) -> Vec<DlcIndexed> {
+    let index = |package: &super::dlc::DlcEntry| DlcIndexed {
+        textures: DiscTextures::index_archive(&package.root),
+        models: DiscModels::index_archive(&package.root).map(|m| {
+            let models = Arc::new(m);
+            let records = Arc::new(DiscRecords::with_assets(&package.root, dlc_root, models.clone()));
+            let usable = records.usable();
+            DlcModels { models, records, usable }
+        }),
+    };
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(4)).min(packages.len()).max(1);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut out: Vec<Option<DlcIndexed>> = packages.iter().map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(package) = packages.get(i) else { break };
+                        done.push((i, index(package)));
+                    }
+                    done
+                })
+            })
+            .collect();
+        for job in jobs {
+            for (i, indexed) in job.join().unwrap_or_else(|e| std::panic::resume_unwind(e)) {
+                out[i] = Some(indexed);
+            }
+        }
+    });
+    out.into_iter().map(|r| r.unwrap_or_else(|| unreachable!("every package is taken by one worker"))).collect()
+}
+
+#[derive(Clone, Debug)]
+pub struct DlcMounted {
+    pub name: String,
+    pub display: String,
+    pub priority: i32,
+    pub textures: usize,
+    pub models: usize,
+    pub records: bool,
+}
+
+impl DlcMountReport {
+    pub fn lines(&self) -> Vec<ssx_core::text::Text> {
+        self.notes.iter().cloned().map(ssx_core::text::Text::from).collect()
+    }
+}
+
 struct Disc(Arc<DiscTextures>);
 
 impl Source for Disc {
@@ -614,6 +858,29 @@ impl<S: Source> Source for Shared<S> {
 
     fn rider_entry(&self, id: &ContentId) -> Option<Result<ssx_content::rider::RiderEntry, LoadError>> {
         self.0.rider_entry(id)
+    }
+}
+
+struct Named<S: Source> {
+    name: String,
+    inner: Arc<S>,
+}
+
+impl<S: Source> Source for Named<S> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn has(&self, id: &ContentId) -> bool {
+        self.inner.has(id)
+    }
+
+    fn load(&self, id: &ContentId) -> Result<Asset, LoadError> {
+        self.inner.load(id)
+    }
+
+    fn list(&self, kind: Kind) -> Vec<ContentId> {
+        self.inner.list(kind)
     }
 }
 

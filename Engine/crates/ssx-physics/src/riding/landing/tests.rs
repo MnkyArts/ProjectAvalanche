@@ -266,6 +266,44 @@ fn a_fall_onto_a_slope_snaps_the_board_onto_the_slope_travel() {
 }
 
 #[test]
+fn the_bail_limit_counts_riding_ticks_and_spares_avalanche_tumbles_and_the_dead() {
+    let mut l = LandingState { ticks: 10.0 * BAIL_ON_LANDING_MAX_TICKS, bail_on_landing: true, ..Default::default() };
+    let updates = (BAIL_ON_LANDING_MAX_TICKS / 2.0) as usize;
+    for _ in 1..updates {
+        l.landing_bail_limit(false, 2.0);
+    }
+    assert!(l.bail_on_landing, "{} ticks", l.landing_bail_ticks);
+    l.landing_bail_limit(false, 2.0);
+    assert!(!l.bail_on_landing && l.landing_bail_ticks == 0.0);
+    l.landing_bail_limit(false, 2.0);
+    assert_eq!(l.landing_bail_ticks, 0.0);
+    let mut spared = LandingState { bail_on_landing: true, landing_bail_ticks: 80.0, ..Default::default() };
+    for _ in 0..1000 {
+        spared.landing_bail_limit(true, 2.0);
+    }
+    assert!(spared.bail_on_landing && spared.landing_bail_ticks == 0.0);
+}
+
+#[test]
+fn the_bail_limit_lets_the_rider_get_up() {
+    let (mut l, _) = land_rotating(0.0, 150.0 * DEG, 0.1, false);
+    let t = balance();
+    let mut updates = 0;
+    while l.bail_on_landing {
+        l.landing_bail_limit(false, 2.0);
+        l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
+        updates += 1;
+        assert!(updates <= 45, "still bailing after {updates} updates");
+    }
+    assert_eq!(2.0 * updates as f32, BAIL_ON_LANDING_MAX_TICKS);
+    for _ in 0..300 {
+        l.balance_update(&t, 1.0, 0.0, 0.3, false, true, false, false, false, false, false, 2.0);
+    }
+    assert!(!l.is_bailing() && !l.tumbling && l.pitch.abs() < 25.0 * DEG, "pitch {}°", l.pitch / DEG);
+    assert_eq!(l.quality, LandingQuality::Bail);
+}
+
+#[test]
 fn level_complete_clears_a_landing_bail() {
     let (mut l, _) = land(0.0, 150.0 * DEG, false);
     let t = balance();

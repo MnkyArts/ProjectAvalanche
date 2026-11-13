@@ -142,6 +142,43 @@ fn rider_levels_follow_the_thresholds_and_the_purchase_gate() {
 }
 
 #[test]
+fn fifteen_levels_and_the_local_level_purchase() {
+    let thr: Vec<i64> = (1..=15).map(|i| i * 1000).collect();
+    let mut prices = vec![0i64; 15];
+    let paid = [1_000_000, 2_500_000, 5_000_000, 7_500_000, 10_000_000];
+    prices[10..].copy_from_slice(&paid);
+    let rules = Rules { level_thresholds: thr.clone(), level_prices: prices.clone(), ..Default::default() };
+    let rider = key("zoe");
+    let mut p = Profile::new();
+    p.attribs.insert(ATTRIB_CREDITS, 30_000_000);
+    p.riders.insert(rider, RiderStats { money_earned: 9001, ..Default::default() });
+    assert_eq!(level_purchase(&rules, &p.riders[&rider]), Some((10, 1_000_000)));
+    let mut spent = 0;
+    for (i, expected) in paid.iter().enumerate() {
+        let level = 10 + i as i64;
+        if i > 0 {
+            p.riders.get_mut(&rider).unwrap().money_earned = thr[level as usize - 2] + i as i64 + 1;
+        }
+        assert_eq!(level_purchase(&rules, &p.riders[&rider]), Some((level, *expected)));
+        assert_eq!(p.purchase_rider_level(&rules, rider, level).unwrap(), *expected);
+        spent += *expected;
+        let stats = p.riders.get_mut(&rider).unwrap();
+        assert_eq!(stats.max_purchased_level, level);
+        let (now, percent) = update_rider_level(stats, &rules.level_thresholds, &rules.level_prices);
+        assert_eq!((now, percent), (level - 1, 0), "the bought level's bar starts at 0 %");
+    }
+    assert_eq!((p.credits(), p.riders[&rider].max_purchased_level), (30_000_000 - spent, 14));
+    assert_eq!(level_purchase(&rules, &p.riders[&rider]), None);
+    p.attribs.insert(ATTRIB_CREDITS, 10);
+    assert!(p.purchase_rider_level(&rules, rider, 14).is_err());
+    let earned = p.riders[&rider].money_earned;
+    assert_eq!(p.purchase_rider_level(&rules, rider, 20).unwrap(), 0);
+    assert_eq!(p.credits(), 10);
+    let stats = &p.riders[&rider];
+    assert_eq!((stats.max_purchased_level, stats.next_level_offset), (20, earned));
+}
+
+#[test]
 fn campaign_results_pay_once_in_full_then_capped() {
     let r = rules();
     let mut p = Profile::new();

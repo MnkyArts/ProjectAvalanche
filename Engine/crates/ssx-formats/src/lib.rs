@@ -12,10 +12,10 @@ mod ui;
 pub mod vmx;
 
 pub use anim::{ant, ant_anim, ghost, rigamate};
-pub use archive::{big, chunk, lzx, xdvdfs};
+pub use archive::{big, chunk, dlc, is_reserved_device_name, lzx, refpack, tu, xcontent, xdvdfs};
 pub use audio::codec::{ealayer3, ealayer3_decode, mp3_layer3, wmapro, xma, xma_decode};
 pub use audio::{abk, aems, csi, eaac, irf, mpf, ptch, sbr, speech};
-pub use data::{attrib, csvdb, lynx, lynx_schema, save, t3db, xml};
+pub use data::{attrib, csvdb, lynx, lynx_schema, save, t3db, tuner, xml};
 pub use error::{Error, Result};
 pub use exe::{pe, xex};
 pub use geometry::{crsf, geom, pob, spdt, subd};

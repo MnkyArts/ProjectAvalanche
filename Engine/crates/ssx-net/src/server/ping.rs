@@ -9,8 +9,9 @@ use super::guard::{Kicked, Leaving};
 use super::instance::PlayerEntity;
 use crate::roster::PlayerPing;
 
-// TODO(guess): every second, a players screen's refresh (lightyear's ping manager sends a ping every 100 ms and smooths
-// the round trips it measures); settle: the players screen's use (phase 3's standings may want it less often).
+// PORT(choice): every second, a players screen's refresh (lightyear's ping manager sends a ping every 100 ms and
+// smooths the round trips it measures); tuning: the players screen's use (phase 3's standings may want it less often);
+// the original has no real-time multiplayer.
 pub const PING_PERIOD: Duration = Duration::from_secs(1);
 
 #[derive(Default)]

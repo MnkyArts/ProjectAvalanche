@@ -4,8 +4,8 @@ use ssx_net_proto::{ClientControl, ProgressReport};
 
 use super::time::Received;
 
-// TODO(guess): 64 messages, a port bound (an honest hold measured at most a handful; the round's reports are a few a
-// second at the most); settle: the largest hold of the network runs.
+// PORT(choice): 64 messages, a port bound (an honest hold measured at most a handful; the round's reports are a few a
+// second at the most); tuning: the largest hold of the network runs; the original has no real-time multiplayer.
 pub const MAX_HELD: usize = 64;
 
 pub const HELD_ENTRY_BYTES: usize = size_of::<Held>() + size_of::<ProgressReport>();

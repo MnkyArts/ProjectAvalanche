@@ -582,7 +582,78 @@ impl<'a> Builder<'a> {
             .and_then(|v| field(sc, v, "StartTick"))
             .and_then(Value::as_f32)
             .unwrap_or(0.0);
-        Ctrl::Sequence { anims, length: f(actor, "Length"), windows, start_tick }
+        let audio_tags = self.audio_tags(actor);
+        let game_tags = self.game_tags(actor);
+        Ctrl::Sequence { anims, length: f(actor, "Length"), windows, start_tick, audio_tags, game_tags }
+    }
+
+    fn game_tags(&mut self, a: &Asset) -> Vec<crate::anim_graph::GameTag> {
+        let mut out = Vec::new();
+        let Some(set) = a.guid("TagCollectionSet").and_then(|g| self.db.get(g)) else { return out };
+        for c in set.guids("TagCollectionKeys").into_iter().filter_map(|g| self.db.get(g)) {
+            for t in c.guids("TagKeys").into_iter().filter_map(|g| self.db.get(g)) {
+                // TODO(guess): `Vector3GameStateTag`s are not applied — 27 on the disc, 4 on the rider actors (each
+                // `VEC_carving_bounce_rotational_force` = (−0.125, 0, 0), Mode 1, Time 0, Duration 0, on
+                // SEQ_bail_ground_nose2_180 / _nose2_0 / _fwd2_90R / _bck2_90L); the carving controller binds that
+                // variable as `BounceRotationalForce` (CarvingControllerAsset field 0x4E, asset +0x150) and reads and
+                // writes it as frame +0x160 (0x82CC436C / 0x82CC38FC), but its use in the carving update was not found
+                // (the port has no bounce force); `IntGameStateTag`s (0 on the disc) are not applied either; settle:
+                // the reads of the carving frame's +0x160 and the Vector3 tag's Enter / Apply / Leave.
+                if !t.is("BoolGameStateTag") && !t.is("FloatGameStateTag") {
+                    continue;
+                }
+                let Some(signal) = self.signal(t.guid("ValueAsset")) else { continue };
+                let num = |field: &str| t.f32(field).or_else(|| t.int(field).map(|v| v as f32)).unwrap_or(0.0);
+                let boolean = t.is("BoolGameStateTag");
+                let value = if boolean {
+                    f32::from(u8::from(t.bool("Value").unwrap_or(false)))
+                } else {
+                    t.f32("Value").unwrap_or(0.0)
+                };
+                out.push(crate::anim_graph::GameTag {
+                    name: t
+                        .guid("ValueAsset")
+                        .and_then(|g| self.db.get(g))
+                        .map(|a| a.name().to_string())
+                        .unwrap_or_default(),
+                    signal,
+                    window: crate::tags::TagWindow::new(
+                        num("Time"),
+                        num("Duration"),
+                        t.bool("AlwaysActive").unwrap_or(false),
+                    ),
+                    value,
+                    boolean,
+                    mode: t.int("Mode").unwrap_or(0) as u32,
+                    reset_on_leave: t.bool("ResetOnLeave").unwrap_or(false),
+                    default: self.g.signals.get(signal).map_or(0.0, |s| s.kind.default_value()),
+                    spline: t.array("Spline").iter().filter_map(Value::as_f32).collect(),
+                });
+            }
+        }
+        out
+    }
+
+    fn audio_tags(&self, a: &Asset) -> Vec<crate::anim_graph::AudioTag> {
+        let mut out = Vec::new();
+        let Some(set) = a.guid("TagCollectionSet").and_then(|g| self.db.get(g)) else { return out };
+        for c in set.guids("TagCollectionKeys").into_iter().filter_map(|g| self.db.get(g)) {
+            for t in c.guids("TagKeys").into_iter().filter_map(|g| self.db.get(g)) {
+                if !t.is("AudioEventTag") {
+                    continue;
+                }
+                let num = |field: &str| t.f32(field).or_else(|| t.int(field).map(|v| v as f32)).unwrap_or(0.0);
+                out.push(crate::anim_graph::AudioTag {
+                    name: t.value("EventName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    time: num("Time"),
+                    duration: num("Duration"),
+                    system: t.int("SystemID").unwrap_or(0),
+                    event: t.int("EventID").unwrap_or(0),
+                });
+            }
+        }
+        out.sort_by(|a, b| a.time.total_cmp(&b.time));
+        out
     }
 
     pub(super) fn mask(&self, g: Guid) -> Option<Mask> {

@@ -11,7 +11,9 @@ impl Matrix {
     pub fn of(code: u8) -> Option<Matrix> {
         Some(match code {
             1 => Matrix::Bt709,
-            // TODO(guess): an unspecified matrix (2) is taken as BT.601 — FFmpeg's swscale converts RGB with BT.601 when no colorspace is given and then leaves the stream untagged; a port choice for mod movies (the game has none); settle: none needed for tagged movies (the template tags BT.709), else the author's tag.
+            // PORT(choice): for mod movies — an unspecified matrix (2) is taken as BT.601: FFmpeg's swscale converts
+            // RGB with BT.601 when no colorspace is given and then leaves the stream untagged; tagged movies need none
+            // of it (the template tags BT.709), else the author's tag; the game has no such movies.
             2 | 5 | 6 => Matrix::Bt601,
             9 => Matrix::Bt2020,
             4 => Matrix::Fcc,
@@ -43,7 +45,9 @@ impl Siting {
         match code {
             1 => Siting::Left,
             2 => Siting::TopLeft,
-            // TODO(guess): an unknown chroma position (0) is taken as centred, as the disc's VP6 player converts (¾ / ¼ of the two nearest chroma samples per axis); a port choice for mod movies; settle: none needed when the movie states its position (FFmpeg's libaom writes it from `-chroma_sample_location`).
+            // PORT(choice): for mod movies — an unknown chroma position (0) is taken as centred, as the disc's VP6
+            // player converts (¾ / ¼ of the two nearest chroma samples per axis); a movie that states its position
+            // needs none of it (FFmpeg's libaom writes it from `-chroma_sample_location`); the game has no such movies.
             _ => Siting::Centre,
         }
     }

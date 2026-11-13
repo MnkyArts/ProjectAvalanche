@@ -29,7 +29,7 @@ impl Helicopter {
         }
     }
 
-    pub fn nis_pose(&self, lag: f32) -> Option<HeliPose> {
+    pub fn nis_pose(&self) -> Option<HeliPose> {
         let (actor, t) = self.clip()?;
         let mut acc: Option<HeliPose> = None;
         for &(scene, time, w, accel) in self.nis_chain.iter().rev() {
@@ -40,7 +40,7 @@ impl Helicopter {
             };
             let Some(a) = sc.actor(ROLE_HELICOPTER1) else { continue };
             let mut p = HeliPose::defaults(&self.assets.nis.heli);
-            p.write_nis(&a.clip, (time - lag).max(0.0));
+            p.write_nis(&a.clip, time.max(0.0));
             acc = Some(match acc {
                 Some(mut old) => {
                     old.blend_from(&p, |j, _| if accel && j == "AITrajectory" { 1.0 } else { w });
@@ -51,16 +51,16 @@ impl Helicopter {
         }
         acc.or_else(|| {
             let mut p = HeliPose::defaults(&self.assets.nis.heli);
-            p.write_nis(&actor.clip, (t - lag).max(0.0));
+            p.write_nis(&actor.clip, t.max(0.0));
             Some(p)
         })
     }
 
     pub fn base_pose(&self) -> HeliPose {
-        if let Some(p) = self.nis_pose(0.0) {
+        if let Some(p) = self.nis_pose() {
             return p;
         }
-        let mut pose = self.gameplay_pose(0.0);
+        let mut pose = self.gameplay_pose();
         if let (HeliPhase::Gameplay { ticks, .. }, Some(last)) = (self.phase, self.nis_last)
             && let Some(actor) = self.nis_actor(last.cabin, last.scene)
         {
@@ -75,11 +75,11 @@ impl Helicopter {
         pose
     }
 
-    pub fn gameplay_pose(&self, lag: f32) -> HeliPose {
-        let mut side = self.node_side(self.node, self.ctrl.as_ref(), lag);
+    pub fn gameplay_pose(&self) -> HeliPose {
+        let mut side = self.node_side(self.node, self.ctrl.as_ref());
         if let Some((ctrl, node, elapsed)) = &self.blend {
-            let w = self.blend_weight((elapsed - lag).max(0.0));
-            side = self.node_side(*node, ctrl.as_ref(), lag).blend_valid(&side, w);
+            let w = self.blend_weight(elapsed.max(0.0));
+            side = self.node_side(*node, ctrl.as_ref()).blend_valid(&side, w);
         }
         let mut pose = HeliPose::defaults(&self.assets.nis.heli);
         pose.q.extend(side.q);
@@ -87,14 +87,14 @@ impl Helicopter {
         pose
     }
 
-    fn node_side(&self, node: HeliNode, ctrl: Option<&MoveController>, lag: f32) -> HeliPose {
+    fn node_side(&self, node: HeliNode, ctrl: Option<&MoveController>) -> HeliPose {
         let mut p = HeliPose::default();
         let Some(f) = self.flight.as_deref() else { return p };
         match node {
             HeliNode::ChaseTarget | HeliNode::MoveToPosition | HeliNode::PlayerInteractTarget => {
                 let Some(c) = ctrl else { return p };
                 if let Some(h) = &f.hover {
-                    h.write(&mut p, self.board.speed_ratio, (c.ticks - lag).max(0.0));
+                    h.write(&mut p, self.board.speed_ratio, c.ticks.max(0.0));
                 }
                 if let Some(r) = c.posing.root {
                     p.q.insert("Root".into(), r.to_array());
@@ -102,12 +102,12 @@ impl Helicopter {
             }
             HeliNode::IdleEnd { ticks } => {
                 if let Some(clip) = &f.end_level {
-                    p.write_nis(clip, (ticks - lag).max(0.0).rem_euclid(600.0));
+                    p.write_nis(clip, ticks.max(0.0).rem_euclid(600.0));
                 }
             }
             HeliNode::Trick { seq, ticks, mirror } => {
                 if let Some(t) = f.tricks.get(seq) {
-                    p = HeliPose::trick_dofs(&self.assets.nis.heli, &t.clip, (ticks - lag).max(0.0), mirror);
+                    p = HeliPose::trick_dofs(&self.assets.nis.heli, &t.clip, ticks.max(0.0), mirror);
                 }
             }
             HeliNode::IdleStart => {}

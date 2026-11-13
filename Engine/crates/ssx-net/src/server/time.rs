@@ -17,8 +17,9 @@ pub const JITTER_MARGIN_TICKS: f64 = 1.0;
 
 pub const UNALIGNED_GO_TICKS: f64 = 0.5;
 
-// TODO(guess): 2e-4, twice 100 ppm — a quartz clock's tolerance is commonly given as 20 to 100 ppm, one machine's
-// clocks agree (loopback: 0); settle: the clients' execution counts against the server's real time over long rounds.
+// PORT(choice): 2e-4, twice 100 ppm — a quartz clock's tolerance is commonly given as 20 to 100 ppm, one machine's
+// clocks agree (loopback: 0); tuning: the clients' execution counts against the server's real time over long rounds;
+// the original has no real-time multiplayer.
 pub const CLOCK_RATE_TOLERANCE: f64 = 2.0e-4;
 
 fn tick_s() -> f64 {
@@ -128,10 +129,11 @@ impl ServerTime {
     }
 }
 
-// TODO(guess): the client's half round trip within lightyear's worst case of a one-way time measured by the server
+// PORT(choice): the client's half round trip within lightyear's worst case of a one-way time measured by the server
 // (half the server's smoothed round trip, 4 jitters, 1 tick — `SyncConfig::jitter_margin`; both sides smooth the same
-// path's round trips with lightyear's EWMA, the client's own samples are not on the wire); settle: the clients' round
-// trip estimates at their GO logged beside the server's over the network runs.
+// path's round trips with lightyear's EWMA, the client's own samples are not on the wire); tuning: the clients' round
+// trip estimates at their GO logged beside the server's over the network runs; the original has no real-time
+// multiplayer.
 pub fn horizon(one_way_max: f64, lost: f64, elapsed: f64) -> f64 {
     one_way_max + JITTER_MARGIN_TICKS + UNALIGNED_GO_TICKS + lost + CLOCK_RATE_TOLERANCE * elapsed.max(0.0)
 }

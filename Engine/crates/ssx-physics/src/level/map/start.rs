@@ -43,12 +43,7 @@ pub fn map_start(
     map_start_after(level, START_IDLE, controls, graph)
 }
 
-pub fn map_start_after(
-    level: &MapLevel,
-    idle: usize,
-    controls: &mut StartControls<'_>,
-    mut graph: Option<&mut crate::graph::RiderGraph>,
-) -> Result<MapStart> {
+pub fn start_rider(level: &MapLevel) -> Result<(Vec3, Quat, RiderState)> {
     let w = &level.world;
     let (slot, rotation) = w
         .starts
@@ -57,10 +52,65 @@ pub fn map_start_after(
         .context("the map has no spawn slot 0 (and its base drop no start slot)")?;
     let (at, q) = crate::spawn::level_start_pose(w, level.drop, None, None)?;
     let rider = match &level.start_intro {
-        Some(i) => crate::nis::level_start_or_below(w, at, q, i.clone()),
-        None => RiderState::level_start(w, at, q),
+        Some(i) => crate::nis::level_start_or_below(w, at, q, i.clone()).with_context(|| {
+            format!("no ground below spawn slot 0 at {at:.2}: the helicopter intro's start needs a surface below it")
+        })?,
+        None => RiderState::level_start(w, at, q).with_context(|| {
+            format!(
+                "no ground below spawn slot 0 at {at:.2}: the level start stands the rider on the surface from {} m \
+                 above it to {} m below",
+                crate::rider::SPAWN_RAY_UP,
+                crate::rider::SPAWN_RAY_LENGTH - crate::rider::SPAWN_RAY_UP
+            )
+        })?,
     };
-    let mut rider = rider.with_context(|| format!("no ground below spawn slot 0 at {at:.2}"))?;
+    Ok((slot, rotation, rider))
+}
+
+pub fn start_deaths(level: &MapLevel, deaths: &[ssx_content::map::Volume], rider: &RiderState) -> StartDeaths {
+    deaths_at(&level.world.triggers, deaths, rider.traj)
+}
+
+pub fn deaths_at(triggers: &crate::triggers::TriggerSet, deaths: &[ssx_content::map::Volume], at: Vec3) -> StartDeaths {
+    use crate::triggers::{IG_DEATH, IG_PLAYER, PLAYER_TOUCH_RADIUS};
+    let all = triggers
+        .touching(at, PLAYER_TOUCH_RADIUS, IG_PLAYER)
+        .filter(|&i| triggers.volumes[i].groups & IG_DEATH != 0)
+        .count();
+    let nodes: Vec<String> = deaths
+        .iter()
+        .filter(|v| {
+            let made = super::trigger_volume(v, "death", 0);
+            made.interacts & IG_PLAYER != 0
+                && made.groups & IG_DEATH != 0
+                && made.overlaps_sphere(at, PLAYER_TOUCH_RADIUS)
+        })
+        .map(|v| v.node.clone())
+        .collect();
+    StartDeaths { base: all.saturating_sub(nodes.len()), nodes, at }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StartDeaths {
+    pub nodes: Vec<String>,
+    pub base: usize,
+    pub at: Vec3,
+}
+
+impl StartDeaths {
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.base == 0
+    }
+}
+
+pub fn map_start_after(
+    level: &MapLevel,
+    idle: usize,
+    controls: &mut StartControls<'_>,
+    mut graph: Option<&mut crate::graph::RiderGraph>,
+) -> Result<MapStart> {
+    let w = &level.world;
+    let (slot, rotation, mut rider) = start_rider(level)?;
     let mut session = Session { event: EventManager::new(level.setup.clone()), ..Session::default() };
     let mut gates = level.gates.clone();
     gates.reset(&mut session);
@@ -75,7 +125,7 @@ pub fn map_start_after(
             std::cmp::Ordering::Equal => Input { jump: true, ..Input::default() },
             std::cmp::Ordering::Greater => controls(i - idle, &rider),
         };
-        let pad = RewindPad { flip_accel: input.air_stick(rider.tricks.classic).y, ..RewindPad::default() };
+        let pad = RewindPad { flip_accel: input.flip_acceleration(rider.tricks.classic), ..RewindPad::default() };
         session.execute(&mut rider, w, &input, &TrickInput::default(), 0.0, &pad, graph.as_deref_mut());
         gates.update(&mut session, rider.traj);
         if !rider.traj.is_finite() {

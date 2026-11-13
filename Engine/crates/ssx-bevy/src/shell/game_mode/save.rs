@@ -14,6 +14,7 @@ pub struct SaveSlot {
     path: PathBuf,
     pub(super) schema: SaveSchema,
     pub(super) extras: SaveExtras,
+    header: Option<ssx_formats::save::Header>,
     pub(super) damaged: bool,
     pub(super) no_saving: bool,
     state_unread: std::sync::Mutex<Option<String>>,
@@ -21,6 +22,7 @@ pub struct SaveSlot {
 
 struct SaveRead {
     bytes: usize,
+    header: Option<ssx_formats::save::Header>,
     profile: Result<(Profile, SaveExtras)>,
 }
 
@@ -30,17 +32,24 @@ impl SaveSlot {
             return Ok(None);
         }
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        let profile = ssx_formats::save::ProfileFile::parse(&bytes)
-            .map_err(anyhow::Error::from)
-            .and_then(|file| Profile::from_save(&file, schema));
-        Ok(Some(SaveRead { bytes: bytes.len(), profile }))
+        let (header, profile) = match ssx_formats::save::split(&bytes) {
+            Ok((header, buffer)) => {
+                let profile = ssx_formats::save::ProfileFile::parse(buffer)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|file| Profile::from_save(&file, schema));
+                (header, profile)
+            }
+            Err(e) => (None, Err(anyhow::Error::from(e))),
+        };
+        Ok(Some(SaveRead { bytes: bytes.len(), header, profile }))
     }
 
     pub fn load(path: PathBuf, schema: SaveSchema) -> Result<(Self, Profile, String)> {
-        let slot = |path, schema, extras, damaged| SaveSlot {
+        let slot = |path, schema, extras, header, damaged| SaveSlot {
             path,
             schema,
             extras,
+            header,
             damaged,
             no_saving: false,
             state_unread: Default::default(),
@@ -48,22 +57,22 @@ impl SaveSlot {
         match Self::read(&path, &schema)? {
             None => {
                 let note = format!("save: {} does not exist: a new profile", path.display());
-                Ok((slot(path, schema, SaveExtras::fresh(), false), Profile::new(), note))
+                Ok((slot(path, schema, SaveExtras::fresh(), None, false), Profile::new(), note))
             }
-            Some(SaveRead { bytes: n, profile: Ok((mut profile, extras)) }) => {
+            Some(SaveRead { bytes: n, header, profile: Ok((mut profile, extras)) }) => {
                 let mut note = format!("save: loaded {} ({n} bytes): {}", path.display(), summary(&profile));
-                let s = slot(path, schema, extras, false);
+                let s = slot(path, schema, extras, header, false);
                 note.push_str(&s.read_mod_state(&mut profile));
                 Ok((s, profile, note))
             }
-            Some(SaveRead { bytes: n, profile: Err(e) }) => {
+            Some(SaveRead { bytes: n, header: _, profile: Err(e) }) => {
                 // TODO(guess): a file with a right CRC whose chunks the port cannot read counts as corrupt too; settle: what the chunk loader 0x825580D0 does with another chunk count (0x8315F1C0 → 0x82506BD0).
                 let note = format!(
                     "save: ERROR: {} ({n} bytes) is not a profile the game can read ({e:#}); a new profile starts \
                      and the sign-in asks what to do with the file",
                     path.display(),
                 );
-                Ok((slot(path, schema, SaveExtras::fresh(), true), Profile::new(), note))
+                Ok((slot(path, schema, SaveExtras::fresh(), None, true), Profile::new(), note))
             }
         }
     }
@@ -75,10 +84,12 @@ impl SaveSlot {
             "damaged and not written (the dialog was not answered)".to_string()
         } else {
             match Self::read(&self.path, &self.schema) {
-                Ok(Some(SaveRead { bytes: n, profile: Ok((p, _)) })) => {
+                Ok(Some(SaveRead { bytes: n, profile: Ok((p, _)), .. })) => {
                     format!("{n} bytes, reads back: {}", summary(&p))
                 }
-                Ok(Some(SaveRead { bytes: n, profile: Err(e) })) => format!("ERROR {n} bytes, not a profile: {e:#}"),
+                Ok(Some(SaveRead { bytes: n, profile: Err(e), .. })) => {
+                    format!("ERROR {n} bytes, not a profile: {e:#}")
+                }
                 Ok(None) => "not written yet".to_string(),
                 Err(e) => format!("ERROR {e:#}"),
             }
@@ -111,10 +122,11 @@ impl SaveSlot {
 
     pub(super) fn retry(&mut self) -> Option<Profile> {
         match Self::read(&self.path, &self.schema) {
-            Ok(Some(SaveRead { bytes: n, profile: Ok((mut profile, extras)) })) => {
+            Ok(Some(SaveRead { bytes: n, header, profile: Ok((mut profile, extras)) })) => {
                 let state = self.read_mod_state(&mut profile);
                 info!("save: retry: loaded {} ({n} bytes): {}{state}", self.path.display(), summary(&profile));
                 self.extras = extras;
+                self.header = header;
                 self.damaged = false;
                 Some(profile)
             }
@@ -123,7 +135,7 @@ impl SaveSlot {
                 self.damaged = false;
                 None
             }
-            Ok(Some(SaveRead { bytes: n, profile: Err(e) })) => {
+            Ok(Some(SaveRead { bytes: n, profile: Err(e), .. })) => {
                 error!("save: retry: {} ({n} bytes) still is not a profile ({e:#})", self.path.display());
                 None
             }
@@ -277,7 +289,11 @@ impl SaveSlot {
             return;
         }
         let r = (|| -> Result<usize> {
-            let bytes = profile.to_save(&self.schema, &self.extras)?.write();
+            let file = profile.to_save(&self.schema, &self.extras)?;
+            let bytes = match &self.header {
+                Some(header) => file.write_with_header(header),
+                None => file.write(),
+            };
             if let Some(dir) = self.path.parent().filter(|d| !d.as_os_str().is_empty()) {
                 ssx_files::create_dir_all(dir)?;
             }

@@ -11,6 +11,7 @@ use ssx_content::Kind;
 use super::{ContentReload, ReloadState};
 use crate::audio::music::frontend::{FrontEndAudio, FrontEndReload};
 use crate::audio::music::{GameAudio, Music, MusicReload};
+use crate::audio::sfx_input::SpeechLanguage;
 
 pub(super) struct AudioLoaded {
     level: Arc<SoundDecision>,
@@ -34,6 +35,7 @@ pub(super) struct Engines<'w> {
     level: Option<Res<'w, crate::audio::sfx::Sfx>>,
     game: Option<Res<'w, GameAudio>>,
     ui: Option<ResMut<'w, crate::shell::game_mode::GameUiRes>>,
+    lang: Option<Res<'w, SpeechLanguage>>,
 }
 
 pub(super) fn follow(
@@ -43,7 +45,7 @@ pub(super) fn follow(
     mut pending: Local<Option<Mutex<Receiver<AudioLoaded>>>>,
     engines: Engines,
 ) {
-    let Engines { music, mut fe, level, game, mut ui } = engines;
+    let Engines { music, mut fe, level, game, mut ui, lang } = engines;
     if let Some(rx) = pending.as_ref() {
         let Some(got) = rx.lock().ok().and_then(|r| r.try_recv().ok()) else { return };
         *pending = None;
@@ -95,12 +97,12 @@ pub(super) fn follow(
     let inputs = music.as_ref().map(|m| m.reload_inputs());
     let rider = level.as_ref().map(|l| l.character().to_string());
     let front_end = fe.is_some() && reload.ids.as_ref().is_none_or(|ids| ids.iter().any(|id| id.kind() == Kind::Music));
+    let lang = lang.map_or_else(|| SpeechLanguage::of(None), |l| *l);
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let start = std::time::Instant::now();
         let content = ssx_assets::content::GameContent::of(&root);
-        let lang = crate::audio::sfx_input::speech_lang();
-        let level = content.sound_overrides_for(Some(&lang), rider.as_deref());
+        let level = content.sound_overrides_for(Some(lang.code()), rider.as_deref());
         let front_end_sounds = content.sound_overrides(None);
         let music = inputs.map(|(scope, dd)| Music::prepare_reload(&root, &scope, dd));
         let front_end_music = front_end.then(|| FrontEndAudio::prepare_reload(&root));

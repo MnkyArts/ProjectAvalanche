@@ -116,7 +116,7 @@ impl Launcher {
         self.host_fields(ui, !running && !busy);
         ui.add_space(4.0);
         widgets::heading(ui, "Folder");
-        widgets::path(ui, &self.settings.host.folder());
+        widgets::path(ui, &self.settings.host.folder_in(&self.app_dir));
         ui.horizontal(|ui| {
             if widgets::button(ui, "Prepare the folder", Kind::Plain, !running && !busy && have_server).clicked() {
                 self.host_prepare(&ctx);
@@ -298,9 +298,7 @@ impl Launcher {
             Ok(Written::Yes(hash)) => {
                 self.settings.host.written = Some(hash);
                 self.host.edited_by_hand = false;
-                if let Err(e) = self.save_settings() {
-                    self.host.note = Some((false, format!("the launcher's settings were not saved: {e}")));
-                }
+                self.save_settings_now();
                 true
             }
             Ok(Written::EditedByHand) => {

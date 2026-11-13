@@ -31,6 +31,7 @@ pub const HELI_LOCATORS: [&str; HELI_PATH_POINTS] = ["nis_intro_locator", "nis_o
 pub const MAX_ENTITIES: usize = 2048;
 pub const MAX_BODIES: usize = 256;
 pub const MAX_CAMERAS: usize = 64;
+pub const MAX_DLC_COLLISION_TRIANGLES: usize = 1_875_056;
 pub const MAX_COLLISION_TRIANGLES: usize = 1_824_266;
 pub const MAX_EXTRAS_BYTES: usize = 4096;
 pub const MAX_COORDINATE: f32 = 131_072.0;

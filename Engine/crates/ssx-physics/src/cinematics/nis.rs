@@ -238,6 +238,7 @@ pub struct NisView {
     pub position: Vec3,
     pub rotation: Quat,
     pub hfov_deg: f32,
+    pub near: Option<f32>,
     pub trajectory: Rt,
     pub eye: Rt,
 }

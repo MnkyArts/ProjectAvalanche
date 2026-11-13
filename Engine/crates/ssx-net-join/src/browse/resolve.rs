@@ -3,12 +3,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-// TODO(guess): a port choice — 2 s (the browser's connect time; a working name service answers in milliseconds, and
-// glibc's default retry cycle is 5 s per attempt and server); settle: phase 5's browser over real links, measured.
+// PORT(choice): 2 s (the browser's connect time; a working name service answers in milliseconds, and glibc's default
+// retry cycle is 5 s per attempt and server); tuning: phase 5's browser over real links, measured; the original has no
+// server browser.
 pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 
-// TODO(guess): a port choice — 16 (twice the browser's 8 workers, so a list of dead names cannot pile up threads);
-// settle: none (the port's bound).
+// PORT(choice): 16 (twice the browser's 8 workers, so a list of dead names cannot pile up threads), the port's bound;
+// the original has no server browser.
 pub const MAX_LOOKUPS: usize = 16;
 
 const CANCEL_POLL: Duration = Duration::from_millis(50);

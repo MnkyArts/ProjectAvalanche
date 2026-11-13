@@ -15,9 +15,9 @@ use ssx_formats::gfx::shape::{Shape, ShapeRecord};
 use super::Limits;
 
 const MAX_DEPTH: usize = 32;
-// TODO(guess): a port choice — a CFF font's cubic curves become quadratic pieces within 2 units of the 20 480-unit EM
-// (0.003 px at 26 px, 0.1 px at 1 000 px), at most 8 halvings (256 pieces); the player's glyphs hold quadratics only (as
-// DefineFont3's); settle: none (a package font is the author's, not the disc's; the player draws quadratics).
+// PORT(choice): a CFF font's cubic curves become quadratic pieces within 2 units of the 20 480-unit EM (0.003 px at 26
+// px, 0.1 px at 1 000 px), at most 8 halvings (256 pieces); the player's glyphs hold quadratics only (as DefineFont3's)
+// and the player draws quadratics; a package font is the author's, not the disc's.
 const CUBIC_TOLERANCE: f64 = 2.0;
 const MAX_CUBIC_SPLITS: u32 = 8;
 

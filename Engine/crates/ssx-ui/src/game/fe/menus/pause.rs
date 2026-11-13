@@ -6,7 +6,7 @@ use crate::game::fe::{FeEnv, FrontEnd, screens};
 
 pub const PAUSE_IS_IN_PAUSE_MENU: u16 = 0x1B9;
 pub const PAUSE_IS_EXITING_BE: u16 = 0x1BA;
-pub const PAUSE_MENU_DISABLE: u16 = 0x1BB;
+pub use crate::game::values::id::PAUSE_MENU_DISABLE;
 pub const POPUP_IS_ACTIVE: u16 = 0x1C1;
 pub const SETTINGS_IS_IN_PAUSE_MENU: u16 = 0x1F3;
 pub const RESTART_NEVER_SHOW_AGAIN: u16 = 0x9D;
@@ -267,7 +267,7 @@ pub fn do_restart(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.requests.push(GameRequest::Restart);
     fe.level_start.due = true;
     fe.level_start.streamed = false;
-    crate::game::hud::level_start(env.values);
+    crate::game::hud::level_start(env.values, fe.level_start.nis);
     // TODO(guess): the reset comes at once here, the game's at the switch back into `FSGameSimulationBE` (the ride is held meanwhile); settle: the main loop's order of the frame-state request against the updates.
     fe.game_pause.reset();
 }
@@ -294,7 +294,9 @@ fn items(fe: &FrontEnd) -> Vec<(&'static str, bool, &'static str)> {
 fn menu_index(fe: &FrontEnd) -> usize {
     match fe.menu_focus {
         MenuFocus::FirstItem => 0,
-        // TODO(guess): a port choice — the option "Menus: the last item picked" focuses the item last picked since the pause began (Settings, the objective, a restart or quit that was not confirmed; a network session's Players and Leave) while it is enabled; settle: none (the game's pause menu always opens on Resume (+0x84 = 0 from 0x825D3070)).
+        // PORT(choice): the option "Menus: the last item picked" focuses the item last picked since the pause began
+        // (Settings, the objective, a restart or quit that was not confirmed; a network session's Players and Leave)
+        // while it is enabled; the game's pause menu always opens on Resume (+0x84 = 0 from 0x825D3070).
         MenuFocus::LastItem => fe.pause.last.and_then(|last| last_picked(fe, last)).unwrap_or(0),
     }
 }

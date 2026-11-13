@@ -114,6 +114,7 @@ pub fn incomplete_text(state: &State, text: &mut dyn FnMut(&str, &[&str]) -> Str
         State::NoIndex => ("TXT_AVA_DATA_NO_INDEX", REPAIR),
         State::IndexDamaged(_) => ("TXT_AVA_DATA_INDEX_DAMAGED", REPAIR),
         State::MarkerDamaged(_) => ("TXT_AVA_DATA_MARKER_DAMAGED", REPAIR),
+        State::FilesDamaged(_) => ("TXT_AVA_DATA_FILES_DAMAGED", REPAIR),
     };
     let (what, todo) = (text(what, &[]), text(todo, &[]));
     text("TXT_AVA_JOIN_DATA_INCOMPLETE", &[&what, &todo])
@@ -309,6 +310,7 @@ mod tests {
             (State::NoMovies, "TXT_AVA_DATA_NO_MOVIES", "TXT_AVA_DATA_TODO_REPAIR"),
             (State::IndexDamaged("line 3".into()), "TXT_AVA_DATA_INDEX_DAMAGED", "TXT_AVA_DATA_TODO_REPAIR"),
             (State::MarkerDamaged("not JSON".into()), "TXT_AVA_DATA_MARKER_DAMAGED", "TXT_AVA_DATA_TODO_REPAIR"),
+            (State::FilesDamaged("1 file: 1 missing".into()), "TXT_AVA_DATA_FILES_DAMAGED", "TXT_AVA_DATA_TODO_REPAIR"),
             (State::Unfinished, "TXT_AVA_DATA_UNFINISHED", "TXT_AVA_DATA_TODO_SETUP"),
             (State::Missing, "TXT_AVA_DATA_MISSING", "TXT_AVA_DATA_TODO_SETUP"),
         ];

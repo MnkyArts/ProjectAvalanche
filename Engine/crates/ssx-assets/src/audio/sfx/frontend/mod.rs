@@ -1,4 +1,5 @@
 mod fe_music;
+mod post;
 
 use std::path::Path;
 
@@ -7,13 +8,16 @@ use anyhow::Result;
 use super::SfxEngine;
 pub use super::frontend_tables::{CSIS_EVENTS, UI_SOUNDS};
 use super::settings::{AudioSettings, FE_MUSIC_PICKS};
-use crate::career::store::Mt19937;
+use crate::career::random::{GameRandom, Source};
 use crate::music::PathfinderMusic;
 pub use fe_music::*;
+pub use post::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StateMsg {
+    pub screen: u32,
     pub state: i32,
+    pub wind: i32,
     pub result: u8,
     pub loading: bool,
     pub quit: bool,
@@ -75,6 +79,7 @@ pub struct FlowState {
     pub equipment_wait: i32,
     pub audio_mode: u8,
     watched: [bool; 4],
+    last_screen: u32,
 }
 
 pub const WATCHERS: [(u16, u32, u32, bool); 4] =
@@ -91,6 +96,7 @@ pub struct FlowInputs {
     pub results_ready: bool,
     pub goal_complete: bool,
     pub setting_67: bool,
+    pub wind: i32,
 }
 
 impl FlowState {
@@ -143,6 +149,8 @@ impl FlowState {
     }
 
     pub fn frame(&mut self, i: &FlowInputs) -> StateMsg {
+        let screen = if i.screen == 0x34 || self.boot_hold != 0 { self.last_screen } else { i.screen };
+        self.last_screen = screen;
         let mut st = screen_state(i.screen, i.kind, i.boot_done);
         if self.boot_hold != 0 && st == state::EQUIPMENT {
             st = state::BOOT;
@@ -171,7 +179,9 @@ impl FlowState {
             || (self.last_state == state::EQUIPMENT && i.setting_67 && self.equipment_wait as u32 > 100);
         self.last_state = st;
         StateMsg {
+            screen,
             state: st,
+            wind: i.wind,
             result: screen_result(i.screen, i.results_ready, i.goal_complete),
             loading,
             quit: matches!(i.screen, 0x40 | 0x41),
@@ -273,6 +283,20 @@ impl UiSounds {
 }
 
 impl UiSounds {
+    pub fn fire_posted(&mut self, sfx: &mut SfxEngine, index: usize, received: bool) -> Option<&'static str> {
+        let &(csis, name) = CSIS_EVENTS.get(index)?;
+        if received && index == 73 {
+            sfx.set_global("BoostBar_Delta", 0);
+            return None;
+        }
+        let fired = sfx.aems.resolve(csis, name).map(|key| {
+            sfx.fire(key, &[0]);
+            name
+        });
+        self.log.push(format!("posted sound {index} ({name}) → {fired:?}"));
+        fired
+    }
+
     pub fn tutorial_sound(&mut self, sfx: &mut SfxEngine, n: u32) -> Option<&'static str> {
         let &(_, index) = TUTORIAL_SOUNDS.iter().find(|t| t.0 == n)?;
         let (csis, name) = CSIS_EVENTS[index];
@@ -338,7 +362,7 @@ mod tests {
 
     #[test]
     fn picks_avoid_the_last_piece_and_rotate() {
-        let mut m = FeMusicModule::new(1);
+        let mut m = FeMusicModule::new(Source::Own(crate::career::random::Mt19937::seeded(1)));
         m.refill(70);
         assert_eq!(m.picks[0].last(), Some(&7));
         assert_eq!(m.picks[2].len(), 11);
@@ -349,6 +373,20 @@ mod tests {
             seen.insert(v);
         }
         assert!(seen.len() > 3);
+    }
+
+    #[test]
+    fn the_message_keeps_its_screen_on_0x34_and_in_the_boot_hold() {
+        let mut f = FlowState::default();
+        let at = |screen| FlowInputs { screen, kind: 1, boot_done: true, ..Default::default() };
+        assert_eq!(f.frame(&at(2)).screen, 2);
+        assert_eq!(f.frame(&at(0x34)).screen, 2);
+        assert_eq!(f.frame(&at(5)).screen, 5);
+        f.boot_flow_loaded();
+        for _ in 0..10 {
+            assert_eq!(f.frame(&at(2)).screen, 5, "the hold");
+        }
+        assert_eq!(f.frame(&at(2)).screen, 2);
     }
 
     #[test]

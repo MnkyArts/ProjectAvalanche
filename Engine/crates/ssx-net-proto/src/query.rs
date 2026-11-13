@@ -205,8 +205,8 @@ impl QueryAnswer {
     }
 }
 
-// TODO(guess): a port choice — 35450, far from the game ports (27450 and up, each with its query port + 1; MTA's LAN
-// port is 34219); settle: none (the port's protocol), or a collision reported by operators.
+// PORT(choice): 35450, far from the game ports (27450 and up, each with its query port + 1; MTA's LAN port is 34219);
+// tuning: a collision reported by operators (the port's protocol); the original has no dedicated server.
 pub const LAN_PORT: u16 = 35450;
 pub const LAN_PROBE_SIZE: usize = 64;
 const PROBE_TEXT: &str = "AVALANCHE-CLIENT ";

@@ -7,15 +7,17 @@ use std::collections::HashMap;
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core2d, Core2dSystems};
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, ViewQuery};
+use bevy::render::texture::GpuImage;
 use bevy::render::view::ViewTarget;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 
 use super::super::UiCamera;
-use super::GlobeSystems;
 use super::dump::{self, Dumps};
+use super::{GlobeSystems, GlobeView};
 use crate::render::post::adapt::HdrAdaptation;
 use pipelines::{Pipelines, init};
 use prepare::prepare;
@@ -55,7 +57,7 @@ pub(super) fn build(app: &mut App) {
         .init_resource::<HdrAdaptation>()
         .init_resource::<Dumps>()
         .add_systems(RenderStartup, init)
-        .add_systems(Render, prepare.in_set(RenderSystems::PrepareResources))
+        .add_systems(Render, (prepare, prepare_backdrop_movie).in_set(RenderSystems::PrepareResources))
         .add_systems(Render, dump::write_dumps.in_set(RenderSystems::Cleanup))
         .add_systems(
             Core2d,
@@ -76,6 +78,7 @@ struct GlobeGpu {
     relief: Option<TextureView>,
     frost: Option<TextureView>,
     background: Option<TextureView>,
+    backdrop_movie: Option<TextureView>,
     sky_textures: HashMap<String, TextureView>,
     blank: Option<TextureView>,
     earth_uniform: Option<Buffer>,
@@ -97,6 +100,15 @@ struct GlobeGpu {
     sky: Option<[String; 3]>,
     bloom: bool,
     dump: Option<std::path::PathBuf>,
+}
+
+fn prepare_backdrop_movie(
+    view: Option<Res<GlobeView>>,
+    images: Res<RenderAssets<GpuImage>>,
+    mut gpu: ResMut<GlobeGpu>,
+) {
+    let movie = view.as_ref().and_then(|v| v.backdrop_movie.as_ref()).and_then(|h| images.get(h));
+    gpu.backdrop_movie = movie.map(|i| i.texture_view.clone());
 }
 
 fn color_desc<'a>(
@@ -215,12 +227,18 @@ fn globe_pass(
     let halo_group = globe_group(hu, frost);
     let sky_tex =
         |i: usize| -> &TextureView { gpu.sky.as_ref().and_then(|s| gpu.sky_textures.get(&s[i])).unwrap_or(blank) };
+    let movie = gpu.backdrop_movie.as_ref().filter(|_| gpu.sky.is_none()).zip(get(p.background_movie));
+    let (backdrop_p, picture) = match &movie {
+        Some((view, movie_p)) => (movie_p, *view),
+        None if gpu.sky.is_some() => (&sky_p, background),
+        None => (&background_p, background),
+    };
     let backdrop_group = device.create_bind_group(
         "ssx_globe_backdrop",
         &cache.get_bind_group_layout(&p.backdrop_layout),
         &BindGroupEntries::sequential((
             bu.as_entire_binding(),
-            background,
+            picture,
             sky_tex(0),
             sky_tex(1),
             sky_tex(2),
@@ -385,13 +403,7 @@ fn globe_pass(
             dumps.texture(&device, encoder, d, name, tex, size, format);
         }
     };
-    full_screen(
-        encoder,
-        "ssx_globe_backdrop",
-        &t.hdr_view,
-        if gpu.sky.is_some() { &sky_p } else { &background_p },
-        &backdrop_group,
-    );
+    full_screen(encoder, "ssx_globe_backdrop", &t.hdr_view, backdrop_p, &backdrop_group);
     grab(encoder, "backdrop", &t.hdr, t.size, HDR_FORMAT);
     {
         let a = attachment(&t.hdr_view, false);

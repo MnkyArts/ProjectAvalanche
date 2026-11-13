@@ -138,8 +138,9 @@ impl IntroState {
         };
         let local = self.joint_at(t, ROLE_CAMERA1, "CameraEye")?;
         let eye = compose(traj, local);
-        let hfov = self.camera_fov(t)?;
-        Some(NisView { position: eye.1, rotation: eye.0, hfov_deg: hfov, trajectory: traj, eye: local })
+        let hfov = self.camera_float(t, "FieldOfView")?;
+        let near = self.camera_float(t, "NearClipDistance");
+        Some(NisView { position: eye.1, rotation: eye.0, hfov_deg: hfov, near, trajectory: traj, eye: local })
     }
 
     pub fn ghost(&self) -> Option<(&str, f32, Rt)> {
@@ -173,15 +174,15 @@ impl IntroState {
         self.ghost_root = root.map(|r| (r, s.scene, t));
     }
 
-    fn camera_fov(&self, ticks: f32) -> Option<f32> {
-        let fov = |s: &Side| {
+    fn camera_float(&self, ticks: f32, dof: &str) -> Option<f32> {
+        let value = |s: &Side| {
             let (_, clip, p) = self.side_pose(s, ROLE_CAMERA1)?;
-            clip.float(&p, "FieldOfView")
+            clip.float(&p, dof)
         };
         let sides = self.sides_at(ticks);
         let mut acc: Option<f32> = None;
         for i in (0..sides.len()).rev() {
-            acc = match (acc, fov(&sides[i])) {
+            acc = match (acc, value(&sides[i])) {
                 (Some(a), Some(b)) if i < self.fades.len() => Some(a + (b - a) * self.fades[i].weight()),
                 (a, b) => b.or(a),
             };

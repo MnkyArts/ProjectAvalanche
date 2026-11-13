@@ -32,7 +32,7 @@ impl Var {
 #[derive(Clone, Debug, PartialEq)]
 pub enum WipeoutTag {
     Bool { var: Var, tag: BoolTag },
-    Float { var: Var, value: f32, mode: u32, reset_on_leave: bool, spline: Vec<f32> },
+    Float { var: Var, value: f32, mode: u32, reset: Option<f32>, spline: Vec<f32> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,7 +104,8 @@ impl WipeoutFlow {
             if let Some(set) = ctrl.and_then(|a| a.guid("TagCollectionSet")).and_then(|g| db.get(g)) {
                 for c in set.guids("TagCollectionKeys").into_iter().filter_map(|g| db.get(g)) {
                     for t in c.guids("TagKeys").into_iter().filter_map(|g| db.get(g)) {
-                        let var = t.guid("ValueAsset").and_then(|g| db.get(g)).and_then(|v| Var::of(v.name()));
+                        let value_asset = t.guid("ValueAsset").and_then(|g| db.get(g));
+                        let var = value_asset.and_then(|v| Var::of(v.name()));
                         let window = TagWindow::new(
                             num(&t, "Time"),
                             num(&t, "Duration"),
@@ -116,8 +117,10 @@ impl WipeoutFlow {
                             ("BranchOutPointTag", _) => branch_out = Some(num(&t, "Time")),
                             ("BoolGameStateTag", Some(var)) => {
                                 let value = t.bool("Value").unwrap_or(false);
+                                let default = value_asset.and_then(|v| v.bool("Default")).unwrap_or(false);
+                                let reset = reset_on_leave.then_some(default);
                                 windows.push(window);
-                                tags.push(WipeoutTag::Bool { var, tag: BoolTag { value, mode, reset_on_leave } });
+                                tags.push(WipeoutTag::Bool { var, tag: BoolTag { value, mode, reset } });
                             }
                             ("FloatGameStateTag", Some(var)) => {
                                 let spline = t
@@ -126,11 +129,12 @@ impl WipeoutFlow {
                                     .map(|a| a.iter().filter_map(|x| x.as_f32()).collect())
                                     .unwrap_or_else(|| vec![1.0]);
                                 windows.push(window);
+                                let default = value_asset.and_then(|v| v.f32("Default")).unwrap_or(0.0);
                                 tags.push(WipeoutTag::Float {
                                     var,
                                     value: num(&t, "Value"),
                                     mode,
-                                    reset_on_leave,
+                                    reset: reset_on_leave.then_some(default),
                                     spline,
                                 });
                             }
@@ -248,7 +252,7 @@ impl Wipeout {
                     tag.on(ev, v, &mut s);
                     *saved = f32::from(u8::from(s));
                 }
-                WipeoutTag::Float { var, value, mode, reset_on_leave, spline } => {
+                WipeoutTag::Float { var, value, mode, reset, spline } => {
                     let w = match ev {
                         TagEvent::Apply(w) | TagEvent::Leave(w) => w,
                         TagEvent::Enter => 0.0,
@@ -256,7 +260,7 @@ impl Wipeout {
                     let tag = FloatTag {
                         value: *value,
                         mode: *mode,
-                        reset_on_leave: *reset_on_leave,
+                        reset: *reset,
                         spline: crate::ice_axe::tag_spline(spline, w),
                     };
                     let v = match var {

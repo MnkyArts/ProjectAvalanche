@@ -103,6 +103,7 @@ pub struct Launch {
     pub track_drop: usize,
     pub event_type: i64,
     pub game_mode: i64,
+    pub free_ride: bool,
     pub rider: String,
     pub setup: setup::GameSetup,
     pub direct: bool,
@@ -145,6 +146,7 @@ pub struct FrontEnd {
     pub progression: progression::Progression,
     pub campaign_start: ssx_assets::career::globe::focus::CampaignGlobe,
     pub launch: Option<Launch>,
+    pub free_ride_drop: Option<u32>,
     pub in_drop: bool,
     pub last_success: Option<bool>,
     pub current_drop: u32,
@@ -197,9 +199,6 @@ pub struct FrontEnd {
     pub log: Vec<String>,
 }
 
-/// The FE manager's screen-change sounds (0x825111F0(from, to)): `menu_select` (2) into the equipment (0x30), and
-/// `menu_back` (4) to the main menu from the range screens 0xC / 0x42 / 0xF. To 0x33 it clears the manager's +0x38
-/// and plays nothing.
 pub fn screen_sound(from: u32, to: u32) -> Option<i32> {
     match (from, to) {
         (_, screens::id::EQUIPMENT) => Some(2),
@@ -272,6 +271,7 @@ impl FrontEnd {
             progression: Default::default(),
             campaign_start,
             launch: None,
+            free_ride_drop: None,
             in_drop: false,
             last_success: None,
             current_drop: 0,

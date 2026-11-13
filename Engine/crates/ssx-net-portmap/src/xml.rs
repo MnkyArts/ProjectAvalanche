@@ -3,8 +3,9 @@ use quick_xml::events::Event;
 
 use crate::Error;
 
-// TODO(guess): 64 KiB (the HTTP body's cap), 16 levels (a description nests 8: root, device, deviceList, device,
-// deviceList, device, serviceList, service), 2 048 elements, 4 KiB of text in one; settle: real gateways' descriptions.
+// PORT(choice): 64 KiB (the HTTP body's cap), 16 levels (a description nests 8: root, device, deviceList, device,
+// deviceList, device, serviceList, service), 2 048 elements, 4 KiB of text in one; tuning: real gateways' descriptions;
+// the original has no dedicated server.
 pub const MAX_DOCUMENT: usize = 64 * 1024;
 const MAX_DEPTH: usize = 16;
 const MAX_ELEMENTS: usize = 2048;

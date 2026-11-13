@@ -42,8 +42,9 @@ pub fn parse_exports(text: &str) -> Result<Vec<ExportRow>, String> {
     Ok(rows)
 }
 
-// TODO(guess): 256 MiB, about 1.3 million exported files at 200 bytes a row (an export command records 1 to a few
-// hundred); settle: the export counts of mod authors. A larger file is refused with its path, never trimmed.
+// PORT(choice): 256 MiB, about 1.3 million exported files at 200 bytes a row (an export command records 1 to a few
+// hundred); a larger file is refused with its path, never trimmed; tuning: the export counts of mod authors; the
+// original has no mod tools.
 const MAX_EXPORTS_BYTES: u64 = 256 << 20;
 
 pub fn record_exports(app_dir: &Path, rows: &[ExportRow]) -> Result<PathBuf> {

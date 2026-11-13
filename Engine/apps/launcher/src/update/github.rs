@@ -11,8 +11,8 @@ use super::{Asset, LATEST_URL, REPO, Release, asset_name, tag_url};
 const MAX_API_BYTES: u64 = 1024 * 1024;
 const MAX_HEADERS: usize = 16 * 1024;
 pub(crate) const MAX_ARCHIVE: u64 = 512 * 1024 * 1024;
-// TODO(guess): 30 s for the API and 10 s to connect; settle: the checks against GitHub from slow links (a release
-// is a few kilobytes, the archive is streamed separately).
+// PORT(choice): 30 s for the API and 10 s to connect; tuning: the checks against GitHub from slow links (a release is a
+// few kilobytes, the archive is streamed separately); the original has no launcher.
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 

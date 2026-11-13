@@ -28,6 +28,7 @@ pub fn common_texture_id(archive_path: &str) -> Option<ContentId> {
     ContentId::new(BASE_NAMESPACE, Kind::Texture, &super::path_segments(stem)?).ok()
 }
 
+// PORT(choice): `mods`, a folder no disc file lies in, below the front end's root; the console loads no packages.
 pub const UI_PACKAGE_DIR: &str = "mods";
 
 pub fn ui_image_path(id: &ContentId) -> Option<String> {
@@ -105,9 +106,17 @@ pub struct DiscTextures {
 
 impl DiscTextures {
     pub fn index(big_root: &Path) -> Result<Self> {
+        Self::index_roots(game_archives(big_root)?)
+    }
+
+    pub fn index_archive(root: &Path) -> Result<Self> {
+        Self::index_roots(vec![root.to_path_buf()])
+    }
+
+    fn index_roots(roots: Vec<PathBuf>) -> Result<Self> {
         let mut found: BTreeMap<ContentId, BTreeMap<String, PathBuf>> = BTreeMap::new();
         let mut common: BTreeMap<ContentId, [Option<(String, PathBuf)>; 2]> = BTreeMap::new();
-        for a in game_archives(big_root)? {
+        for a in roots {
             let ge = a.join(GAME_EXPLORER);
             for f in game_files(&ge, "xpr")? {
                 let below = rel(&ge, &f);

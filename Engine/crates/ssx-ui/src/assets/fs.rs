@@ -150,12 +150,25 @@ impl Disc {
 
     pub fn find(&self, rel: &str) -> Option<PathBuf> {
         let rel = contained(rel)?;
-        self.archives.iter().map(|a| a.join(&rel)).find(|p| p.is_file())
+        ssx_assets::data_roots::find(&self.root, &rel)
     }
 
     pub fn list(&self, dir: &str, extension: &str) -> Vec<String> {
         let Some(dir) = contained(dir) else { return Vec::new() };
         let mut out = std::collections::BTreeSet::new();
+        let mut roots: Vec<PathBuf> = ssx_assets::data_roots::title_update().into_iter().collect();
+        roots.extend(ssx_assets::content::dlc::active_roots());
+        for root in roots {
+            for prefix in [root.clone(), root.join("bootcache")] {
+                walk(&prefix.join(&dir), &mut |p| {
+                    if p.extension().is_some_and(|e| e.eq_ignore_ascii_case(extension))
+                        && let Ok(rel) = p.strip_prefix(&prefix)
+                    {
+                        out.insert(rel.to_string_lossy().replace('\\', "/"));
+                    }
+                });
+            }
+        }
         for a in &self.archives {
             walk(&a.join(&dir), &mut |p| {
                 if p.extension().is_some_and(|e| e.eq_ignore_ascii_case(extension))
@@ -228,6 +241,17 @@ impl FileSource for Disc {
         let full = normalise(path);
         if !(full.ends_with(".xpr") || full.ends_with(".dds")) {
             bail!("{path}: no reader for this image type");
+        }
+        if let Some(file) = ssx_assets::data_roots::overlay_only(&full) {
+            let texture = ssx_assets::content::textures::decode_path(&file)
+                .with_context(|| format!("decoding {} ({path})", file.display()))?;
+            let level = texture.levels.into_iter().next().with_context(|| format!("{path}: no level"))?;
+            return Ok(ImageData {
+                width: level.width,
+                height: level.height,
+                rgba: level.images.into_iter().next().with_context(|| format!("{path}: no image"))?,
+                source: path.to_string(),
+            });
         }
         let id = ssx_assets::content::textures::ui_image_id(&full)
             .or_else(|| ssx_assets::content::textures::common_texture_id(&full))

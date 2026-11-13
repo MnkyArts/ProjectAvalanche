@@ -87,6 +87,19 @@ fn decode(frames: &[(&[u8], usize)]) -> Result<Vec<u8>> {
 }
 
 #[test]
+fn a_reference_window_answers_before_the_streams_first_byte() {
+    let mut w = BitWriter::default();
+    w.put(0, 1);
+    w.verbatim(4);
+    w.matched(5, 4, 0);
+    let frame = w.finish();
+    let mut d = LzxDecoder::with_reference(17, b"ABCD").unwrap();
+    let mut out = Vec::new();
+    d.decode_frame(&frame, 4, &mut out).unwrap();
+    assert_eq!(out, b"ABCD");
+}
+
+#[test]
 fn tables() {
     assert_eq!(&FOOTER_BITS[..8], &[0, 0, 0, 0, 1, 1, 2, 2]);
     assert_eq!((FOOTER_BITS[34], FOOTER_BITS[35], FOOTER_BITS[36], FOOTER_BITS[49]), (16, 16, 17, 17));

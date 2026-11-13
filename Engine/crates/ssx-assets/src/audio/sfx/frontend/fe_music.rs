@@ -26,12 +26,12 @@ pub struct FeMusicModule {
     quit: bool,
     pending: [u32; 2],
     pub(super) picks: [Vec<u32>; 3],
-    pub rng: Mt19937,
+    pub rng: Source,
     pub log: Vec<String>,
 }
 
 impl FeMusicModule {
-    pub fn new(seed: u32) -> Self {
+    pub fn new(rng: Source) -> Self {
         Self {
             loaded: false,
             load_requested: false,
@@ -43,7 +43,7 @@ impl FeMusicModule {
             quit: false,
             pending: [0; 2],
             picks: Default::default(),
-            rng: Mt19937::new(seed),
+            rng,
             log: Vec::new(),
         }
     }
@@ -119,8 +119,8 @@ impl FeMusicModule {
             list.clear();
             list.extend(0..n as u32);
             for _ in 0..list.len() {
-                let i = self.rng.below(list.len() as i64 - 1) as usize;
-                let j = self.rng.below(list.len() as i64 - 1) as usize;
+                let i = self.rng.below(list.len() as u32 - 1) as usize;
+                let j = self.rng.below(list.len() as u32 - 1) as usize;
                 list.swap(i, j);
             }
             for i in 0..n.saturating_sub(1) {
@@ -133,7 +133,7 @@ impl FeMusicModule {
 
     pub(super) fn pick(&mut self, k: usize) -> u32 {
         let list = &mut self.picks[k];
-        let i = self.rng.below((list.len() / 2) as i64) as usize;
+        let i = self.rng.below((list.len() / 2) as u32) as usize;
         let v = list.remove(i);
         list.push(v);
         v * 10
@@ -274,6 +274,10 @@ impl FeMusicModule {
         self.play = 0;
     }
 
+    pub fn awake(&self, rt: &crate::pathfinder::Pathfinder) -> bool {
+        !Self::silent(rt) && !self.muted
+    }
+
     pub fn finished(&self, rt: &crate::pathfinder::Pathfinder) -> bool {
         Self::silent(rt) && self.pending == [0; 2]
     }
@@ -285,8 +289,17 @@ pub struct FrontEndMusic {
 }
 
 impl FrontEndMusic {
-    pub fn load(big_root: &Path, seed: u32) -> Result<Self> {
-        Ok(Self { music: PathfinderMusic::load(big_root, "ssx_fe", &[])?, module: FeMusicModule::new(seed) })
+    pub fn load(big_root: &Path, rng: Source) -> Result<Self> {
+        Ok(Self { music: PathfinderMusic::load(big_root, "ssx_fe", &[])?, module: FeMusicModule::new(rng) })
+    }
+
+    pub fn awake(&self) -> bool {
+        self.module.awake(&self.music.rt)
+    }
+
+    pub fn beat_status(&self) -> Option<super::BeatStatus> {
+        let s = self.music.rt.first_status()?;
+        Some(super::BeatStatus { beat: s.beat, to_beat: s.to_beat, bar: s.bar, to_bar: s.to_bar })
     }
 
     pub fn state_msg(&mut self, m: &StateMsg, settings: &mut AudioSettings) {

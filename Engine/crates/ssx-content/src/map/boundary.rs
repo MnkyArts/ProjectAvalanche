@@ -118,12 +118,12 @@ fn directions(inside: &[bool], width: usize, height: usize) -> Option<Vec<u16>> 
     if !inside.iter().any(|&b| b) {
         return None;
     }
-    // TODO(guess): a port choice — a map's out cell pushes towards its nearest in cell (Euclidean, cell centres). The
-    // game only reads the sector (Boundary_CellCorrectionDirection 0x82CF9D58); the disc's grids are authored: large
-    // regions of one direction, matched exactly by this rule in 15.2 % of 221 676 sampled out cells of all 61
-    // `_track_boundary.spdt` (39.2 % within one sector, 11.3 % next to the area); the distance field's gradient and a
-    // 5 × 5 average do no better. Settle: the rule of EA's boundary tool (not on the disc), or directions authored
-    // per boundary triangle by the map.
+    // PORT(choice): a map's out cell pushes towards its nearest in cell (Euclidean, cell centres). The game only reads
+    // the sector (Boundary_CellCorrectionDirection 0x82CF9D58); the disc's grids are authored: large regions of one
+    // direction, matched exactly by this rule in 15.2 % of 221 676 sampled out cells of all 61 `_track_boundary.spdt`
+    // (39.2 % within one sector, 11.3 % next to the area); the distance field's gradient and a 5 × 5 average do no
+    // better; EA's boundary tool is not on the disc; directions authored per boundary triangle by the map would replace
+    // the rule.
     // per column: the nearest inside row of each cell
     let mut col_near = vec![None; width * height];
     let mut f = vec![None; height.max(width)];

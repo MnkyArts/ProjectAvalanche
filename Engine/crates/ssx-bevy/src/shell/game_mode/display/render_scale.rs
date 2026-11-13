@@ -18,7 +18,7 @@ pub struct RenderScale {
     pub image: Handle<Image>,
     pub size: UVec2,
     pub enabled: bool,
-    announced: bool,
+    logged: Option<(Option<UVec2>, UVec2)>,
 }
 
 #[derive(Component)]
@@ -49,7 +49,7 @@ pub(super) fn register(app: &mut App, display: &DisplaySettings, window: (u32, u
         RenderLayers::layer(PRESENT_LAYER),
         PresentCamera,
     ));
-    app.insert_resource(RenderScale { image, size, enabled: false, announced: false }).add_systems(Update, follow);
+    app.insert_resource(RenderScale { image, size, enabled: false, logged: None }).add_systems(Update, follow);
 }
 
 fn target_image(size: UVec2) -> Image {
@@ -78,7 +78,6 @@ fn follow(
     let Ok(window) = windows.single() else { return };
     let physical = window.physical_size();
     let size = render_size((physical.x, physical.y), display.settings.render_height).map(|(w, h)| UVec2::new(w, h));
-    let was = (scale.enabled, scale.size);
     let mut replaced = None;
     if let Some(size) = size
         && size != scale.size
@@ -87,15 +86,12 @@ fn follow(
         scale.size = size;
     }
     let enabled = size.is_some();
-    if (enabled, scale.size) != was || !scale.announced {
-        scale.announced = true;
-        match (enabled, display.settings.render_height) {
-            (true, Some(h)) => info!(
+    if scale.logged != Some((size, physical)) {
+        scale.logged = Some((size, physical));
+        match (size, display.settings.render_height) {
+            (Some(s), Some(h)) => info!(
                 "display: the frame is rendered at {}x{} and scaled to the window's {}x{} (render height {h})",
-                size.map_or(0, |s| s.x),
-                size.map_or(0, |s| s.y),
-                physical.x,
-                physical.y
+                s.x, s.y, physical.x, physical.y
             ),
             _ => info!("display: the frame is rendered at the window's own resolution ({}x{})", physical.x, physical.y),
         }

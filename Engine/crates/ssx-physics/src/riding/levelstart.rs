@@ -11,7 +11,7 @@ pub const GO_CLIPS: [&str; 3] =
     ["snow_start_go_male_character", "snow_start_go_character_01", "snow_start_go_character_03"];
 pub const GO_STOP_TICK: f32 = 40.0;
 const GO_STOP_WINDOW: TagWindow = TagWindow::new(GO_STOP_TICK, 0.0, false);
-const GO_STOP_TAG: BoolTag = BoolTag { value: true, mode: 1, reset_on_leave: false };
+const GO_STOP_TAG: BoolTag = BoolTag { value: true, mode: 1, reset: None };
 pub const OFFSET_RAY_UP: f32 = 1.0;
 pub const OFFSET_RAY_DOWN: f32 = 5.0;
 pub const RSTICK_UP_MAGNITUDE: f32 = 0.54;

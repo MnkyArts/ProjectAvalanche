@@ -68,7 +68,14 @@ impl GameUi {
         if steps == 2 {
             self.fe_clock = self.fe_clock.min(STEP);
         }
-        // TODO(guess): a port choice — the globe's scene moves with every drawn frame (the game updates it at 30 Hz and blends snapshots: its render clock interpolates the last two 30 Hz snapshots, 0x829E1580 / 0x829E17A0, never past the newest); settle: nothing to decode (the globe's render objects' interpolation).
+        // TODO(guess): a frame with no FE update moves the globe's scene by its own dt, so the scene (and its logic)
+        // runs once per drawn frame; the game updates the globe entity in the 30 Hz FE update (0x823F4428 in
+        // 0x823D4C80) and draws the last two snapshots interpolated (0x829E1580 / 0x829E17A0, never past the newest):
+        // the globe's render state (`GlobeEntity:GlobeRenderObjectState`, vtable 0x821A2848, interpolate +0x28
+        // 0x82FD9A20) lerps S and P and blends Q (0x829CD448), takes B's highlight vector normalised and lerps the two
+        // cloud transparencies; the mid-ground shares that class, the camera has its own (`CameraRenderObjState`);
+        // settle: the scene updated only in the FE update and the drawn frame built from the two snapshots so
+        // interpolated (checked in a window: the globe's motion and transitions).
         if let Some(dt) = scene {
             self.fe_call(|fe, env| fe::globe::scene_update(fe, env, dt));
         }
@@ -109,7 +116,7 @@ impl GameUi {
         scene: Option<f64>,
     ) {
         if self.fe.as_ref().is_some_and(fe::FrontEnd::movie_queued) {
-            self.input.clear();
+            self.input.defer();
             self.pointer_lost();
             let mut nav_events = Vec::new();
             if let Some(fe) = self.fe.as_mut() {
@@ -179,14 +186,14 @@ impl GameUi {
         self.port_register(vm, lib, player);
         self.due_views = std::mem::take(&mut self.pending_views);
         if self.fe.as_ref().is_some_and(|f| f.input_lock > 0) {
-            // TODO(guess): a button still held when the lock ends is a press at the game's first read after it; the port's input carries presses only and drops it; settle: the host's held buttons into `input` at the lock's end.
-            self.input.clear();
+            self.input.defer();
             self.pointer_lost();
         } else {
             if let Some(device) = self.fe.as_mut().and_then(|f| fe::pads::disconnect_input(f, &self.values)) {
                 let i = input::Input::Button { button: input::Button::Disconnect, down: true };
                 self.input.push_from(i, device);
             }
+            self.input.resume();
             let mut cx = vm.ctx(lib, player);
             self.pointer_read(&mut cx);
             self.stats.inputs += self.input.deliver(&mut cx) as u64;
@@ -197,7 +204,11 @@ impl GameUi {
         self.port_open();
         self.relayout_step(vm, lib, player);
         self.run_nav(vm, lib, player);
-        // TODO(guess): the resource loads take one FE update; settle: the resource manager's service of the view model's request (0x825A1D48, callback 0x825A27E8).
+        // TODO(guess): the view model's resource load takes one FE update (`due_views`); the game's load (0x825A1D48)
+        // hands a request (vtable 0x8205CD1C, callback +4 0x825A27E8: state 1 → 0x825A22D0, state 2 → the providers
+        // 0x825A1A88) to the framework's resource manager (the view model's +8 → +0x18, its vt+8), and when that
+        // manager calls back — at once for a resident file or in a later service — was not found (its class is reached
+        // only through that pointer); settle: the manager's vt+8 and the service that calls the request's +4.
         for view in std::mem::take(&mut self.due_views) {
             vm.game_event(lib, player, navev::LOAD_VIEW, Value::str(&view));
             self.loading_views.push(view);

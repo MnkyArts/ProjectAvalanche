@@ -21,16 +21,18 @@ use super::throttle::Throttle;
 use crate::http::limits::{Rate, Verdict};
 use crate::http::{Challenges, HttpState, Reply};
 
-// TODO(guess): /metrics 2 a second (burst 4), /dynamic 4 (burst 8), the icon 1 (burst 4); settle: the scrape intervals
-// and the browser's refresh measured on public servers.
+// PORT(choice): /metrics 2 a second (burst 4), /dynamic 4 (burst 8), the icon 1 (burst 4); tuning: the scrape intervals
+// and the browser's refresh measured on public servers; the original has no dedicated server.
 pub const METRICS_RATE: Rate = Rate { per_second: 2.0, burst: 4.0 };
 pub const DYNAMIC_RATE: Rate = Rate { per_second: 4.0, burst: 8.0 };
 pub const ICON_RATE: Rate = Rate { per_second: 1.0, burst: 4.0 };
-// TODO(guess): a day; settle: how often operators change their icons.
+// PORT(choice): a day; tuning: how often operators change their icons; the original has no dedicated server.
 pub const ICON_CACHE: &str = "public, max-age=86400";
-// TODO(guess): 16 (an operator's tool sends one at a time; the per-key rate bounds a script); settle: operators' tools.
+// PORT(choice): 16 (an operator's tool sends one at a time; the per-key rate bounds a script); tuning: operators'
+// tools; the original has no dedicated server.
 pub const RCON_QUEUE: usize = 16;
-// TODO(guess): 256 resources (a server runs tens); settle: phase 6's resource counts.
+// PORT(choice): 256 resources (a server runs tens); tuning: phase 6's resource counts; the original has no dedicated
+// server.
 pub const MAX_SCRIPT_RESOURCES: usize = 256;
 
 pub struct OperationHttp {

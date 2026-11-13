@@ -297,15 +297,14 @@ mod tests {
         let mut b = BeatDetect::new(2, 1.0, 1.0, 300.0);
         let (mut bpm, mut conf, mut meter) = (0.0, 0.0, 0.0);
         for blk in 0..(48_000 * 16 / BLOCK) {
-            let mut c = vec![vec![0.0f32; BLOCK]; 2];
-            #[allow(clippy::needless_range_loop)]
-            for k in 0..BLOCK {
-                let t = blk * BLOCK + k;
-                let noise = ((t * 7919) % 1000) as f32 / 500.0 - 1.0;
-                let v = noise * if t % 24_000 < 256 { 0.5 } else { 0.01 };
-                c[0][k] = v;
-                c[1][k] = v;
-            }
+            let block: Vec<f32> = (0..BLOCK)
+                .map(|k| {
+                    let t = blk * BLOCK + k;
+                    let noise = ((t * 7919) % 1000) as f32 / 500.0 - 1.0;
+                    noise * if t % 24_000 < 256 { 0.5 } else { 0.01 }
+                })
+                .collect();
+            let mut c = vec![block.clone(), block];
             b.process(4.0, 0.03, &mut c);
             [bpm, _, conf, meter, _] = b.outputs();
         }

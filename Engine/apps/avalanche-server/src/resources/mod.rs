@@ -57,8 +57,8 @@ impl ResourceCommand {
     }
 }
 
-// TODO(guess): 64 waiting commands (an operator types them; a script of RCON lines sends a few); settle: phase 4b's
-// RCON in use.
+// PORT(choice): 64 waiting commands (an operator types them; a script of RCON lines sends a few); tuning: phase 4b's
+// RCON in use; the original has no dedicated server.
 pub const MAX_QUEUE: usize = 64;
 
 pub struct Context {

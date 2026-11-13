@@ -18,15 +18,16 @@ pub use cache::Cached;
 pub const CACHE_FOLDER: &str = "Blocklists";
 pub const MAX_ENTRIES: usize = 100_000;
 pub const MAX_LISTS: usize = 9;
-// TODO(guess): 30 days, a port choice: a master down for days keeps ruling; one gone for a month stops (it may have
-// unblocked files meanwhile). Nothing measured; settle: the outages of real masters.
+// PORT(choice): 30 days: a master down for days keeps ruling; one gone for a month stops (it may have unblocked files
+// meanwhile). Nothing measured; tuning: the outages of real masters; the original has no master server.
 pub const MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
-// TODO(guess): one day, a port choice (a clock set back by hours, a time zone's error, keeps the list; a file dated
-// days ahead is not one this game wrote). Nothing measured; settle: the clock errors players' machines show.
+// PORT(choice): one day (a clock set back by hours, a time zone's error, keeps the list; a file dated days ahead is not
+// one this game wrote). Nothing measured; tuning: the clock errors players' machines show; the original has no master
+// server.
 pub const FUTURE_SLACK: Duration = Duration::from_secs(24 * 3600);
 
-// TODO(guess): 10 minutes, a port choice (a list changes when an operator edits a file; masters answer a 304 cheaply);
-// settle: the request rates real masters see.
+// PORT(choice): 10 minutes (a list changes when an operator edits a file; masters answer a 304 cheaply); tuning: the
+// request rates real masters see; the original has no master server.
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 pub fn now_secs() -> u64 {

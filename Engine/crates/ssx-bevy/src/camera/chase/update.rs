@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::collision::physics_queries;
+use super::collision::{physics_queries, post_update_near};
 use super::meta::REVERSE_ANCHOR_Y;
 use super::noise::{CarvingNoise, blend_eye};
 use super::{
@@ -8,6 +8,7 @@ use super::{
     CamSnapshot, CameraNoise, Chase, HANDBACK_CURVE, HANDBACK_TICKS, MetaFilters, NoiseSignals, Snapshot, StartState,
     Wipeout, camera_node,
 };
+use crate::camera::GAME_NEAR;
 use crate::camera::graph::{self as graph, Channels, Flow, Inputs};
 use crate::ride::Ride;
 
@@ -108,12 +109,13 @@ impl Chase {
             fin = graph::blend(&fin, &old, w);
         }
         self.handback = handback.zip(self.handback.map(|h| h.1));
+        self.near = post_update_near(&ride.world().collision, fin.position, fin.rotation, fin.fov_deg, GAME_NEAR);
         if crate::render::post::env_is("SSX_CAMERA_LOG", "on") {
-            let v = Snapshot { position: fin.position, rotation: fin.rotation, fov_deg: fin.fov_deg };
+            let v = Snapshot { position: fin.position, rotation: fin.rotation, fov_deg: fin.fov_deg, near: self.near };
             let eye = v.position + v.rotation * self.eye.1;
             info!(
                 "chase camera: step {} {:?}/{:?}, type {} (intro ticks {}), speeds meta {:.3} flow {:.3}, fade {:?}, \
-                 eye {:.2} ({:.2} m from the target), view {:.2}, FOV {:.1}",
+                 eye {:.2} ({:.2} m from the target), view {:.2}, FOV {:.1}, near {:.3}",
                 ride.steps,
                 self.node,
                 self.flow.current.node,
@@ -125,7 +127,8 @@ impl Chase {
                 eye,
                 eye.distance(i.target_pos),
                 v.rotation * Vec3::X,
-                fin.fov_deg
+                fin.fov_deg,
+                v.near
             );
         }
         self.rig = fin;
@@ -211,6 +214,7 @@ impl Chase {
             position: self.rig.position + self.rig.rotation * t,
             rotation: (self.rig.rotation * q).normalize(),
             fov_deg: self.rig.fov_deg,
+            near: self.near,
         }
     }
 
@@ -229,6 +233,7 @@ impl Chase {
             eye: self.eye,
             start: self.start,
             camera_orientation: self.camera_orientation,
+            near: self.near,
         });
     }
 
@@ -237,6 +242,7 @@ impl Chase {
         (self.ticks_since_collision, self.previous, self.camera_pos) =
             (sn.ticks_since_collision, sn.previous, sn.camera_pos);
         self.rig = sn.pose;
+        self.near = sn.near;
         self.eye = sn.eye;
         (self.start, self.camera_orientation) = (sn.start, sn.camera_orientation);
     }

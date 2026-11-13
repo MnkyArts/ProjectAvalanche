@@ -5,7 +5,8 @@ use ssx_physics::rider::RiderState;
 use ssx_physics::{KMH_PER_M_PER_TICK, SIM_HZ};
 
 use super::{Clock, Pose, Ride};
-use crate::camera::FlyCam;
+use crate::camera::chase::ChaseCamera;
+use crate::camera::{CameraMode, FlyCam};
 use crate::rider::skin::RiderRig;
 use crate::rider::visual::{self as rider_visual, RiderBody, RiderRoot};
 use crate::shell::screenshot::{FIXED_FRAME, FixedShotClock, PipelinesReady};
@@ -54,6 +55,8 @@ pub(super) fn fixed_step(
     mut rig: Option<ResMut<RiderRig>>,
     shadow: Option<Res<crate::particles::shadow_query::PlayerShadowQuery>>,
     mut paused_frames: ResMut<PausedFrames>,
+    chase: Option<Res<ChaseCamera>>,
+    (pads, mode): (Query<&Gamepad>, Option<Res<CameraMode>>),
 ) {
     if matches!(ride.clock, Clock::Fixed) && ride.hold && ride.paused {
         paused_frames.0 += 1;
@@ -66,10 +69,11 @@ pub(super) fn fixed_step(
     if matches!(ride.clock, Clock::Fixed) && !ride.hold {
         if ride.scripted() {
             ride.scripted_controls();
+            ride.through_keys(&pads, mode.as_deref().is_none_or(|m| *m == CameraMode::Chase));
         }
         ride.state.survival.shade_query = ride.shade_query(shadow.as_deref());
         let before = shade_trace_before(&ride, shadow.as_deref());
-        ride.advance(rig.as_deref_mut().map(|r| &mut r.anim));
+        ride.advance(rig.as_deref_mut().map(|r| &mut r.anim), chase.as_ref().and_then(|c| c.reverse_camera()));
         shade_trace_after(&ride, before);
     }
 }
@@ -136,11 +140,13 @@ pub(super) fn frame_step(
     mut ride: ResMut<Ride>,
     mut rig: Option<ResMut<RiderRig>>,
     shadow: Option<Res<crate::particles::shadow_query::PlayerShadowQuery>>,
+    chase: Option<Res<ChaseCamera>>,
     (mut clock, mut time, mut strategy): (
         Option<ResMut<FixedShotClock>>,
         ResMut<Time<Virtual>>,
         ResMut<TimeUpdateStrategy>,
     ),
+    (pads, mode): (Query<&Gamepad>, Option<Res<CameraMode>>),
 ) {
     let ready = ready.is_some_and(|r| r.0) && !ride.hold;
     let (step_now, last, frame) = match &mut ride.clock {
@@ -169,10 +175,11 @@ pub(super) fn frame_step(
     if step_now {
         if ride.scripted() {
             ride.scripted_controls();
+            ride.through_keys(&pads, mode.as_deref().is_none_or(|m| *m == CameraMode::Chase));
         }
         ride.state.survival.shade_query = ride.shade_query(shadow.as_deref());
         let before = shade_trace_before(&ride, shadow.as_deref());
-        ride.advance(rig.as_deref_mut().map(|r| &mut r.anim));
+        ride.advance(rig.as_deref_mut().map(|r| &mut r.anim), chase.as_ref().and_then(|c| c.reverse_camera()));
         shade_trace_after(&ride, before);
     }
     ride.report |= last;

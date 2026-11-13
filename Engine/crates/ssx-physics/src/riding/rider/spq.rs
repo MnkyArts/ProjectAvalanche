@@ -27,7 +27,7 @@ pub(super) fn score(s: &mut RiderState, w: &World, input: &Input, ctx: &ScoringC
         wipeout,
         spin_speed: if in_air { o.spin_speed } else { 0.0 },
         flip_speed: if in_air { o.flip_speed } else { 0.0 },
-        flip_accel: input.air_stick(s.tricks.classic).y,
+        flip_accel: input.flip_acceleration(s.tricks.classic),
         goofy: s.goofy,
         trick_type: s.tricks.trick_type,
         tricking: s.tricks.is_tricking,
@@ -166,6 +166,10 @@ pub fn update_player_speed(s: &mut RiderState, in_air: bool) {
     s.player_speed_ratio = (s.player_speed / 45.0).min(1.0);
 }
 
+pub fn has_prewind_input(input: &Input, prewind_hold: bool, classic: bool) -> bool {
+    input.jump || (prewind_hold && !classic)
+}
+
 pub(super) fn update_prewind(s: &mut RiderState, w: &World, input: &Input, prewind_hold: bool, dt: f32) {
     let r = &w.props;
     let in_air = s.state != RideState::Riding;
@@ -173,17 +177,24 @@ pub(super) fn update_prewind(s: &mut RiderState, w: &World, input: &Input, prewi
     let accum = if awesome { r.awesome_prewind_accum_rate } else { r.prewind_accum_rate };
     let natural = if awesome { r.awesome_prewind_decay_rate_natural } else { r.prewind_decay_rate_natural };
     if carving_crashed(s, in_air) || s.prewind_reset {
-        (s.prewind, s.prewind_reset) = (0.0, false);
+        (s.prewind, s.prewind_analog, s.prewind_reset) = (0.0, 0.0, false);
         return;
     }
-    let (target, rate) = if !in_air && (input.jump || prewind_hold) {
+    let classic = s.tricks.classic;
+    let has_input = has_prewind_input(input, prewind_hold, classic);
+    let filter =
+        |value: f32, (target, rate): (f32, f32)| (target + (value - target) * (-rate * dt).exp()).clamp(0.0, 1.0);
+    let standard = if !in_air && has_input {
         (1.0, accum)
     } else if input.stick().length() >= 0.5 {
         (0.0, natural)
     } else {
         (0.0, r.prewind_decay_rate_reverse)
     };
-    s.prewind = (target + (s.prewind - target) * (-rate * dt).exp()).clamp(0.0, 1.0);
+    let classic_target =
+        if !in_air && has_input && input.dpad_held { (1.0, accum) } else { (0.0, r.prewind_decay_rate_reverse) };
+    s.prewind_analog = filter(s.prewind_analog, standard);
+    s.prewind = filter(s.prewind, if classic { classic_target } else { standard });
 }
 
 pub fn board_axes(s: &RiderState) -> (Vec3, Vec3) {

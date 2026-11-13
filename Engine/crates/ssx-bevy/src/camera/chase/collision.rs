@@ -76,3 +76,77 @@ pub(super) fn physics_queries(ride: &Ride, q: &mut Queries, cam: Vec3, p: Vec3, 
     };
     cam + (side * local.x + up2 * local.y) * factor
 }
+
+const NEAR_QUERY_EPSILON: f32 = 0.3;
+const MIN_NEAR_CLIPPING_PLANE: f32 = 0.05;
+pub(super) const DEFAULT_NEAR_CLIPPING_PLANE: f32 = 0.5;
+const NEAR_QUERY_ASPECT: f32 = 16.0 / 9.0;
+
+pub(super) fn post_update_near(
+    collision: &ssx_physics::collision::CollisionWorld,
+    position: Vec3,
+    rotation: Quat,
+    fov_deg: f32,
+    near: f32,
+) -> f32 {
+    let depth = near + NEAR_QUERY_EPSILON;
+    let half_width = depth * (fov_deg.to_radians() * 0.5).tan();
+    let half_height = half_width / NEAR_QUERY_ASPECT;
+    let corner = |y: f32, z: f32| position + rotation * Vec3::new(depth, y, z);
+    let c = [
+        corner(half_height, -half_width),
+        corner(half_height, half_width),
+        corner(-half_height, -half_width),
+        corner(-half_height, half_width),
+    ];
+    let ends =
+        [(c[0] + c[1]) * 0.5, (c[0] + c[2]) * 0.5, (c[1] + c[3]) * 0.5, (c[2] + c[3]) * 0.5, c[0], c[1], c[2], c[3]];
+    let fraction = ends
+        .into_iter()
+        .filter_map(|end| {
+            let len = (end - position).length();
+            let q = ssx_physics::collision::SegmentQuery::line(position, end, QUERY_CLASS_MASK);
+            collision.segment_query(&q).map(|h| (h.t / len).clamp(0.0, 1.0))
+        })
+        .fold(1.0_f32, f32::min);
+    (fraction * depth - NEAR_QUERY_EPSILON).max(MIN_NEAR_CLIPPING_PLANE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ssx_physics::collision::CollisionWorld;
+
+    fn wall(at: f32, facing_camera: bool) -> CollisionWorld {
+        let p = |y: f32, z: f32| Vec3::new(at, y, z);
+        let mut v = [p(-1.0, -1.0), p(-1.0, 1.0), p(1.0, 1.0), p(1.0, -1.0)];
+        if !facing_camera {
+            v.reverse();
+        }
+        let mut w = CollisionWorld::default();
+        w.push_cluster(&v, None, None, &[[0, 1, 2], [0, 2, 3]], 0, 0);
+        w.finish();
+        w
+    }
+
+    #[test]
+    fn the_near_plane_moves_in_front_of_the_nearest_surface() {
+        let near = |w: &CollisionWorld| post_update_near(w, Vec3::ZERO, Quat::IDENTITY, 90.0, 0.5);
+        assert!((near(&wall(0.4, true)) - 0.1).abs() < 1e-5, "{}", near(&wall(0.4, true)));
+        assert_eq!(near(&wall(0.2, true)), MIN_NEAR_CLIPPING_PLANE);
+        assert_eq!(near(&wall(0.9, true)), 0.5);
+        assert_eq!(near(&wall(0.4, false)), 0.5);
+        assert_eq!(near(&CollisionWorld::default()), 0.5);
+    }
+
+    #[test]
+    fn the_sweeps_reach_the_near_rectangles_edges() {
+        let p = |x: f32, y: f32| Vec3::new(x, y, 0.6);
+        let mut w = CollisionWorld::default();
+        let v = [p(0.0, 1.0), p(2.0, 1.0), p(2.0, -1.0), p(0.0, -1.0)];
+        w.push_cluster(&v, None, None, &[[0, 1, 2], [0, 2, 3]], 0, 0);
+        w.finish();
+        let near = post_update_near(&w, Vec3::ZERO, Quat::IDENTITY, 90.0, 0.5);
+        assert!((near - (0.75 * 0.8 - 0.3)).abs() < 1e-5, "{near}");
+    }
+}

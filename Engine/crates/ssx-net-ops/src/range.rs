@@ -93,9 +93,9 @@ fn prefix4(net: u32, len: u8, shown: &impl fmt::Display) -> Result<Range, String
     Ok(Range::V4 { net, len })
 }
 
-// TODO(guess): trailing `*` octets only (`192.0.*.*`, not `192.*.2.1`), never all four; MTA's banlist matching was
-// recalled, not re-read (this round had no network): it compares the octets one by one, so a middle `*` may work
-// there; settle: MTA's CBanManager source and what operators write.
+// PORT(choice): trailing `*` octets only (`192.0.*.*`, not `192.*.2.1`), never all four; MTA's banlist matching was
+// recalled, not re-read (this round had no network): it compares the octets one by one, so a middle `*` may work there;
+// tuning: MTA's CBanManager source and what operators write; the original has no dedicated server.
 fn wildcard(text: &str) -> Option<Range> {
     let parts: Vec<&str> = text.split('.').collect();
     if parts.len() != 4 {

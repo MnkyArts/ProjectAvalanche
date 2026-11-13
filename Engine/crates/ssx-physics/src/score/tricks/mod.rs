@@ -18,14 +18,18 @@ pub use gestures::*;
 pub const RSTICK_ACTIVE: f32 = 0.3;
 pub const TWEAK_STICK_DEAD_ZONE: f32 = 0.1;
 pub const TWEAK_BLEND_ACTIVE: f32 = 0.9;
-pub const CLASSIC_BOOST_HOLD_TICKS: f32 = 12.0;
-
-pub fn classic_boost_ticks(ticks: f32, x: bool, dt: f32) -> f32 {
-    if x { ticks + dt } else { 0.0 }
+pub fn boost_requested(classic: bool, t: &TrickInput) -> bool {
+    if classic { t.x } else { t.tweak }
 }
 
-pub fn classic_boost_requested(ticks: f32) -> bool {
-    ticks >= CLASSIC_BOOST_HOLD_TICKS
+pub fn wipeout_recovery_input(
+    standard_flick: bool,
+    a_release: bool,
+    classic: bool,
+    t: &TrickInput,
+    boost: f32,
+) -> bool {
+    standard_flick || a_release || (boost_requested(classic, t) && boost > 0.0)
 }
 pub const ANTICIPATE_TICKS: f32 = 15.0;
 pub const ENTER_TICKS: f32 = 15.0;
@@ -409,7 +413,6 @@ impl Default for SignatureTiming {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TrickState {
     pub classic: bool,
-    pub classic_boost_ticks: f32,
     pub gestures: GrabGestures,
     pub press: crate::press::PressGestures,
     pub gesture_clock: f32,
@@ -448,7 +451,6 @@ impl Default for TrickState {
     fn default() -> Self {
         Self {
             classic: false,
-            classic_boost_ticks: 0.0,
             gestures: GrabGestures::default(),
             press: crate::press::PressGestures::default(),
             gesture_clock: 0.0,

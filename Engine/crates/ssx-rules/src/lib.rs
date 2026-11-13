@@ -1,6 +1,7 @@
 pub mod character;
 pub mod course;
 pub mod curve;
+pub mod data_roots;
 pub mod events;
 pub mod gamemode;
 pub mod intro;

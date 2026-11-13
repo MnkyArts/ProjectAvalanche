@@ -52,8 +52,8 @@ pub struct ValidationLog {
     pub events: VecDeque<ValidationEvent>,
 }
 
-// TODO(guess): 1 024 events, a port bound (the dedicated server drains it every frame; a test app keeps the newest);
-// settle: none needed.
+// PORT(choice): 1 024 events, a port bound (the dedicated server drains it every frame; a test app keeps the newest);
+// the original has no validation.
 const MAX_VALIDATION_LOG: usize = 1024;
 
 impl ValidationLog {
@@ -92,11 +92,11 @@ struct Early {
     samples: VecDeque<(Box<NetPose>, Arrival)>,
 }
 
-// TODO(guess): 64 samples (4.3 s of samples every 2 ticks), a port bound over a resent `Ready` (lightyear resends after
-// about 1.5 round trips); a character of interest's own way reaches it (round net3d's coi proof: 64 for one run, 187
-// dropped) — its samples between the earliest hand-over its character may take (the short path's) and its own come
-// before its `Ready`, and the run takes none not after `Ready`'s execution; settle: `samples_before_ready_most` over
-// the network proofs and their stalls, counted after the run's own hand-over.
+// PORT(choice): 64 samples (4.3 s of samples every 2 ticks), a port bound over a resent `Ready` (lightyear resends
+// after about 1.5 round trips); a character of interest's own way reaches it (round net3d's coi proof: 64 for one run,
+// 187 dropped) — its samples between the earliest hand-over its character may take (the short path's) and its own come
+// before its `Ready`, and the run takes none not after `Ready`'s execution; tuning: `samples_before_ready_most` over
+// the network proofs and their stalls, counted after the run's own hand-over; the original has no validation.
 const MAX_EARLY_SAMPLES: usize = 64;
 
 struct RiderRun {

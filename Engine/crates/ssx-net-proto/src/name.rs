@@ -7,12 +7,13 @@ const EXTRA: [char; 35] = [
     '\u{201D}', '\u{201E}', '\u{2022}', '\u{2026}', '\u{20AC}', '\u{2122}', '\u{2126}', '\u{221E}',
 ];
 
-// TODO(guess): 20 characters (an Xbox gamertag's 15 plus room for the port's names); settle: the width of the HUD's
-// ghost-name billboard text field and the players screen's name column at the widest glyphs (W, M, Œ).
+// PORT(choice): 20 characters (an Xbox gamertag's 15 plus room for the port's names); tuning: the width of the HUD's
+// ghost-name billboard text field and the players screen's name column at the widest glyphs (W, M, Œ); the original has
+// no real-time multiplayer.
 pub const MAX_PLAYER_NAME_CHARS: usize = 20;
 
-// TODO(guess): 40 characters, FiveM's cap for a server's name in its list (net1 had 64); settle: the server browser's
-// name column measured at the widest glyphs (W, M, Œ) of its font.
+// PORT(choice): 40 characters, FiveM's cap for a server's name in its list (net1 had 64); tuning: the server browser's
+// name column measured at the widest glyphs (W, M, Œ) of its font; the original has no real-time multiplayer.
 pub const MAX_SERVER_NAME_CHARS: usize = 40;
 
 pub fn drawable(c: char) -> bool {

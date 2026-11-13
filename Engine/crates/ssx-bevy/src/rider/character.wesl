@@ -79,12 +79,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let effect = u32(round(params.shading.x));
     let p = in.world_position.xyz;
 
-    // The glow term uses the diffuse texel's alpha (`d.a`; player_apparel PS9@35-40,60, from the diffuse fetch at @9),
-    // read before `alpha_discard` (which sets the alpha to 1 for opaque materials).
-    var glow_mask = pbr_input.material.base_color.a;
     var tex_n = vec2(0.5);
     var s = vec3(1.0);
     var ao_map = 1.0;
+    var glow_mask = pbr_input.material.base_color.a;
 @if(VERTEX_UVS_A) {
     tex_n = textureSampleBias(normal_map, character_sampler, in.uv, params.lod_bias.y).xy;
     s = textureSampleBias(specular_map, character_sampler, in.uv, params.lod_bias.z).rgb;

@@ -365,7 +365,11 @@ pub(super) fn air_table(classic: bool) -> &'static [TableEntry] {
     if classic { &AIR_TRICKS_CLASSIC } else { &AIR_TRICKS }
 }
 
-// TODO(guess): an added trick's input is the air doubles' shape (a press, its release within 10 ticks, the second press within 10, then held) with one direction twice; the disc has no air same-direction double (TrickSceneOp's ButtonGrabUpUp/LeftLeft/RightRight fields name BLN_Pad_Grab_Button_UpUp…, whose mappings take the Pad_Grab_Button_UpDown/LeftDown/RightDown gestures), its only same-button doubles are the grind double taps (Pad_Grind_Button_UpUp: press, release within 4, held within 4); settle: none on this disc — a port choice for added content.
+// PORT(choice): an added trick's input is the air doubles' shape (a press, its release within 10 ticks, the second
+// press within 10, then held) with one direction twice; the disc has no air same-direction double (TrickSceneOp's
+// ButtonGrabUpUp/LeftLeft/RightRight fields name BLN_Pad_Grab_Button_UpUp…, whose mappings take the
+// Pad_Grab_Button_UpDown/LeftDown/RightDown gestures), its only same-button doubles are the grind double taps
+// (Pad_Grind_Button_UpUp: press, release within 4, held within 4); for added content: nothing on this disc to match.
 pub(super) const BTN_G_UP_UP: [Step; 4] = double!(held(BTN_Y), BTN_Y, held(BTN_Y), BTN_Y);
 pub(super) const BTN_G_LEFT_LEFT: [Step; 4] = double!(held(BTN_X), BTN_X, held(BTN_X), BTN_X);
 pub(super) const BTN_G_RIGHT_RIGHT: [Step; 4] = double!(held(BTN_B), BTN_B, held(BTN_B), BTN_B);

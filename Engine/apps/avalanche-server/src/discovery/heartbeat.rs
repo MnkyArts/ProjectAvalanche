@@ -24,8 +24,8 @@ use super::Stats;
 use crate::bridge::Shared;
 use crate::http::HttpState;
 
-// TODO(guess): 2 s for the lookup, 3 s to connect, 5 s for the handshake, 5 s for a challenge, 20 s for a heartbeat;
-// settle: heartbeats to real masters over real links.
+// PORT(choice): 2 s for the lookup, 3 s to connect, 5 s for the handshake, 5 s for a challenge, 20 s for a heartbeat;
+// tuning: heartbeats to real masters over real links; the original has no dedicated server.
 pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);

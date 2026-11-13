@@ -16,8 +16,8 @@ const MAX_HELD_BYTES: usize = 128 << 20;
 const MAX_WAITING: usize = 64;
 const MAX_DECODING: usize = 4;
 const VOICE: &str = "FE_Button_SFX_Voice";
-// TODO(guess): 32 package voices of the scripts at once (the host's 32 sounds a frame); a port bound with no game
-// counterpart (the original runs no scripts). Settle: the mixer's voice budget measured with M8's packages.
+// PORT(choice): 32 package voices of the scripts at once (the host's 32 sounds a frame), a port bound; tuning: the
+// mixer's voice budget measured with M8's packages; no game counterpart (the original runs no scripts).
 const MAX_VOICES: usize = 32;
 
 type Decoded = (ContentId, Result<Arc<OverrideSound>, String>);

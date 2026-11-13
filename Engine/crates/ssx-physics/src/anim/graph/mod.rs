@@ -70,6 +70,7 @@ pub struct GraphFeedback {
     pub board_z: Vec3,
     pub board_offset: Vec3,
     pub carving_stopped: bool,
+    pub allow_airborne: bool,
     pub uber_bail_sliding: bool,
     pub uber_recover: bool,
     pub recover_ticks: f32,

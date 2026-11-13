@@ -82,37 +82,43 @@ pub struct CamTag {
 
 const fn bool_tag(var: TagVar, value: bool, always: bool) -> CamTag {
     let duration = if always { 32767.0 } else { 0.0 };
-    let tag = BoolTag { value, mode: 1, reset_on_leave: false };
+    let tag = BoolTag { value, mode: 1, reset: None };
     CamTag { var, window: TagWindow::new(0.0, duration, always), value: TagValue::Bool(tag) }
 }
 
-const fn bool_tag_reset(var: TagVar, value: bool) -> CamTag {
-    let tag = BoolTag { value, mode: 1, reset_on_leave: true };
+const fn bool_tag_reset(var: TagVar, value: bool, reset: bool) -> CamTag {
+    let tag = BoolTag { value, mode: 1, reset: Some(reset) };
     CamTag { var, window: TagWindow::new(0.0, 32767.0, true), value: TagValue::Bool(tag) }
 }
 
-const fn float_tag(var: TagVar, value: f32, duration: f32, reset: bool) -> CamTag {
-    let tag = FloatTag { value, mode: 1, reset_on_leave: reset, spline: 1.0 };
+const fn float_tag(var: TagVar, value: f32, duration: f32, reset: Option<f32>) -> CamTag {
+    let tag = FloatTag { value, mode: 1, reset, spline: 1.0 };
     CamTag { var, window: TagWindow::new(0.0, duration, false), value: TagValue::Float(tag) }
 }
 
+const SPEED_DEFAULT: Option<f32> = Some(0.300_7);
+const OFFSET_DEFAULT: Option<f32> = Some(0.8);
+const HANDYCAM_DEFAULT: bool = true;
+
 const TRIGGERED: CamTag = bool_tag(TagVar::TransitionTriggered, true, false);
-const SPEED_IN: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, true);
-const SPEED_BACK: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, false);
-const SPEED_DEATH: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.8, 0.0, false);
-const SPEED_DEATH_GRIND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.65, 0.0, false);
+const SPEED_IN: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, SPEED_DEFAULT);
+const SPEED_BACK: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, None);
+const SPEED_DEATH: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.8, 0.0, None);
+const SPEED_DEATH_GRIND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.65, 0.0, None);
 const BIG_AIR: CamTag = bool_tag(TagVar::BigAir, false, false);
-const SPEED_15P_AIR: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.05, 0.0, true);
-const SPEED_15P_GROUND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.3, 0.0, true);
-const SPEED_15P_WIPEOUT: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.2, 0.0, true);
-const SPEED_FAR_AIR: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, false);
-const SPEED_FAR_GROUND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.3, 0.0, true);
+const SPEED_15P_AIR: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.05, 0.0, SPEED_DEFAULT);
+const SPEED_15P_GROUND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.3, 0.0, SPEED_DEFAULT);
+const SPEED_15P_WIPEOUT: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.2, 0.0, SPEED_DEFAULT);
+const SPEED_FAR_AIR: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.1, 0.0, None);
+const SPEED_FAR_GROUND: CamTag = float_tag(TagVar::TransitionSpeedSet, 0.3, 0.0, SPEED_DEFAULT);
 
 fn node_tags(n: Node) -> &'static [CamTag] {
-    const GROUND: [CamTag; 1] = [float_tag(TagVar::PlayerOffsetY, 0.3, 1.0, true)];
+    const GROUND: [CamTag; 1] = [float_tag(TagVar::PlayerOffsetY, 0.3, 1.0, OFFSET_DEFAULT)];
     const DEATH: [CamTag; 1] = [bool_tag(TagVar::EnableMetaBlending, false, true)];
-    const FAR_GROUND: [CamTag; 2] =
-        [bool_tag_reset(TagVar::Handycam, false), float_tag(TagVar::PlayerOffsetY, 0.3, 1.0, true)];
+    const FAR_GROUND: [CamTag; 2] = [
+        bool_tag_reset(TagVar::Handycam, false, HANDYCAM_DEFAULT),
+        float_tag(TagVar::PlayerOffsetY, 0.3, 1.0, OFFSET_DEFAULT),
+    ];
     match n {
         Node::Ground => &GROUND,
         Node::Death | Node::ReverseDeath | Node::P15Death | Node::FarDeath => &DEATH,

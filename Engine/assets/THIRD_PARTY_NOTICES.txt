@@ -2701,7 +2701,7 @@ Repository: https://github.com/bitflags/bitflags
 ----------------------------------------------------------------------------------------------------
 License: MIT (used: MIT)
 Repository: https://github.com/bitvecto-rs/bitvec
-[LICENSE.txt: shared text 78]
+[LICENSE.txt: shared text 79]
 
 ----------------------------------------------------------------------------------------------------
 --- blake2 0.10.6 ---
@@ -3296,7 +3296,7 @@ License: Zlib OR Apache-2.0 OR MIT (used: MIT)
 Authors: Lokathor <zefria@gmail.com>
 Repository: https://github.com/Lokathor/bytemuck
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 79]
+[LICENSE-MIT: shared text 80]
 [LICENSE-ZLIB: shared text 49]
 
 ----------------------------------------------------------------------------------------------------
@@ -3306,7 +3306,7 @@ License: Zlib OR Apache-2.0 OR MIT (used: MIT)
 Authors: Lokathor <zefria@gmail.com>
 Repository: https://github.com/Lokathor/bytemuck
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 79]
+[LICENSE-MIT: shared text 80]
 [LICENSE-ZLIB: shared text 49]
 
 ----------------------------------------------------------------------------------------------------
@@ -3532,7 +3532,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: RustCrypto Developers
 Repository: https://github.com/RustCrypto/stream-ciphers
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 68]
+[LICENSE-MIT: shared text 69]
 
 ----------------------------------------------------------------------------------------------------
 --- chacha20 0.9.1 ---
@@ -3541,7 +3541,7 @@ License: Apache-2.0 OR MIT (used: MIT)
 Authors: RustCrypto Developers
 Repository: https://github.com/RustCrypto/stream-ciphers
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 67]
+[LICENSE-MIT: shared text 68]
 
 ----------------------------------------------------------------------------------------------------
 --- chacha20poly1305 0.10.1 ---
@@ -5119,7 +5119,7 @@ License: Apache-2.0 OR MIT (used: MIT)
 Authors: RustCrypto Developers
 Repository: https://github.com/RustCrypto/nacl-compat/tree/master/crypto_secretbox
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 67]
+[LICENSE-MIT: shared text 68]
 
 ----------------------------------------------------------------------------------------------------
 --- ctrlc 3.5.2 ---
@@ -5708,7 +5708,7 @@ DEALINGS IN THE SOFTWARE.
 License: MIT (used: MIT)
 Authors: Jelte Fennema <github-tech@jeltef.nl>
 Repository: https://github.com/JelteF/derive_more
-[LICENSE: shared text 87]
+[LICENSE: shared text 88]
 
 ----------------------------------------------------------------------------------------------------
 --- derive_more-impl 2.1.1 ---
@@ -5716,7 +5716,7 @@ Repository: https://github.com/JelteF/derive_more
 License: MIT (used: MIT)
 Authors: Jelte Fennema <github-tech@jeltef.nl>
 Repository: https://github.com/JelteF/derive_more
-[LICENSE: shared text 87]
+[LICENSE: shared text 88]
 
 ----------------------------------------------------------------------------------------------------
 --- deterministic-hash 1.0.2 ---
@@ -5864,7 +5864,7 @@ License: MIT/Apache-2.0 (used: MIT)
 Authors: Ashish Myles <marcianx@gmail.com>, Runji Wang <wangrunji0408@163.com>
 Repository: https://github.com/marcianx/downcast-rs
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 69]
+[LICENSE-MIT: shared text 70]
 
 ----------------------------------------------------------------------------------------------------
 --- downcast-rs 2.0.2 ---
@@ -5872,7 +5872,7 @@ Repository: https://github.com/marcianx/downcast-rs
 License: MIT OR Apache-2.0 (used: MIT)
 Repository: https://github.com/marcianx/downcast-rs
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 69]
+[LICENSE-MIT: shared text 70]
 
 ----------------------------------------------------------------------------------------------------
 --- dpi 0.1.2 ---
@@ -6177,7 +6177,7 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-[LICENSE-MIT: shared text 64]
+[LICENSE-MIT: shared text 65]
 
 ----------------------------------------------------------------------------------------------------
 --- ed25519-dalek 2.2.0 ---
@@ -6919,7 +6919,7 @@ DEALINGS IN THE SOFTWARE.
 License: Zlib (used: Zlib)
 Authors: Orson Peters <orsonpeters@gmail.com>
 Repository: https://github.com/orlp/foldhash
-[LICENSE: shared text 71]
+[LICENSE: shared text 72]
 
 ----------------------------------------------------------------------------------------------------
 --- foldhash 0.2.0 ---
@@ -6927,7 +6927,7 @@ Repository: https://github.com/orlp/foldhash
 License: Zlib (used: Zlib)
 Authors: Orson Peters <orsonpeters@gmail.com>
 Repository: https://github.com/orlp/foldhash
-[LICENSE: shared text 71]
+[LICENSE: shared text 72]
 
 ----------------------------------------------------------------------------------------------------
 --- font-types 0.12.6 ---
@@ -7262,34 +7262,7 @@ License: Apache-2.0/MIT (used: MIT)
 Authors: Arvamer <arvamer@gmail.com>
 Repository: https://gitlab.com/gilrs-project/gilrs
 [LICENSE-APACHE: shared text 1]
-
-[LICENSE-MIT]
-Copyright (c) 2016-2018 Mateusz Sieczko and other GilRs
-Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+[LICENSE-MIT: shared text 63]
 
 [SDL_GameControllerDB/LICENSE]
 Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
@@ -7316,33 +7289,8 @@ freely, subject to the following restrictions:
 License: Apache-2.0/MIT (used: MIT)
 Authors: Mateusz Sieczko <arvamer@gmail.com>
 Repository: https://gitlab.com/gilrs-project/gilrs
-
-[the standard MIT text (the package ships none)]
-Copyright (c) Mateusz Sieczko <arvamer@gmail.com>
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+[LICENSE-APACHE: shared text 1]
+[LICENSE-MIT: shared text 63]
 
 ----------------------------------------------------------------------------------------------------
 --- gl_generator 0.14.0 ---
@@ -7605,7 +7553,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: David Harvey-Macaulay <alteous@outlook.com>
 Repository: https://github.com/gltf-rs/gltf
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 63]
+[LICENSE-MIT: shared text 64]
 
 ----------------------------------------------------------------------------------------------------
 --- gltf-derive 1.4.1 ---
@@ -7648,7 +7596,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: David Harvey-Macaulay <alteous@outlook.com>
 Repository: https://github.com/gltf-rs/gltf
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 63]
+[LICENSE-MIT: shared text 64]
 
 ----------------------------------------------------------------------------------------------------
 --- glutin_wgl_sys 0.6.1 ---
@@ -8916,7 +8864,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----------------------------------------------------------------------------------------------------
 License: ISC (used: ISC)
 Repository: https://github.com/hannobraun/inotify-rs
-[LICENSE: shared text 72]
+[LICENSE: shared text 73]
 
 ----------------------------------------------------------------------------------------------------
 --- inotify-sys 0.1.8 ---
@@ -8924,7 +8872,7 @@ Repository: https://github.com/hannobraun/inotify-rs
 License: ISC (used: ISC)
 Authors: Hanno Braun <hb@hannobraun.de>
 Repository: https://github.com/hannobraun/inotify-sys
-[LICENSE: shared text 72]
+[LICENSE: shared text 73]
 
 ----------------------------------------------------------------------------------------------------
 --- inout 0.1.4 ---
@@ -9018,7 +8966,7 @@ at your option.
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>
 Repository: https://github.com/sunfishcode/io-lifetimes
-[COPYRIGHT: shared text 83]
+[COPYRIGHT: shared text 84]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -9029,7 +8977,7 @@ Repository: https://github.com/sunfishcode/io-lifetimes
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>
 Repository: https://github.com/sunfishcode/io-lifetimes
-[COPYRIGHT: shared text 83]
+[COPYRIGHT: shared text 84]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -10394,7 +10342,7 @@ Repository: https://github.com/linebender/raw_resource_handle
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>
 Repository: https://github.com/sunfishcode/linux-raw-sys
-[COPYRIGHT: shared text 84]
+[COPYRIGHT: shared text 85]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -10405,7 +10353,7 @@ Repository: https://github.com/sunfishcode/linux-raw-sys
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>
 Repository: https://github.com/sunfishcode/linux-raw-sys
-[COPYRIGHT: shared text 84]
+[COPYRIGHT: shared text 85]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -10530,7 +10478,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-[luau/Ast/src/Confusables.cpp: its table is derived from the Unicode Character Database (confusables.txt 10.0.0), under the Unicode license: shared text 88]
+[luau/Ast/src/Confusables.cpp: its table is derived from the Unicode Character Database (confusables.txt 10.0.0), under the Unicode license: shared text 89]
 
 ----------------------------------------------------------------------------------------------------
 --- matchers 0.2.0 ---
@@ -10538,7 +10486,7 @@ SOFTWARE.
 License: MIT (used: MIT)
 Authors: Eliza Weisman <eliza@buoyant.io>
 Repository: https://github.com/hawkw/matchers
-[LICENSE: shared text 66]
+[LICENSE: shared text 67]
 
 ----------------------------------------------------------------------------------------------------
 --- maybe-owned 0.3.4 ---
@@ -11034,7 +10982,7 @@ Repository: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 [LICENSE: shared text 40]
 [LICENSE-APACHE.md: shared text 2]
 [LICENSE-MIT.md: shared text 40]
-[LICENSE-ZLIB.md: shared text 74]
+[LICENSE-ZLIB.md: shared text 75]
 
 ----------------------------------------------------------------------------------------------------
 --- miniz_oxide 0.9.1 ---
@@ -11045,7 +10993,7 @@ Repository: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 [LICENSE: shared text 40]
 [LICENSE-APACHE.md: shared text 2]
 [LICENSE-MIT.md: shared text 40]
-[LICENSE-ZLIB.md: shared text 74]
+[LICENSE-ZLIB.md: shared text 75]
 
 ----------------------------------------------------------------------------------------------------
 --- mlua 0.12.2 ---
@@ -11122,7 +11070,7 @@ License: BSD-3-Clause OR Apache-2.0 (used: Apache-2.0)
 Authors: Radzivon Bartoshyk
 Repository: https://github.com/awxkee/moxcms.git
 [LICENSE-APACHE.md: shared text 58]
-[LICENSE.md: shared text 73]
+[LICENSE.md: shared text 74]
 
 ----------------------------------------------------------------------------------------------------
 --- mutants 0.0.3 ---
@@ -12201,7 +12149,7 @@ License: Apache-2.0/MIT (used: MIT)
 Authors: Joshua Barretto <joshua.s.barretto@gmail.com>
 Repository: https://github.com/zesterer/pollster
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 70]
+[LICENSE-MIT: shared text 71]
 
 ----------------------------------------------------------------------------------------------------
 --- pollster 1.0.1 ---
@@ -12210,7 +12158,7 @@ License: Apache-2.0/MIT (used: MIT)
 Authors: Joshua Barretto <joshua@jsbarretto.com>
 Repository: https://github.com/zesterer/pollster
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 70]
+[LICENSE-MIT: shared text 71]
 
 ----------------------------------------------------------------------------------------------------
 --- poly1305 0.8.0 ---
@@ -12270,7 +12218,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: James Munns <james@onevariable.com>
 Repository: https://github.com/jamesmunns/postcard
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 65]
+[LICENSE-MIT: shared text 66]
 
 ----------------------------------------------------------------------------------------------------
 --- postcard-derive 0.2.2 ---
@@ -12279,7 +12227,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: Lachlan Sneff <lachlan.sneff@gmail.com>, James Munns <james@onevariable.com>
 Repository: https://github.com/jamesmunns/postcard
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 65]
+[LICENSE-MIT: shared text 66]
 
 ----------------------------------------------------------------------------------------------------
 --- potential_utf 0.1.6 ---
@@ -12675,7 +12623,7 @@ License: BSD-3-Clause OR Apache-2.0 (used: Apache-2.0)
 Authors: Radzivon Bartoshyk
 Repository: https://github.com/awxkee/pxfm
 [LICENSE-APACHE.md: shared text 58]
-[LICENSE.md: shared text 73]
+[LICENSE.md: shared text 74]
 
 ----------------------------------------------------------------------------------------------------
 --- quanta 0.12.6 ---
@@ -17809,7 +17757,7 @@ DEALINGS IN THE SOFTWARE.
 License: MIT (used: MIT)
 Authors: Poly <marynczak.bartlomiej@gmail.com>
 Repository: https://github.com/PolyMeilex/rfd
-[LICENSE: shared text 81]
+[LICENSE: shared text 82]
 
 [src/backend/xdg_desktop_portal/window_identifier/LICENSE]
 MIT License
@@ -18305,7 +18253,7 @@ Repository: https://github.com/rust-lang/rustc-hash
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>
 Repository: https://github.com/bytecodealliance/rustix
-[COPYRIGHT: shared text 85]
+[COPYRIGHT: shared text 86]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -18316,7 +18264,7 @@ Repository: https://github.com/bytecodealliance/rustix
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (used: MIT)
 Authors: Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>
 Repository: https://github.com/bytecodealliance/rustix
-[COPYRIGHT: shared text 85]
+[COPYRIGHT: shared text 86]
 [LICENSE-APACHE: shared text 1]
 [LICENSE-Apache-2.0_WITH_LLVM-exception: shared text 10]
 [LICENSE-MIT: shared text 3]
@@ -18368,7 +18316,7 @@ at your option.
 License: Apache-2.0 OR ISC OR MIT (used: MIT)
 Repository: https://github.com/rustls/rustls
 [LICENSE-APACHE: shared text 1]
-[LICENSE-ISC: shared text 77]
+[LICENSE-ISC: shared text 78]
 [LICENSE-MIT: shared text 62]
 
 ----------------------------------------------------------------------------------------------------
@@ -18388,7 +18336,7 @@ These are included as LICENSE-APACHE, LICENSE-MIT and LICENSE-ISC
 respectively.  You may use this software under the terms of any
 of these licenses, at your option.
 [LICENSE-APACHE: shared text 1]
-[LICENSE-ISC: shared text 77]
+[LICENSE-ISC: shared text 78]
 [LICENSE-MIT: shared text 62]
 
 ----------------------------------------------------------------------------------------------------
@@ -18794,7 +18742,7 @@ DEALINGS IN THE SOFTWARE.
 License: MIT (used: MIT)
 Authors: Poly <marynczak.bartlomiej@gmail.com>
 Repository: https://github.com/PolyMeilex/sctk-adwaita
-[LICENSE: shared text 81]
+[LICENSE: shared text 82]
 
 ----------------------------------------------------------------------------------------------------
 --- seahash 4.1.0 ---
@@ -19320,7 +19268,7 @@ Repository: https://github.com/RustCrypto/hashes
 License: MIT (used: MIT)
 Authors: Eliza Weisman <eliza@buoyant.io>
 Repository: https://github.com/hawkw/sharded-slab
-[LICENSE: shared text 66]
+[LICENSE: shared text 67]
 
 ----------------------------------------------------------------------------------------------------
 --- signature 2.2.0 ---
@@ -19329,7 +19277,7 @@ License: Apache-2.0 OR MIT (used: MIT)
 Authors: RustCrypto Developers
 Repository: https://github.com/RustCrypto/traits/tree/master/signature
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 64]
+[LICENSE-MIT: shared text 65]
 
 ----------------------------------------------------------------------------------------------------
 --- simd-adler32 0.3.10 ---
@@ -19569,7 +19517,7 @@ Repository: https://github.com/rust-lang/socket2
 License: MIT (used: MIT)
 Authors: Mathijs van de Nes <git@mathijs.vd-nes.nl>, John Ericson <git@JohnEricson.me>, Joshua Barretto <joshua.s.barretto@gmail.com>
 Repository: https://codeberg.org/zesterer/spin
-[LICENSE: shared text 86]
+[LICENSE: shared text 87]
 
 ----------------------------------------------------------------------------------------------------
 --- spinning_top 0.3.0 ---
@@ -19773,7 +19721,7 @@ SOFTWARE.
 License: MIT (used: MIT)
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Repository: https://github.com/Peternator7/strum
-[LICENSE: shared text 80]
+[LICENSE: shared text 81]
 
 ----------------------------------------------------------------------------------------------------
 --- strum_macros 0.26.4 ---
@@ -19781,7 +19729,7 @@ Repository: https://github.com/Peternator7/strum
 License: MIT (used: MIT)
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Repository: https://github.com/Peternator7/strum
-[LICENSE: shared text 80]
+[LICENSE: shared text 81]
 
 ----------------------------------------------------------------------------------------------------
 --- subtle 2.6.1 ---
@@ -20286,7 +20234,7 @@ License: MIT (used: MIT)
 Authors: Tokio Contributors <team@tokio.rs>
 Repository: https://github.com/tokio-rs/tracing
 [LICENSE: shared text 26]
-[src/spin/LICENSE: shared text 86]
+[src/spin/LICENSE: shared text 87]
 
 ----------------------------------------------------------------------------------------------------
 --- tracing-log 0.2.0 ---
@@ -21169,7 +21117,7 @@ Authors: David Tolnay <dtolnay@gmail.com>
 Repository: https://github.com/dtolnay/unicode-ident
 [LICENSE-APACHE: shared text 2]
 [LICENSE-MIT: shared text 3]
-[LICENSE-UNICODE: shared text 88]
+[LICENSE-UNICODE: shared text 89]
 
 ----------------------------------------------------------------------------------------------------
 --- unicode-segmentation 1.13.3 ---
@@ -21541,7 +21489,7 @@ Repository: https://github.com/contain-rs/vec-map
 License: Apache-2.0 OR MIT (used: MIT)
 Repository: https://github.com/linebender/vello
 [LICENSE-APACHE: shared text 2]
-[LICENSE-MIT: shared text 76]
+[LICENSE-MIT: shared text 77]
 
 ----------------------------------------------------------------------------------------------------
 --- vello_cpu 0.1.0 ---
@@ -21549,7 +21497,7 @@ Repository: https://github.com/linebender/vello
 License: Apache-2.0 OR MIT (used: MIT)
 Repository: https://github.com/linebender/vello
 [LICENSE-APACHE: shared text 2]
-[LICENSE-MIT: shared text 76]
+[LICENSE-MIT: shared text 77]
 
 ----------------------------------------------------------------------------------------------------
 --- wayland-backend 0.3.17 ---
@@ -22808,7 +22756,7 @@ Repository: https://github.com/unicode-org/icu4x
 License: MIT (used: MIT)
 Authors: myrrlyn <self@myrrlyn.dev>
 Repository: https://github.com/myrrlyn/wyz
-[LICENSE.txt: shared text 78]
+[LICENSE.txt: shared text 79]
 
 ----------------------------------------------------------------------------------------------------
 --- x11-dl 2.21.0 ---
@@ -22825,7 +22773,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: Uli Schlachter <psychon@znc.in>, Eduardo Sánchez Muñoz <eduardosm-dev@e64.io>, notgull <jtnunley01@gmail.com>
 Repository: https://github.com/psychon/x11rb
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 75]
+[LICENSE-MIT: shared text 76]
 
 ----------------------------------------------------------------------------------------------------
 --- x11rb-protocol 0.13.2 ---
@@ -22834,7 +22782,7 @@ License: MIT OR Apache-2.0 (used: MIT)
 Authors: Uli Schlachter <psychon@znc.in>, Eduardo Sánchez Muñoz <eduardosm-dev@e64.io>, notgull <jtnunley01@gmail.com>
 Repository: https://github.com/psychon/x11rb
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 75]
+[LICENSE-MIT: shared text 76]
 
 ----------------------------------------------------------------------------------------------------
 --- x25519-dalek 2.0.1 ---
@@ -23353,7 +23301,7 @@ License: Apache-2.0 OR MIT (used: MIT)
 Authors: The RustCrypto Project Developers
 Repository: https://github.com/RustCrypto/utils
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 68]
+[LICENSE-MIT: shared text 69]
 
 ----------------------------------------------------------------------------------------------------
 --- zerotrie 0.2.5 ---
@@ -23393,8 +23341,8 @@ Repository: https://github.com/dtolnay/zmij
 License: MIT OR Apache-2.0 OR Zlib (used: MIT)
 Repository: https://github.com/etemesi254/zune-image
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 82]
-[LICENSE-ZLIB: shared text 89]
+[LICENSE-MIT: shared text 83]
+[LICENSE-ZLIB: shared text 90]
 
 ----------------------------------------------------------------------------------------------------
 --- zune-inflate 0.2.54 ---
@@ -23409,15 +23357,15 @@ License: MIT OR Apache-2.0 OR Zlib (used: MIT)
 Authors: caleb <etemesicaleb@gmail.com>
 Repository: https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 [LICENSE-APACHE: shared text 1]
-[LICENSE-MIT: shared text 82]
-[LICENSE-ZLIB: shared text 89]
+[LICENSE-MIT: shared text 83]
+[LICENSE-ZLIB: shared text 90]
 
 ====================================================================================================
 SHARED TEXTS
 ====================================================================================================
 
 ----------------------------------------------------------------------------------------------------
-Shared text 1 (186 uses)
+Shared text 1 (187 uses)
 ----------------------------------------------------------------------------------------------------
 Apache License
                         Version 2.0, January 2004
@@ -28252,7 +28200,8 @@ DEALINGS IN THE SOFTWARE.
 ----------------------------------------------------------------------------------------------------
 Shared text 63 (2 uses)
 ----------------------------------------------------------------------------------------------------
-Copyright (c) 2017 The gltf Library Developers
+Copyright (c) 2016-2018 Mateusz Sieczko and other GilRs
+Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -28281,7 +28230,7 @@ DEALINGS IN THE SOFTWARE.
 ----------------------------------------------------------------------------------------------------
 Shared text 64 (2 uses)
 ----------------------------------------------------------------------------------------------------
-Copyright (c) 2018-2023 RustCrypto Developers
+Copyright (c) 2017 The gltf Library Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -28310,7 +28259,7 @@ DEALINGS IN THE SOFTWARE.
 ----------------------------------------------------------------------------------------------------
 Shared text 65 (2 uses)
 ----------------------------------------------------------------------------------------------------
-Copyright (c) 2019 Anthony James Munns
+Copyright (c) 2018-2023 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -28339,6 +28288,35 @@ DEALINGS IN THE SOFTWARE.
 ----------------------------------------------------------------------------------------------------
 Shared text 66 (2 uses)
 ----------------------------------------------------------------------------------------------------
+Copyright (c) 2019 Anthony James Munns
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+----------------------------------------------------------------------------------------------------
+Shared text 67 (2 uses)
+----------------------------------------------------------------------------------------------------
 Copyright (c) 2019 Eliza Weisman
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28360,7 +28338,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 67 (2 uses)
+Shared text 68 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) 2019-2023 The RustCrypto Project Developers
 
@@ -28389,7 +28367,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 68 (2 uses)
+Shared text 69 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) 2019-2026 The RustCrypto Project Developers
 
@@ -28418,7 +28396,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 69 (2 uses)
+Shared text 70 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) 2020 Ashish Myles and contributors
 
@@ -28447,7 +28425,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 70 (2 uses)
+Shared text 71 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) 2020-2021 Joshua Barretto
 
@@ -28476,7 +28454,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 71 (2 uses)
+Shared text 72 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) 2024 Orson Peters
 
@@ -28499,7 +28477,7 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 72 (2 uses)
+Shared text 73 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) Hanno Braun and contributors
 
@@ -28516,7 +28494,7 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 73 (2 uses)
+Shared text 74 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright (c) Radzivon Bartoshyk. All rights reserved.
 
@@ -28546,7 +28524,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 74 (2 uses)
+Shared text 75 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright 2013-2014 RAD Game Tools and Valve Software
 Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
@@ -28564,7 +28542,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 75 (2 uses)
+Shared text 76 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright 2019 x11rb Contributers
 
@@ -28593,7 +28571,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 76 (2 uses)
+Shared text 77 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Copyright 2020 the Vello Authors
 
@@ -28622,7 +28600,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 77 (2 uses)
+Shared text 78 (2 uses)
 ----------------------------------------------------------------------------------------------------
 ISC License (ISC)
 Copyright (c) 2016, Joseph Birr-Pixton <jpixton@gmail.com>
@@ -28641,7 +28619,7 @@ ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 78 (2 uses)
+Shared text 79 (2 uses)
 ----------------------------------------------------------------------------------------------------
 MIT License
 
@@ -28666,7 +28644,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 79 (2 uses)
+Shared text 80 (2 uses)
 ----------------------------------------------------------------------------------------------------
 MIT License
 
@@ -28679,7 +28657,7 @@ The above copyright notice and this permission notice (including the next paragr
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 80 (2 uses)
+Shared text 81 (2 uses)
 ----------------------------------------------------------------------------------------------------
 MIT License
 
@@ -28704,7 +28682,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 81 (2 uses)
+Shared text 82 (2 uses)
 ----------------------------------------------------------------------------------------------------
 MIT License
 
@@ -28729,7 +28707,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 82 (2 uses)
+Shared text 83 (2 uses)
 ----------------------------------------------------------------------------------------------------
 MIT License
 
@@ -28754,7 +28732,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 83 (2 uses)
+Shared text 84 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -28787,7 +28765,7 @@ is licensed under:
 at your option.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 84 (2 uses)
+Shared text 85 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -28820,7 +28798,7 @@ is licensed under:
 at your option.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 85 (2 uses)
+Shared text 86 (2 uses)
 ----------------------------------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -28853,7 +28831,7 @@ is licensed under:
 at your option.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 86 (2 uses)
+Shared text 87 (2 uses)
 ----------------------------------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -28878,7 +28856,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 87 (2 uses)
+Shared text 88 (2 uses)
 ----------------------------------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -28903,7 +28881,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 88 (2 uses)
+Shared text 89 (2 uses)
 ----------------------------------------------------------------------------------------------------
 UNICODE LICENSE V3
 
@@ -28946,7 +28924,7 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
 ----------------------------------------------------------------------------------------------------
-Shared text 89 (2 uses)
+Shared text 90 (2 uses)
 ----------------------------------------------------------------------------------------------------
 zlib License
 

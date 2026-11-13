@@ -234,7 +234,7 @@ fn child_runs_a_server_with_the_default_discovery() {
         return;
     }
     let mut config = Config::defaults();
-    config.bind = Ipv4Addr::LOCALHOST.into();
+    config.bind = Ipv4Addr::new(127, 0, 39, 1).into();
     config.port = 0;
     let options = ServerOptions {
         config,

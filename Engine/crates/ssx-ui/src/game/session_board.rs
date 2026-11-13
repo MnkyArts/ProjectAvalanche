@@ -155,10 +155,9 @@ pub fn update(
     v.set_bool(id::EXPLORE_LEADERBOARD_IS_ACTIVE, true);
 }
 
-// TODO(guess): a round's riders take the medal labels by their place among every rider (gold, silver, bronze for the
-// first three), where the game's rows give them to its racers and medal ghosts by the ghosts above (0x82488230 /
-// 0x82487F60): the game has no board of more riders than its slots; settle: none (the game's online races are not on
-// the disc).
+// PORT(choice): a round's riders take the medal labels by their place among every rider (gold, silver, bronze for the
+// first three); the game's rows give them to its racers and medal ghosts by the ghosts above (0x82488230 / 0x82487F60),
+// and the game has no board of more riders than its slots (its online races are not on the disc).
 fn medal(kind: u8, place: usize) -> i32 {
     match (kind, place) {
         (2, _) => -1,

@@ -5,104 +5,23 @@ mod tests;
 use std::collections::BTreeMap;
 
 use super::data::{Description, StoreTables, StoreTemplate};
+use super::random::{GameRandom, Mt19937, Source};
 
-#[derive(Clone, Debug)]
-pub struct Mt19937 {
-    mt: Vec<u32>,
-    index: usize,
-}
-
-impl Mt19937 {
-    pub fn new(seed: u32) -> Self {
-        let mut mt = vec![0u32; 624];
-        mt[0] = seed;
-        for i in 1..624 {
-            mt[i] = 1_812_433_253u32.wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 30)).wrapping_add(i as u32);
-        }
-        Mt19937 { mt, index: 624 }
+pub(crate) trait StoreDraws: GameRandom {
+    fn below_i(&mut self, n: i64) -> i64 {
+        i64::from(self.below(n as u32))
     }
 
-    pub fn seeded(seed: u32) -> Self {
-        let mut mt = vec![0u32; 624];
-        let mut s = seed | 1;
-        for w in mt.iter_mut() {
-            let m = s.wrapping_mul(69_069);
-            *w = (s & 0xFFFF_0000) | (m >> 16);
-            s = m.wrapping_mul(69_069).wrapping_add(69_070);
-        }
-        let mut g = Mt19937 { mt, index: 624 };
-        g.twist();
-        g
+    fn pick(&mut self, n: usize) -> usize {
+        if n > 1 { self.below(n as u32) as usize } else { 0 }
     }
 
-    fn twist(&mut self) {
-        for i in 0..624 {
-            let y = (self.mt[i] & 0x8000_0000) | (self.mt[(i + 1) % 624] & 0x7FFF_FFFF);
-            let mut v = self.mt[(i + 397) % 624] ^ (y >> 1);
-            if y & 1 != 0 {
-                v ^= 0x9908_B0DF;
-            }
-            self.mt[i] = v;
-        }
-        self.index = 0;
-    }
-
-    pub fn next_u32(&mut self) -> u32 {
-        if self.index >= 624 {
-            self.twist();
-        }
-        let mut y = self.mt[self.index];
-        self.index += 1;
-        y ^= y >> 11;
-        y ^= (y << 7) & 0x9D2C_5680;
-        y ^= (y << 15) & 0xEFC6_0000;
-        y ^ (y >> 18)
-    }
-
-    pub fn below(&mut self, n: i64) -> i64 {
-        ((u64::from(self.next_u32()) * n.max(0) as u64) >> 32) as i64
-    }
-
-    pub fn pick(&mut self, n: usize) -> usize {
-        if n > 1 { self.below(n as i64) as usize } else { 0 }
-    }
-
-    pub fn range(&mut self, lo: i64, hi: i64) -> i64 {
-        if lo < hi { lo + self.below(hi - lo + 1) } else { lo }
-    }
-
-    pub fn range_f(&mut self, lo: f32, hi: f32) -> f32 {
-        let x = f64::from(self.next_u32() as i32) * 2.328_306_436_538_696_3e-10 + 0.5;
-        (x * f64::from(hi - lo) + f64::from(lo)) as f32
+    fn range(&mut self, lo: i64, hi: i64) -> i64 {
+        if lo < hi { lo + self.below_i(hi - lo + 1) } else { lo }
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum StoreRandom {
-    Own(Mt19937),
-    Global,
-}
-
-impl StoreRandom {
-    fn draw<R>(&mut self, f: impl FnOnce(&mut Mt19937) -> R) -> R {
-        match self {
-            StoreRandom::Own(g) => f(g),
-            StoreRandom::Global => super::random::with(f),
-        }
-    }
-
-    pub fn below(&mut self, n: i64) -> i64 {
-        self.draw(|g| g.below(n))
-    }
-
-    pub fn pick(&mut self, n: usize) -> usize {
-        self.draw(|g| g.pick(n))
-    }
-
-    pub fn range(&mut self, lo: i64, hi: i64) -> i64 {
-        self.draw(|g| g.range(lo, hi))
-    }
-}
+impl<T: GameRandom + ?Sized> StoreDraws for T {}
 
 pub const KINDS: usize = 5;
 pub const KIND_SUIT: i64 = 0;
@@ -199,31 +118,56 @@ pub struct Store {
     pub next_id: u32,
     pub special_due_ms: i64,
     pub last_bought: Option<(u32, u32)>,
-    pub rng: StoreRandom,
+    pub shown_special: Option<(usize, u32)>,
+    pub rng: Source,
 }
 
 impl Store {
     pub fn new(seed: u32) -> Self {
-        Self::with(StoreRandom::Own(Mt19937::new(seed)))
+        Self::with(Source::Own(Mt19937::new(seed)))
     }
 
     pub fn global() -> Self {
-        Self::with(StoreRandom::Global)
+        Self::with(Source::Global)
     }
 
-    fn with(rng: StoreRandom) -> Self {
+    fn with(rng: Source) -> Self {
         Store {
             stock: Default::default(),
             offered: Default::default(),
             next_id: FIRST_STOCK_ID,
             special_due_ms: FIRST_SPECIAL_MS,
             last_bought: None,
+            shown_special: None,
             rng,
         }
     }
 
     pub fn find(&self, kind: usize, id: u32) -> Option<&StoreItem> {
         self.stock.get(kind)?.iter().find(|i| i.id == id)
+    }
+
+    pub fn show_special(&mut self, kind: usize, id: u32) {
+        self.shown_special = Some((kind, id));
+    }
+
+    pub fn clear_shown_special(&mut self) {
+        self.shown_special = None;
+    }
+
+    pub fn shown_special_left(&self, now_ms: i64) -> Option<i64> {
+        let (kind, id) = self.shown_special?;
+        if id < FIRST_STOCK_ID {
+            return None;
+        }
+        let left = self.find(kind, id)?.expires_ms - now_ms;
+        Some(left.max(0))
+    }
+
+    pub fn drop_expired_specials(&mut self, kind: usize, now_ms: i64) {
+        if let Some(list) = self.stock.get_mut(kind) {
+            list.retain(|i| !i.special || i.expires_ms >= now_ms);
+        }
     }
 
     // TODO(guess): an expired item with the flag +0x33 also leaves its +0x4C in a 25-entry list at +0x6C (no reader traced); settle: the readers of the store's +0x6C…+0x70.
@@ -310,7 +254,7 @@ pub fn fits_rider(data: &StoreData, item: &mut StoreItem, rider: u32) -> bool {
         }
     }
     if ok {
-        item.descriptions = [new[0], 0];
+        item.descriptions = new;
         item.charlock = rider;
     }
     ok

@@ -33,7 +33,8 @@ impl HudText {
     }
 
     fn prefix(&self, n: usize) -> String {
-        // TODO(guess): the game cuts UTF-8 bytes (an EASTL substring), the port characters (the HUD's texts are ASCII); settle: none (identical on ASCII).
+        // PORT(choice): the port cuts characters, the game UTF-8 bytes (an EASTL substring); identical on the HUD's
+        // texts, which are ASCII.
         self.text.chars().take(n).collect()
     }
 

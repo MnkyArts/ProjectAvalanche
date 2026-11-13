@@ -106,9 +106,9 @@ pub(super) enum PlaceError {
     Name(String),
 }
 
-// TODO(guess): the first instance with room takes a joining player, a port choice (the join names no instance; MTA's
-// dimensions and FiveM's routing buckets are the scripts' choice); settle: the resources' placement API (phases 6+)
-// and the browser's instance choice once servers run several.
+// PORT(choice): the first instance with room takes a joining player (the join names no instance; MTA's dimensions and
+// FiveM's routing buckets are the scripts' choice); tuning: the resources' placement API (phases 6+) and the browser's
+// instance choice once servers run several; the original has no real-time multiplayer.
 pub(super) fn place(
     commands: &mut Commands,
     instances: Option<&mut Instances>,

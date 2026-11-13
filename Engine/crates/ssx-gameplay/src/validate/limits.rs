@@ -13,37 +13,38 @@ pub const SAMPLE_INTERVAL_TICKS: f64 = 2.0;
 
 pub const VELOCITY_ENCODING: f32 = 0.001 + 1.0 / 1024.0 + 1.0 / 511.0;
 
-// TODO(guess): 1.163 — the honest largest horizontal speeds 1.4319, 1.4050, 1.3778 m/tick against the tuning's 1.2781
-// (with the encoding): limit 1.4860 (321 km/h); settle: the collision correction's largest displacement in one execution
-// (the 24-ray fan's push-out, decoded in the riding logic).
+// PORT(choice): 1.163 — the honest largest horizontal speeds 1.4319, 1.4050, 1.3778 m/tick against the tuning's 1.2781
+// (with the encoding): limit 1.4860 (321 km/h); tuning: the collision correction's largest displacement in one
+// execution (the 24-ray fan's push-out, decoded in the riding logic); the original has no validation.
 pub const HORIZONTAL_MARGIN: f32 = 1.163;
 
-// TODO(guess): 1.165 m whole, 1.104 m horizontal — the honest largest steps beyond the path are 1.0203, 1.0203, 0.8762 m
-// whole (a collision's push up, exp_rockies_robson_drop_1_survive) and 0.9876, 0.8713, 0.8713 m horizontal (3.9 M sample
-// pairs); the velocity change's share 1.0 (its whole travel); settle: the collision correction's largest push in one
-// execution (the 24-ray fan's push-out).
+// PORT(choice): 1.165 m whole, 1.104 m horizontal — the honest largest steps beyond the path are 1.0203, 1.0203, 0.8762
+// m whole (a collision's push up, exp_rockies_robson_drop_1_survive) and 0.9876, 0.8713, 0.8713 m horizontal (3.9 M
+// sample pairs); the velocity change's share 1.0 (its whole travel); tuning: the collision correction's largest push in
+// one execution (the 24-ray fan's push-out); the original has no validation.
 pub const STEP_SLACK_M: f32 = 1.165;
 pub const STEP_SLACK_HORIZONTAL_M: f32 = 1.104;
 pub const STEP_VELOCITY_CHANGE: f32 = 1.0;
 
-// TODO(guess): 0.727 m from 4 m cells — the honest largest landings 0.5505 m (the network proof on the execution
-// counts, 2026-10-31), 0.4644 m (the first network proof, a lost sample's gap), 0.3741 m (offline) from the cells of the
-// path ridden (49 971 warps, rewinds and respawns offline, 7 086 in that proof): the largest plus its distance from the
-// third (0.555 m before that proof); the cell a port choice (65 536 cells of an hour's run); settle: the rewind
-// buffer's snapshots on the wire (verified runs, phase 11).
+// PORT(choice): 0.727 m from 4 m cells — the honest largest landings 0.5505 m (the network proof on the execution
+// counts, 2026-10-31), 0.4644 m (the first network proof, a lost sample's gap), 0.3741 m (offline) from the cells of
+// the path ridden (49 971 warps, rewinds and respawns offline, 7 086 in that proof): the largest plus its distance from
+// the third (0.555 m before that proof); the cell a port choice too (65 536 cells of an hour's run); tuning: the rewind
+// buffer's snapshots on the wire (verified runs, phase 11); the original has no validation.
 pub const REACH_M: f32 = 0.727;
 pub const GRID_CELL_M: f32 = 4.0;
-// TODO(guess): 65 536 cells (about 1.5 MB a rider at most), a port bound above an hour's run; settle: the longest
-// round a server allows (`round_limit`'s 3 600 s).
+// PORT(choice): 65 536 cells (about 1.5 MB a rider at most), a port bound above an hour's run; tuning: the longest
+// round a server allows (`round_limit`'s 3 600 s); the original has no validation.
 pub const MAX_PLACES: usize = 65_536;
 
-// TODO(guess): two executions of the fastest fall (2 × 2 ticks × 1.176 m/tick = 4.7 m); the honest splits lie at most
-// 0.0007 m above their line and none deeper than one execution; settle: the client's executions without a block
-// counted (a respawn's), two in a row never seen.
+// PORT(choice): two executions of the fastest fall (2 × 2 ticks × 1.176 m/tick = 4.7 m); the honest splits lie at most
+// 0.0007 m above their line and none deeper than one execution; tuning: the client's executions without a block counted
+// (a respawn's), two in a row never seen; the original has no validation.
 pub const SPLIT_EXECUTIONS: f32 = 2.0;
 
-// TODO(guess): 0.501 m — the honest finishes' paths came at most 0.8473, 0.8441, 0.8433 m from the `end` volume when
-// their finish was checked (694 finishes); settle: a touch flag on the wire (the score manager's finish execution).
+// PORT(choice): 0.501 m — the honest finishes' paths came at most 0.8473, 0.8441, 0.8433 m from the `end` volume when
+// their finish was checked (694 finishes); tuning: a touch flag on the wire (the score manager's finish execution); the
+// original has no validation.
 pub const TOUCH_MARGIN_M: f32 = 0.501;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,8 +88,8 @@ impl Start {
 
 pub const CLOCK_BEHIND_TICKS: f64 = 0.03;
 
-// TODO(guess): 0.05 m in a step of two executions (0.0125 m per tick, below the samples' quantisation of a slow
-// rider's speed); settle: the dilation on the wire (`FLT_TimeDilation` in the sample).
+// PORT(choice): 0.05 m in a step of two executions (0.0125 m per tick, below the samples' quantisation of a slow
+// rider's speed); tuning: the dilation on the wire (`FLT_TimeDilation` in the sample); the original has no validation.
 pub const DILATION_MIN_TRAVEL_M: f32 = 0.05;
 
 pub fn clock_step_s() -> f64 {
@@ -137,16 +138,16 @@ pub struct Limits {
     pub map: bool,
 }
 
-// TODO(guess): 0.0042 m — the honest starts' farthest beyond the envelope 0.0021 m (alps0101 layout halfway down: a
+// PORT(choice): 0.0042 m — the honest starts' farthest beyond the envelope 0.0021 m (alps0101 layout halfway down: a
 // random gear with a random input sequence), 0.0000 m at the eleven other spots (22 032 starts: 8 spots of the alps0101
 // layout and 4 of the template slope, 27 gears — the envelope's 3 and 24 random — × 34 inputs — its 10 held ones and 24
-// random sequences — × 2 riders); settle: the server re-simulating each rider's start with its own gear and inputs
-// (phase 11's verified runs: the input log).
+// random sequences — × 2 riders); tuning: the server re-simulating each rider's start with its own gear and inputs
+// (phase 11's verified runs: the input log); the original has no validation.
 pub const MAP_HANDOVER_MARGIN_M: f32 = 0.0042;
-// TODO(guess): 0.0096, 0.0187, 0.0368, 0.0329 m — the spots' farthest beyond the envelope after 1, 2, 3 and 4
+// PORT(choice): 0.0096, 0.0187, 0.0368, 0.0329 m — the spots' farthest beyond the envelope after 1, 2, 3 and 4
 // executions 0.0074 / 0.0147 / 0.0292 / 0.0291 m, the third 0.0052 / 0.0107 / 0.0216 / 0.0253 m (the same 22 032
 // starts; the farthest on the steep spots of the layout, growing by about 7 mm an execution: a random gear's speed
-// beyond the envelope's three); settle: as `MAP_HANDOVER_MARGIN_M`.
+// beyond the envelope's three); tuning: as `MAP_HANDOVER_MARGIN_M`; the original has no validation.
 pub const MAP_FIRST_MARGINS_M: [f32; START_FIRST] = [0.0096, 0.0187, 0.0368, 0.0329];
 
 #[derive(Clone, Debug)]

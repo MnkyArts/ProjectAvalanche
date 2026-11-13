@@ -63,8 +63,9 @@ impl<'de> Deserialize<'de> for PlayerName {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlayerAppearance(pub Appearance);
 
-// TODO(guess): 9 999 ms, four digits of the players screen's ping column (netcode ends a link after 10 s without a
-// packet, the connect token's timeout); settle: the column's width and the round trips of phase 4's public servers.
+// PORT(choice): 9 999 ms, four digits of the players screen's ping column (netcode ends a link after 10 s without a
+// packet, the connect token's timeout); tuning: the column's width and the round trips of phase 4's public servers; the
+// original has no real-time multiplayer.
 pub const MAX_PING_MS: u16 = 9_999;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]

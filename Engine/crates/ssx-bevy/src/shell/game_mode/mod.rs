@@ -26,6 +26,7 @@ use crate::shell::game_level;
 use crate::shell::level::{self, LevelData, ShadingArg};
 use crate::ui;
 
+mod backdrop;
 mod check;
 mod display;
 mod frame;
@@ -42,7 +43,7 @@ pub use check::{UiPipelinesReady, WorldCheck, report_pipelines, screenshot, ui_c
 pub use display::{DisplayCli, DisplayState, WindowSpec, alt_held, print_displays};
 use frame::{shell_input, shell_step};
 pub use live::shown_text;
-pub use pads::{PadSlots, PadState, StickDpad, pad_presses, pads_frame};
+pub use pads::{PadSlots, PadState, ScriptPad, StickDpad, pad_presses, pads_frame};
 pub use save::SaveSlot;
 pub use window::{WindowHidden, hidden_frame};
 use world::shell_world;
@@ -93,6 +94,9 @@ pub struct GameArgs {
     #[cfg(feature = "net")]
     pub fake_servers: Option<usize>,
     pub mod_dev: Option<PathBuf>,
+    pub dlc_root: Option<PathBuf>,
+    pub tuner: Option<PathBuf>,
+    pub tu_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -258,6 +262,7 @@ enum WorldOp {
 struct Shell {
     host: Host,
     big_root: PathBuf,
+    speech_lang: crate::audio::sfx_input::SpeechLanguage,
     stage: Stage,
     save: SaveSlot,
     stat_names: std::sync::Arc<std::collections::BTreeMap<u32, String>>,
@@ -294,6 +299,7 @@ struct Shell {
     stick_dpad: StickDpad,
     movie_sprite: Entity,
     movie_camera: Entity,
+    backdrop: backdrop::BackdropMovie,
     ready_frames: u32,
     started: bool,
     hold: u32,
@@ -327,8 +333,32 @@ const LAUNCH_BOOT_WAIT: f64 = 20.0;
 
 pub fn run(a: GameArgs) -> Result<AppExit> {
     use ssx_ui::game::fe::host::parse_script;
+    // PORT(choice): `--lang` takes any of the six text languages. The executable takes the console's (0x82563068 /
+    // 0x82569608: XGetLanguage 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, else English), then in
+    // the Japanese game region (XGetGameRegion 0x0101 → 0x837FB23C = 2) every language but English and Japanese becomes
+    // Japanese and in the other regions Japanese becomes English, so Japanese never ran beside the European four; a PC
+    // has no console region.
     let lang = Language::parse(&a.lang).with_context(|| format!("--lang {}", a.lang))?;
+    let speech_lang = crate::audio::sfx_input::SpeechLanguage::of(Some(lang));
     let (mods, dev) = mount_mods(&a);
+    let dlc = a.dlc_root.as_ref().map(|root| ssx_assets::content::GameContent::of(&a.big_root).mount_dlc(root));
+    let save_path = a.save.clone().unwrap_or_else(default_save_path);
+    let tuner_note = match ssx_assets::content::tuner::load(a.tuner.as_deref(), Some(&save_path)) {
+        Ok(Some(loaded)) => {
+            let line = loaded.line();
+            ssx_assets::data_roots::set_tuner(Some(ssx_assets::data_roots::TunerVault::from_pack(
+                &loaded.pack,
+                loaded.source,
+            )));
+            line
+        }
+        Ok(None) => "tuner: off (no tuner pack: 10 levels)".to_string(),
+        Err(e) => format!("ERROR: tuner: not used ({e:#}): 10 levels"),
+    };
+    let tu = a
+        .tu_root
+        .as_ref()
+        .map(|root| ssx_assets::content::GameContent::of(&a.big_root).mount_title_update(root, &a.big_root));
     #[cfg(feature = "scripts")]
     let scripts = crate::script::ScriptPlugin {
         big_root: a.big_root.clone(),
@@ -353,10 +383,9 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
     };
     crate::render::fx_states::init(&a.big_root);
     let (mut game, scene) = boot_ui(&a.big_root, lang, a.classic_front_end, a.window.expected_display())?;
-    // TODO(guess): a port choice — a PC start has no launch data (the Xbox's `XamLoaderGetLaunchData`, which
-    // 0x82366560 reads and the UI table's start stores as `BOOT_SkipIntro` at 0x823820D4); the option stands in for the
-    // one byte the game's restart after a sign-out hands itself (1, written at 0x82366F64: no boot movie, the start
-    // screen with its intro); settle: none (the console reads its launch data at every start).
+    // PORT(choice): a PC start has no launch data (the Xbox's `XamLoaderGetLaunchData`, which 0x82366560 reads and the
+    // UI table's start stores as `BOOT_SkipIntro` at 0x823820D4); the option stands in for the one byte the game's
+    // restart after a sign-out hands itself (1, written at 0x82366F64: no boot movie, the start screen with its intro).
     game.set_launch_data(a.boot_movie);
     let mut fe = ssx_ui::game::fe::FrontEnd::with_files(
         mount(&a.big_root, a.classic_front_end)?.as_ref(),
@@ -374,8 +403,9 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
     }
     let schema = SaveSchema::load(&a.big_root, &fe.career)?;
     let stat_names = std::sync::Arc::new(ssx_assets::career::save::modelled_stats(&schema));
-    let (save, profile, note) = SaveSlot::load(a.save.clone().unwrap_or_else(default_save_path), schema)?;
+    let (save, mut profile, note) = SaveSlot::load(save_path, schema)?;
     let mut notes = vec![note];
+    notes.push(tuner_note);
     if a.boot_movie != ssx_assets::port_options::BootMovie::default() {
         notes.push(format!("options: boot movie {} (port option; the game plays it at every start)", a.boot_movie));
     }
@@ -386,6 +416,15 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         notes.push(format!(
             "options: menu focus {} (port option; the game opens its menus on the first item)",
             a.menu_focus
+        ));
+    }
+    notes.extend(profile.apply_unlockables(&fe.career));
+    for problem in &fe.career.unlock_problems {
+        notes.push(format!("dlc: {problem}"));
+    }
+    if let Some((class, count)) = fe.career.unknown_classes.first() {
+        notes.push(format!(
+            "dlc: {count} collections of class {class:#010x} are left out (the disc's schema does not define it)"
         ));
     }
     fe.saveload.load_error = save.damaged.then_some(ssx_ui::game::fe::saveload::LoadError::Corrupt);
@@ -452,6 +491,26 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         }
         None => info!("mods: off (--no-mods)"),
     });
+    app.add_systems(Startup, move || match &dlc {
+        Some(report) => {
+            for line in report.lines() {
+                let text = line.to_string();
+                let problem = text.contains("skipped") || text.contains("not mounted") || text.contains("NOT READY");
+                if problem { warn!("{line}") } else { info!("{line}") }
+            }
+        }
+        None => info!("dlc: off (--dlc-root names the installed packages)"),
+    });
+    app.add_systems(Startup, move || match &tu {
+        Some(report) => {
+            for line in &report.notes {
+                let text = ssx_core::text::Text::from(line.clone());
+                let problem = line.contains("skipped") || line.contains("not ready");
+                if problem { warn!("{text}") } else { info!("{text}") }
+            }
+        }
+        None => info!("title update: off (--tu-root names the installed updates)"),
+    });
     app.add_systems(Startup, move || match &globe_note {
         Some(Ok(line)) => info!("globe assets: {line}"),
         Some(Err(e)) => error!("globe assets: {e}"),
@@ -497,9 +556,11 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         ))
         .id();
     app.insert_resource(GameUiRes(game))
+        .insert_resource(speech_lang)
         .insert_resource(Shell {
             host,
             big_root: a.big_root.clone(),
+            speech_lang,
             stage: Stage::Menus,
             save,
             stat_names,
@@ -540,6 +601,7 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
             stick_dpad: StickDpad::default(),
             movie_sprite,
             movie_camera,
+            backdrop: backdrop::BackdropMovie::new(ssx_assets::content::GameContent::of(&a.big_root)),
             ready_frames: 0,
             started: false,
             hold: 0,

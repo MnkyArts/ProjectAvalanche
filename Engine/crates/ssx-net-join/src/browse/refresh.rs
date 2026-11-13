@@ -11,8 +11,9 @@ use ssx_net_proto::players::PlayerList;
 use super::address::ServerAddress;
 use super::query::{InfoAnswer, ask_icon, ask_info, ask_players};
 
-// TODO(guess): 8 threads and 256 waiting questions (a tab of 100 favourites refreshed in about 13 s when every one
-// times out after 4 s; MTA queries 10 a second); settle: the browser over real lists (phase 5).
+// PORT(choice): 8 threads and 256 waiting questions (a tab of 100 favourites refreshed in about 13 s when every one
+// times out after 4 s; MTA queries 10 a second); tuning: the browser over real lists (phase 5); the original has no
+// server browser.
 pub const WORKERS: usize = 8;
 pub const QUEUE: usize = 256;
 pub const MIN_INTERVAL: Duration = Duration::from_millis(2500);

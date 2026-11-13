@@ -116,8 +116,7 @@ pub struct Bots {
     pub trajectories: Vec<Option<JointRecord>>,
     nis_db: Option<(String, AssetDb)>,
     floats: Vec<String>,
-    // TODO(guess): the game draws from its global generator (seeded from the CPU time base), the port from its own seeded with 1; settle: none (not reproducible).
-    rng: ssx_physics::session::bots::Mt19937,
+    rng: ssx_assets::career::random::GlobalRandom,
     board_mesh: Option<(Handle<Mesh>, Handle<CharacterMaterial>)>,
     pub live: live::LiveVisuals,
     vault_track: Option<String>,
@@ -594,7 +593,7 @@ fn spawn(mut pending: ResMut<PendingBots>, mut spawner: RacerSpawner) {
     let list: Vec<BotVisual> =
         std::mem::take(&mut pending.bots).into_iter().map(|b| spawner.spawn_racer(board_mesh.as_ref(), b)).collect();
     let n = list.len();
-    let rng = ssx_physics::session::bots::Mt19937::seeded(1);
+    let rng = ssx_assets::career::random::GlobalRandom;
     let floats = std::mem::take(&mut pending.floats);
     let riders = std::mem::take(&mut pending.riders);
     let vault_track = pending.vault_track.take();

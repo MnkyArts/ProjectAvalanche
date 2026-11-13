@@ -9,6 +9,7 @@ mod drop_info;
 mod equip;
 mod generated;
 mod lists;
+mod order;
 mod score;
 
 pub use drop_info::*;
@@ -99,6 +100,7 @@ pub struct Inventory {
     pub gear_mask: u32,
     pub level_limit: i64,
     pub last_drop: u32,
+    pub recommend_first: bool,
     pub new_items: [Vec<(u32, u8)>; KINDS + 1],
     pub owned_list: Vec<UiItem>,
     pub store_list: Vec<UiItem>,
@@ -137,6 +139,7 @@ impl Inventory {
             gear_mask: 0,
             level_limit: -1,
             last_drop: 0,
+            recommend_first: true,
             new_items: Default::default(),
             owned_list: Vec::new(),
             store_list: Vec::new(),

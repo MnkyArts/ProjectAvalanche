@@ -8,6 +8,7 @@ use bevy::prelude::{
     warn,
 };
 use ssx_assets::avalanche_entities::{self, AvalancheEntities};
+use ssx_assets::career::random::{GameRandom, GlobalRandom};
 use ssx_assets::particles::ParticleNode;
 use ssx_physics::SIM_HZ;
 use ssx_physics::avalanche::{Particle, ParticleTraits};
@@ -21,51 +22,12 @@ use crate::ride::Ride;
 const FADE_TICKS: f32 = 15.0;
 const EPS: f32 = 1.192_092_9e-7;
 
-pub struct Mt19937 {
-    state: [u32; 624],
-    index: usize,
-}
-
-impl Mt19937 {
-    pub fn new(seed: u32) -> Self {
-        let mut state = [0u32; 624];
-        state[0] = seed;
-        for i in 1..624 {
-            state[i] = 1_812_433_253u32.wrapping_mul(state[i - 1] ^ (state[i - 1] >> 30)).wrapping_add(i as u32);
-        }
-        Mt19937 { state, index: 624 }
-    }
-
-    pub fn next_u32(&mut self) -> u32 {
-        if self.index >= 624 {
-            for i in 0..624 {
-                let y = (self.state[i] & 0x8000_0000) | (self.state[(i + 1) % 624] & 0x7FFF_FFFF);
-                let mut v = self.state[(i + 397) % 624] ^ (y >> 1);
-                if y & 1 != 0 {
-                    v ^= 0x9908_B0DF;
-                }
-                self.state[i] = v;
-            }
-            self.index = 0;
-        }
-        let mut y = self.state[self.index];
-        self.index += 1;
-        y ^= y >> 11;
-        y ^= (y << 7) & 0x9D2C_5680;
-        y ^= (y << 15) & 0xEFC6_0000;
-        y ^ (y >> 18)
-    }
-
-    pub fn below(&mut self, n: u32) -> u32 {
-        ((u64::from(self.next_u32()) * u64::from(n)) >> 32) as u32
-    }
-}
-
-pub fn bind_order(n: usize, rng: &mut Mt19937) -> Vec<usize> {
+pub fn bind_order(n: usize, rng: &mut dyn GameRandom) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::with_capacity(n);
+    let mut at = 0;
     for i in 0..n {
-        let at = if i == 0 { 0 } else { rng.below(i as u32) as usize };
         out.insert(at, i);
+        at = rng.below(i as u32 + 1) as usize;
     }
     out
 }
@@ -96,6 +58,14 @@ pub struct ChunkSet {
     pub sim_type: u8,
     pub row: u8,
     pub chunks: Vec<Chunk>,
+}
+
+impl ChunkSet {
+    fn head(&self) -> String {
+        let first: Vec<String> = self.chunks.iter().take(12).map(|c| c.model.to_string()).collect();
+        let digest = self.chunks.iter().fold(0x811C_9DC5u32, |h, c| (h ^ c.model as u32).wrapping_mul(0x0100_0193));
+        format!("{}…, models {digest:08x}", first.join(","))
+    }
 }
 
 pub struct ChunkModel {
@@ -149,12 +119,21 @@ impl AvalancheScene {
             let bounds = part.bounds;
             loaded.push(ChunkModel { name: m.schema.clone(), nodes: m.nodes.clone(), part: Some(part), bounds });
         }
-        // TODO(guess): a fixed seed (5489) for the bind's shuffle instead of the game's per-play one (its MT19937 is seeded from the CPU time base: the global generator `GlobalRandom_Below` 0x831500D0 draws from is created with seed −1 = `mftb` and reseeded at once from a second time-seeded twister); settle: none in the game.
-        let mut mt = Mt19937::new(5489);
+        // TODO(guess): the port binds once at the ride's load; the game's bind is a component call (vtable 0x8210AB38
+        // slot +0x18, 0x8210AB50) whose caller was not found statically (no direct reference; the entity-set interface
+        // id 0xF72365AC it queries is loaded at 156 places), so when it runs among the game's other global draws (the
+        // level's tips, the trick-set bank, the bots' rows, the geotags) and whether a restart binds again are not
+        // decoded.
+        let mut order: Vec<usize> = (0..sets.len()).collect();
+        order.sort_by_key(|&k| (sets[k].binding.row, sets[k].binding.sim_type));
+        let mut orders: Vec<Vec<usize>> = vec![Vec::new(); sets.len()];
+        for k in order {
+            orders[k] = bind_order(sets[k].entities.len(), &mut GlobalRandom);
+        }
         let sets = sets
             .iter()
-            .map(|s| {
-                let order = bind_order(s.entities.len(), &mut mt);
+            .zip(orders)
+            .map(|(s, order)| {
                 let chunks = order
                     .iter()
                     .map(|&i| Chunk {
@@ -172,8 +151,11 @@ impl AvalancheScene {
     }
 
     pub fn summary(&self) -> String {
-        let sets: Vec<String> =
-            self.sets.iter().map(|s| format!("type {} row {} x {}", s.sim_type, s.row, s.chunks.len())).collect();
+        let sets: Vec<String> = self
+            .sets
+            .iter()
+            .map(|s| format!("type {} row {} x {} ({})", s.sim_type, s.row, s.chunks.len(), s.head()))
+            .collect();
         let models: Vec<String> = self
             .models
             .iter()
@@ -262,10 +244,7 @@ pub fn load(big_root: &Path, track: &str, ride: &Ride) -> Option<AvalancheScene>
     }
     let spray = !crate::render::post::env_is("SSX_SPRAY_CHUNKS", "off");
     match AvalancheScene::load(big_root, track, ride, spray) {
-        Ok(scene) => {
-            info!("{}", scene.summary());
-            Some(scene)
-        }
+        Ok(scene) => Some(scene),
         Err(e) => {
             warn!("avalanche: entities unavailable: {e:#}");
             None
@@ -378,21 +357,26 @@ pub fn update(
 mod tests {
     use super::*;
 
-    #[test]
-    fn mt19937_matches_the_reference() {
-        let mut mt = Mt19937::new(5489);
-        assert_eq!(mt.next_u32(), 3_499_211_612);
-        let last = (1..10_000).map(|_| mt.next_u32()).last();
-        assert_eq!(last, Some(4_123_659_995));
-    }
+    use ssx_assets::career::random::Mt19937;
 
     #[test]
-    fn bind_order_is_a_permutation() {
-        let mut mt = Mt19937::new(1);
-        let o = bind_order(240, &mut mt);
+    fn bind_order_is_the_games_insertion_shuffle() {
+        let (mut a, mut b) = (Mt19937::seeded(1), Mt19937::seeded(1));
+        let o = bind_order(240, &mut a);
         let mut sorted = o.clone();
         sorted.sort_unstable();
         assert_eq!(sorted, (0..240).collect::<Vec<_>>());
         assert_ne!(o.last(), Some(&239));
+        let mut want: Vec<usize> = Vec::new();
+        for i in 0..240 {
+            let at = if i == 0 { 0 } else { b.below(i as u32) as usize };
+            want.insert(at, i);
+        }
+        b.next_u32();
+        assert_eq!(o, want);
+        assert_eq!(a.next_u32(), b.next_u32(), "240 draws for 240 entities");
+        assert_ne!(bind_order(240, &mut Mt19937::seeded(2)), o);
+        assert_eq!(bind_order(1, &mut Mt19937::seeded(1)), [0]);
+        assert!(bind_order(0, &mut Mt19937::seeded(1)).is_empty());
     }
 }

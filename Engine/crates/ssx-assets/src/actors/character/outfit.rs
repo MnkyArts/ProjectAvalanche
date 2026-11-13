@@ -229,53 +229,44 @@ pub(crate) fn equipment_refs(big_root: &Path, name: &str, loadout: &Loadout) -> 
     if loadout.items.is_empty() && loadout.descriptions.is_empty() {
         return Ok((out, lamp_accessory));
     }
-    let dir = big_root.join("bootcache/data/xenon/attribdb");
-    let read = |stem: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        let path = |ext: &str| dir.join(format!("{stem}.{ext}"));
-        let vlt = std::fs::read(path("vlt")).with_context(|| format!("reading {}", path("vlt").display()))?;
-        let bin = std::fs::read(path("bin")).with_context(|| format!("reading {}", path("bin").display()))?;
-        Ok((vlt, bin))
-    };
-    let (schema_vlt, schema_bin) = read("attribdb_schema")?;
-    let (vlt, bin) = read("attribdb")?;
-    let schema = Schema::from_vault(&Vault::parse(&schema_vlt, &schema_bin)?).context("reading the schema")?;
-    let vault = Vault::parse(&vlt, &bin).context("parsing attribdb.vlt")?;
-    let cols = collection::collections(&vault)?;
-    let decoded = cols.iter().map(|c| c.decode(&vault, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-    let index = collection::index(&cols);
-    for &(item, _) in &loadout.descriptions {
-        out.insert(item, None);
-    }
-    for (i, c) in cols.iter().enumerate().filter(|(_, c)| c.class == CLASS_EQUIPMENT) {
-        let fields = collection::with_inherited(&cols, &decoded, &index, i)?;
-        let value = |k: u32| fields.iter().find(|(_, f)| f.key == k).and_then(|(_, f)| single(&f.data));
-        let reference = |k: u32| match value(k) {
-            Some(Value::Ref(r)) if r.collection != 0 => Some((k, (r.class, r.collection))),
-            _ => None,
-        };
-        let target = || {
-            [FIELD_EQ_ACCESSORY, FIELD_EQ_SNOWBOARD, FIELD_EQ_JACKET, FIELD_EQ_PANTS].into_iter().find_map(reference)
-        };
-        for &(item, _) in loadout.descriptions.iter().filter(|(_, key)| *key == c.key) {
-            let t = target();
-            if item == GearItem::HeadLamp {
-                lamp_accessory = t.is_some_and(|(k, _)| k == FIELD_EQ_ACCESSORY);
+    crate::vault_db::with_all_db(big_root, |db| {
+        for &(item, _) in &loadout.descriptions {
+            out.insert(item, None);
+        }
+        for (key, _) in db.collections_of_all(CLASS_EQUIPMENT) {
+            let fields = db.fields(CLASS_EQUIPMENT, key)?;
+            let value = |k: u32| fields.iter().find(|f| f.key == k).and_then(|f| single(&f.data));
+            let reference = |k: u32| match value(k) {
+                Some(Value::Ref(r)) if r.collection != 0 => Some((k, (r.class, r.collection))),
+                _ => None,
+            };
+            let target = || {
+                [FIELD_EQ_ACCESSORY, FIELD_EQ_SNOWBOARD, FIELD_EQ_JACKET, FIELD_EQ_PANTS]
+                    .into_iter()
+                    .find_map(reference)
+            };
+            for &(item, _) in loadout.descriptions.iter().filter(|(_, want)| *want == key) {
+                let t = target();
+                if item == GearItem::HeadLamp {
+                    lamp_accessory = t.is_some_and(|(k, _)| k == FIELD_EQ_ACCESSORY);
+                }
+                out.insert(item, t.map(|(_, r)| r));
             }
-            out.insert(item, t.map(|(_, r)| r));
+            if loadout.items.is_empty() || reference(FIELD_EQ_CHARACTER).map(|(_, (_, k))| k) != Some(fnv1(name)) {
+                continue;
+            }
+            let (Some(Value::UInt32(id)), Some(Value::Raw { bytes, .. })) = (value(FIELD_EQ_ID), value(FIELD_EQ_TYPE))
+            else {
+                continue;
+            };
+            let Ok(ty) = <[u8; 4]>::try_from(bytes.as_slice()).map(u32::from_be_bytes) else { continue };
+            for &(item, want) in loadout.items.iter().filter(|(item, want)| *item as u32 == ty && want == id) {
+                let (_, r) = target().with_context(|| format!("{name}'s {item:?} item {want} references nothing"))?;
+                out.insert(item, Some(r));
+            }
         }
-        if loadout.items.is_empty() || reference(FIELD_EQ_CHARACTER).map(|(_, (_, k))| k) != Some(fnv1(name)) {
-            continue;
-        }
-        let (Some(Value::UInt32(id)), Some(Value::Raw { bytes, .. })) = (value(FIELD_EQ_ID), value(FIELD_EQ_TYPE))
-        else {
-            continue;
-        };
-        let Ok(ty) = <[u8; 4]>::try_from(bytes.as_slice()).map(u32::from_be_bytes) else { continue };
-        for &(item, want) in loadout.items.iter().filter(|(item, want)| *item as u32 == ty && want == id) {
-            let (_, r) = target().with_context(|| format!("{name}'s {item:?} item {want} references nothing"))?;
-            out.insert(item, Some(r));
-        }
-    }
+        Ok(())
+    })?;
     if let Some((item, id)) = loadout.items.iter().find(|(item, _)| !out.contains_key(item)) {
         bail!("no equipment_description for {name}: {item:?} id {id}");
     }

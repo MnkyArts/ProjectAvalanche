@@ -44,7 +44,7 @@ pub struct AvalancheSounds {
 
 pub fn ui_drop_warning(big_root: &std::path::Path, ui_drop: u32) -> anyhow::Result<i32> {
     use anyhow::Context as _;
-    use ssx_formats::attrib::{Schema, Value, Vault, collection};
+    use ssx_formats::attrib::{Schema, Vault, collection};
     let dir = big_root.join("bootcache/data/xenon/attribdb");
     let read = |stem: &str| -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         Ok((std::fs::read(dir.join(format!("{stem}.vlt")))?, std::fs::read(dir.join(format!("{stem}.bin")))?))
@@ -58,18 +58,33 @@ pub fn ui_drop_warning(big_root: &std::path::Path, ui_drop: u32) -> anyhow::Resu
     crate::content::data::events::route_ui_drops(big_root, &cols, &mut decoded);
     let index = collection::index(&cols);
     let class = crate::vault_db::fnv1("ui_drop");
-    let i = *index.get(&(class, ui_drop)).with_context(|| format!("no ui_drop {ui_drop:#010x}"))?;
-    let w = collection::with_inherited(&cols, &decoded, &index, i)?
-        .into_iter()
-        .find_map(|(_, f)| match crate::vault_db::single(&f.data) {
-            Some(Value::Raw { bytes, .. }) if f.key == 0x9A4C_11BE && bytes.len() == 4 => {
-                Some(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-            }
-            Some(Value::Int32(v)) if f.key == 0x9A4C_11BE => Some(*v),
-            _ => None,
-        })
-        .unwrap_or(0);
+    let w = match index.get(&(class, ui_drop)) {
+        Some(&i) => collection::with_inherited(&cols, &decoded, &index, i)?
+            .into_iter()
+            .find_map(|(_, f)| warning(&f.data, f.key))
+            .unwrap_or(0),
+        None => crate::vault_db::with_all_db(big_root, |db| {
+            let w = db
+                .fields(class, ui_drop)
+                .with_context(|| format!("no ui_drop {ui_drop:#010x}"))?
+                .into_iter()
+                .find_map(|f| warning(&f.data, f.key))
+                .unwrap_or(0);
+            Ok(w)
+        })?,
+    };
     Ok(if (1..=3).contains(&w) { w } else { 0 })
+}
+
+fn warning(data: &ssx_formats::attrib::FieldData, key: u32) -> Option<i32> {
+    use ssx_formats::attrib::Value;
+    match crate::vault_db::single(data) {
+        Some(Value::Raw { bytes, .. }) if key == 0x9A4C_11BE && bytes.len() == 4 => {
+            Some(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        }
+        Some(Value::Int32(v)) if key == 0x9A4C_11BE => Some(*v),
+        _ => None,
+    }
 }
 
 fn percent(x: f32, norm: f32) -> i32 {

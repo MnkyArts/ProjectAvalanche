@@ -5,8 +5,8 @@ use crate::forwarded::{Holder, TrustsPeer};
 
 pub const ROUTE_V4: &str = "/proc/net/route";
 pub const ROUTE_V6: &str = "/proc/net/ipv6_route";
-// TODO(guess): 1 MiB (8 192 IPv4 routes: the kernel pads each line to 128 bytes; a container has 2 to 4, a host a few
-// dozen); settle: none (a router holding a full Internet table runs no master).
+// PORT(choice): 1 MiB (8 192 IPv4 routes: the kernel pads each line to 128 bytes; a container has 2 to 4, a host a few
+// dozen; a router holding a full Internet table runs no master); the original has no master server.
 pub const MAX_TABLE: usize = 1 << 20;
 
 const HEADER_V4: &str = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT";

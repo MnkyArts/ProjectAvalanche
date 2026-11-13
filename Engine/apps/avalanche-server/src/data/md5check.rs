@@ -5,8 +5,8 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use ssx_assets::subset::Member;
 
-// TODO(guess): 256 KiB, 8 levels, 4 096 files (the disc's largest list is about 3 KiB with 24 files); settle: the
-// lists of other pressings.
+// PORT(choice): 256 KiB, 8 levels, 4 096 files (the disc's largest list is about 3 KiB with 24 files); tuning: the
+// lists of other pressings; the original has no dedicated server.
 pub const MAX_LIST: usize = 256 * 1024;
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRIES: usize = 4096;

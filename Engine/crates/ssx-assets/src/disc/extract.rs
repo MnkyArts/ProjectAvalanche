@@ -11,19 +11,19 @@ use ssx_formats::big::BigArchive;
 use ssx_formats::chunk;
 use ssx_formats::xdvdfs::{Disc, Extent};
 
-use super::folder::INDEX_FILE;
+use super::folder::{INDEX_FILE, check_files};
 use super::rows::{self, Part};
 use super::setup::{
-    ARCHIVES, Cancelled, MARKER_FORMAT, Progress, Summary, big_root, check_disc, disc_root, marker, movie_files,
-    open_disc, read_index, safe_relative, write_marker,
+    ARCHIVES, Cancelled, MARKER_FORMAT, MARKER_XEX_HEADER, Progress, Summary, big_root, check_disc, disc_root, marker,
+    movie_files, open_disc, read_index, safe_relative, write_marker, xex_header_hex,
 };
 
 const COPY_CHUNK: usize = 1 << 20;
 
 const MEMBER: ssx_files::Options = ssx_files::Options::new().folder_synced_by_caller();
 
-// TODO(guess): 16 threads (the most measured, on one btrfs SSD); settle: the setup timed with 8 / 16 / 32 on ext4,
-// NTFS and a hard disk.
+// PORT(choice): 16 threads (the most measured, on one btrfs SSD); tuning: the setup timed with 8 / 16 / 32 on ext4,
+// NTFS and a hard disk; the console reads its disc itself.
 const COMMIT_THREADS: usize = 16;
 
 pub fn run(iso: &Path, out: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(&Progress)) -> Result<Summary> {
@@ -39,8 +39,10 @@ pub fn run(iso: &Path, out: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut
     let complete_before =
         previous.as_ref().is_some_and(|m| m["format"] == json!(MARKER_FORMAT) && m["complete"] == json!(true));
     let earlier = if previous.is_some() { rows::earlier(out) } else { ContentIndex::default() };
-    let pinned =
-        |entry: &Value, part: Part<'_>| entry["rows"].as_str() == Some(&rows::digest(&earlier, part).to_string());
+    let damage = check_files(out, &earlier);
+    let pinned = |entry: &Value, part: Part<'_>| {
+        entry["rows"].as_str() == Some(&rows::digest(&earlier, part).to_string()) && !damage.below(&part.prefix())
+    };
 
     let mut summary = Summary::default();
     let mut done = ContentIndex::default();
@@ -75,6 +77,9 @@ pub fn run(iso: &Path, out: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut
         "finished": finished,
         "complete": complete_before,
     });
+    if let Some(header) = &check.xex_header {
+        marker[MARKER_XEX_HEADER] = json!(xex_header_hex(header));
+    }
     if movies_done {
         rows::take_part(&earlier, Part::Movies, &mut done);
         marker["movies"] = movies_entry.clone();

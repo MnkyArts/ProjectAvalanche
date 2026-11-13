@@ -30,8 +30,8 @@ pub struct Report {
     pub seconds: f64,
 }
 
-// TODO(guess): 4 MiB (the index is 280 KB at most, the marker under 1 KB, one partial file at most 16 MiB is already
-// counted as its member); settle: a file system's reserved blocks.
+// PORT(choice): 4 MiB (the index is 280 KB at most, the marker under 1 KB, one partial file at most 16 MiB is already
+// counted as its member); tuning: a file system's reserved blocks; the original has no dedicated server.
 const HEADROOM: u64 = 4 << 20;
 
 pub fn run(
@@ -371,6 +371,11 @@ mod tests {
             index.entries.insert(format!("big/data0/data/m{i:05}.bin"), (3, ContentHash::of(b"abc")));
         }
         index.entries.insert("disc/data/common/fmv/alps.vp6".into(), (3, ContentHash::of(b"abc")));
+        for path in index.entries.keys() {
+            let file = t.0.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"abc").unwrap();
+        }
         let text = index.to_tsv();
         std::fs::write(t.0.join("content.tsv"), &text).unwrap();
         marker(&t.0, Some(&text));

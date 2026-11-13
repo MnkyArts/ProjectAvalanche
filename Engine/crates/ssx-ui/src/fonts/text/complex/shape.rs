@@ -9,8 +9,8 @@ use super::super::{CharFormat, MISSING_GLYPH_EM, isolate, kerning_pair};
 use super::itemize::{Choice, Cluster, script_code};
 use crate::ot::OtFont;
 
-// TODO(guess): a port choice — 256 characters per shaper call (a chat line's limit; the measured Arabic cost 0.4 µs a
-// character, so a call stays under 0.2 ms); settle: none (port feature).
+// PORT(choice): 256 characters per shaper call (a chat line's limit; the measured Arabic cost 0.4 µs a character, so a
+// call stays under 0.2 ms); the original has no fallback fonts.
 pub const MAX_SHAPED_CHARS: usize = 256;
 const CONTEXT: usize = 5;
 

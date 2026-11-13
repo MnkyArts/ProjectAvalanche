@@ -286,6 +286,9 @@ impl ObjectiveMessageWait {
             if m.title.is_none() || m.body.is_none() {
                 return true;
             }
+            if cx.ask("free ride", |w| w.free_ride()) == Some(true) {
+                return true;
+            }
             if cx.ask("UI 0x124", |w| w.ui_flag(0x124)) != Some(true) {
                 return false;
             }

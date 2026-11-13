@@ -5,8 +5,8 @@ use ssx_net::server::TicketRequest;
 use ssx_net_proto::join::{RefusalCode, TOKEN_SIZE};
 use tokio::sync::{mpsc, oneshot};
 
-// TODO(guess): 64 waiting joins (the world takes them every tick, 30 a second); settle: a measured join burst of
-// phase 4's 32-player servers.
+// PORT(choice): 64 waiting joins (the world takes them every tick, 30 a second); tuning: a measured join burst of phase
+// 4's 32-player servers; the original has no dedicated server.
 pub const JOIN_QUEUE: usize = 64;
 
 #[derive(Default)]

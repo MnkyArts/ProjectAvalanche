@@ -7,8 +7,8 @@ pub const DESKTOP_FILE: &str = "project-avalanche-link.desktop";
 const MIME: &str = "x-scheme-handler/avalanche";
 #[cfg(not(windows))]
 const SECTION: &str = "[Default Applications]";
-// TODO(guess): a port choice — 1 MiB (a desktop's list is a few KiB; the specification states no limit); settle: none
-// (the port's reader).
+// PORT(choice): 1 MiB (a desktop's list is a few KiB; the specification states no limit), the port's reader; the
+// original has no launcher.
 #[cfg(not(windows))]
 const MAX_LIST_BYTES: u64 = 1024 * 1024;
 

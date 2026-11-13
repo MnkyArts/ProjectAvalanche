@@ -1,7 +1,8 @@
 use crate::DecodeError;
 
-// TODO(guess): 64 bytes; the disc's 262 named `ui_drop`s (attribdb.vlt, field 0xAF27A974) are 17…48 characters, all
-// of a-z, 0-9 and _ (measured 2026-10-23); settle: the drop names of the maps a server may run (the maps phase).
+// PORT(choice): 64 bytes; the disc's 262 named `ui_drop`s (attribdb.vlt, field 0xAF27A974) are 17…48 characters, all of
+// a-z, 0-9 and _ (measured 2026-10-23); tuning: the drop names of the maps a server may run (the maps phase); the
+// original has no dedicated server.
 pub const MAX_DROP_NAME: usize = 64;
 
 pub fn drop_name(name: &str) -> Result<&str, DecodeError> {
@@ -219,8 +220,8 @@ pub enum Rewinds {
     Limit(u8),
 }
 
-// TODO(guess): 99, a port choice (the game's own `MaxRewindCount` is 3, `CharacterPropertiesAsset`); settle: the
-// server browser's rules column and what operators ask for (phase F2).
+// PORT(choice): 99 (the game's own `MaxRewindCount` is 3, `CharacterPropertiesAsset`); tuning: the server browser's
+// rules column and what operators ask for (phase F2); the original has no dedicated server.
 pub const MAX_REWIND_LIMIT: u8 = 99;
 
 impl Rewinds {

@@ -6,16 +6,16 @@ use ssx_lua::ast::{Expr, FuncBody, LValue, Stat, TableItem};
 
 pub const SCRIPTS_DIR: &str = "memresident/data/common/scripts";
 
-// TODO(guess): 32 scripts, a port bound eight times the disc's most (4); settle: the most scripts a modded event's
-// record lists.
+// PORT(choice): 32 scripts, a port bound eight times the disc's most (4); tuning: the most scripts a modded event's
+// record lists; the original loads no packages.
 pub const MAX_SCRIPTS: usize = 32;
 
-// TODO(guess): 128 bytes, a port bound about three times the disc's longest name (44); settle: the longest name a
-// modded event's record carries.
+// PORT(choice): 128 bytes, a port bound about three times the disc's longest name (44); tuning: the longest name a
+// modded event's record carries; the original loads no packages.
 pub const MAX_SCRIPT_NAME: usize = 128;
 
-// TODO(guess): 1 MiB, a port bound eight times the disc's largest script (123 307 bytes); settle: the largest event
-// script a modded package carries.
+// PORT(choice): 1 MiB, a port bound eight times the disc's largest script (123 307 bytes); tuning: the largest event
+// script a modded package carries; the original loads no packages.
 pub const MAX_SCRIPT_BYTES: usize = 1 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -85,10 +85,10 @@ pub struct IntroStart {
 
 pub const START_FIRST: usize = 4;
 
-// TODO(guess): the hand-over places and the first executions' way, measured from the port's intro (ssx_physics::nis
-// over the disc's root motion) and ride, not computed on the server; settle: the server re-simulating the intro and
-// the first executions (the NIS bundles and the collision's snow depth, the data classes optional-verify and
-// optional-collision: phase 11's verified runs).
+// PORT(choice): the hand-over places and the first executions' way, measured from the port's intro (ssx_physics::nis
+// over the disc's root motion) and ride, not computed on the server; tuning: the server re-simulating the intro and the
+// first executions (the NIS bundles and the collision's snow depth, the data classes optional-verify and
+// optional-collision: phase 11's verified runs); the original has no validation.
 pub const INTRO_STARTS: &[IntroStart] = &[
     row(
         "nis_binding_intro_dd_alps",
@@ -329,28 +329,28 @@ const fn rider_row(
     IntroStart { binding, variant: IntroVariant::Heli, rider: Some(rider), every_path, stop_ticks, handover, first }
 }
 
-// TODO(guess): 0.2065 m — the honest drops' farthest hand-overs from their intro's place 0.1792 m
+// PORT(choice): 0.2065 m — the honest drops' farthest hand-overs from their intro's place 0.1792 m
 // (exp_alaska_foraker_drop_4_survive: the snow below the helicopter), 0.1551 m (chapter_9_drop_h2h, elise's stance on
 // the snow start), 0.1519 m (chapter_8_drop_gen_1) over 260 drops and 1 330 runs (the seven characters of interest's
 // own ways each 0.0000 m from theirs): the largest plus its distance from the third (0.2129 m with three riders' runs,
-// the third then 0.1455); settle: the server computing the hand-over's place from the intro and the collision's snow
-// depth (phase 11's re-simulation).
+// the third then 0.1455); tuning: the server computing the hand-over's place from the intro and the collision's snow
+// depth (phase 11's re-simulation); the original has no validation.
 pub const HANDOVER_MARGIN_M: f32 = 0.2065;
 
-// TODO(guess): 0.0037, 0.0071, 0.0844, 0.1246 m — the helicopter intros' honest drops' farthest from their intro's way
-// after 1, 2, 3 and 4 executions 0.002279 / 0.004566 / 0.056599 / 0.091038 m, the third 0.000883 / 0.002060 /
-// 0.028841 / 0.057554 m (235 drops, 1 207 runs, all twelve riders and the seven own ways, those within 0.0001 m; the
-// runs, ridden with different inputs, part from the third execution on — that the input takes hold there is not
-// decoded; the farthest from the third on: dd_alsk, dd_antar and dd_roc, the helicopter intros with the stop tag 40);
-// settle: the server re-simulating the first executions from the hand-over (the collision and the rider's input: phase
-// 11).
+// PORT(choice): 0.0037, 0.0071, 0.0844, 0.1246 m — the helicopter intros' honest drops' farthest from their intro's way
+// after 1, 2, 3 and 4 executions 0.002279 / 0.004566 / 0.056599 / 0.091038 m, the third 0.000883 / 0.002060 / 0.028841
+// / 0.057554 m (235 drops, 1 207 runs, all twelve riders and the seven own ways, those within 0.0001 m; the runs,
+// ridden with different inputs, part from the third execution on — that the input takes hold there is not decoded; the
+// farthest from the third on: dd_alsk, dd_antar and dd_roc, the helicopter intros with the stop tag 40); tuning: the
+// server re-simulating the first executions from the hand-over (the collision and the rider's input: phase 11); the
+// original has no validation.
 pub const FIRST_MARGINS_HELI_M: [f32; START_FIRST] = [0.0037, 0.0071, 0.0844, 0.1246];
 
-// TODO(guess): 0.0588, 0.0122, 0.1489, 0.2467 m — the snow start's honest drops' farthest from its way after 1, 2, 3
+// PORT(choice): 0.0588, 0.0122, 0.1489, 0.2467 m — the snow start's honest drops' farthest from its way after 1, 2, 3
 // and 4 executions 0.058770 / 0.012074 / 0.140881 / 0.230615 m, the third 0.058766 / 0.011978 / 0.132909 / 0.214573 m
 // (25 drops, 123 runs, all twelve riders; its places after 1 execution lie in two clusters 0.1175 m apart by drop,
-// together after 2, so the largest three are equal there); settle: the server re-simulating the first executions from
-// the hand-over (the collision's snow and the rider's input: phase 11).
+// together after 2, so the largest three are equal there); tuning: the server re-simulating the first executions from
+// the hand-over (the collision's snow and the rider's input: phase 11); the original has no validation.
 pub const FIRST_MARGINS_SNOW_M: [f32; START_FIRST] = [0.0588, 0.0122, 0.1489, 0.2467];
 
 impl IntroStart {

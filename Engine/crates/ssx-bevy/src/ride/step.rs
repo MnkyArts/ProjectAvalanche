@@ -11,7 +11,7 @@ use super::clock::{lerp_pose, pose_of};
 use super::controls::PadLock;
 use super::scripted::{AutoRewind, avalanche_override, back_script};
 use super::start::level_start;
-use super::{CLASSIC_GRIND_HOLD_TICKS, CLASSIC_REWIND_HOLD_TICKS, CLASSIC_WINGSUIT_HOLD_TICKS, Clock, OutroRun, Ride};
+use super::{Clock, OutroRun, Ride};
 use crate::rider::anim::RiderAnimation;
 
 impl Ride {
@@ -29,7 +29,7 @@ impl Ride {
             };
             let assets = match (def, script, reaction) {
                 _ if crate::render::post::env_is("SSX_OUTRO", "off") => None,
-                (Some(d), Some(OutroScript::Standard), Some(r)) => {
+                (Some(d), Some(OutroScript::Standard), Some(r)) if !self.session.event.setup.free_ride => {
                     match ssx_physics::outro::prepare(&self.big_root, &d.name, &self.character, r) {
                         Ok(a) => Some(a),
                         Err(e) => {
@@ -103,9 +103,8 @@ impl Ride {
                 .and_then(|l| l.intro.as_ref())
                 .map(|i| ssx_physics::helicopter::Helicopter::with_flight(i, self.heli_flight.clone()));
             self.state = state;
-            (self.classic_grind_ticks, self.classic_rewind_ticks) = (0.0, 0.0);
-            self.classic_wingsuit_ticks = 0.0;
             self.steps = 0;
+            self.audio_tag_log.clear();
             self.distance = 0.0;
             self.session.reset();
             if let Some(m) = self.map.as_mut() {
@@ -117,6 +116,7 @@ impl Ride {
             self.rewinding = false;
             self.auto_rewind = AutoRewind::default();
             self.autoplay_waited = 0;
+            self.autoplay_sat_out = false;
             self.last_grind_capture = 0.0;
             self.rewind_backwards = false;
             self.last_exec = None;
@@ -133,7 +133,8 @@ impl Ride {
         }
     }
 
-    pub(super) fn advance(&mut self, mut anim: Option<&mut RiderAnimation>) {
+    pub(super) fn advance(&mut self, mut anim: Option<&mut RiderAnimation>, reverse_camera: Option<Quat>) {
+        self.state.reverse_camera = reverse_camera;
         if let Some(i) = self.state.start.as_mut().and_then(|l| l.intro.as_mut())
             && i.held()
         {
@@ -188,34 +189,28 @@ impl Ride {
         }
         let (input, tricks) = self.locked_controls();
         let at_start = self.state.start.is_some();
-        let (mut grind_held, mut wingsuit_held, mut rewind_held) = (self.l2, self.r1, self.rewind_pad.rewind_held);
-        if self.classic {
-            let dt = self.step_ticks;
-            let held = !(at_start || self.pads_held || self.chat_held);
-            self.classic_grind_ticks = if held && tricks.y { self.classic_grind_ticks + dt } else { 0.0 };
-            self.classic_rewind_ticks = if held && tricks.b { self.classic_rewind_ticks + dt } else { 0.0 };
-            self.classic_wingsuit_ticks = if held && input.jump { self.classic_wingsuit_ticks + dt } else { 0.0 };
-            grind_held = self.classic_grind_ticks >= CLASSIC_GRIND_HOLD_TICKS;
-            wingsuit_held = self.classic_wingsuit_ticks >= CLASSIC_WINGSUIT_HOLD_TICKS;
-            rewind_held = self.classic_rewind_ticks >= CLASSIC_REWIND_HOLD_TICKS;
+        let (grind_held, wingsuit_held, rewind_held) = if self.classic {
+            (tricks.y, input.jump, tricks.b)
         } else {
-            (self.classic_grind_ticks, self.classic_rewind_ticks) = (0.0, 0.0);
-            self.classic_wingsuit_ticks = 0.0;
-        }
+            (self.l2, self.r1, self.rewind_pad.rewind_held)
+        };
         self.state.tricks.classic = self.classic;
         self.state.grind.pad_l2 = grind_held;
+        self.state.grind.pad_l2_hold = self.l2_hold;
         self.state.wingsuit.pad_r1 = wingsuit_held;
-        let pad = RewindPad { flip_accel: input.stick().y, rewind_held, ..self.rewind_pad };
+        let pad = RewindPad { flip_accel: input.flip_acceleration(self.classic), rewind_held, ..self.rewind_pad };
         let gate = if at_start { self.start_gate } else { super::live::StartGate::Free };
         let released =
             || (ssx_physics::rider::Input::default(), ssx_physics::rider::TrickInput::default(), RewindPad::default());
         let (input, tricks, pad) = match gate {
             super::live::StartGate::Hold => {
-                (self.state.grind.pad_l2, self.state.wingsuit.pad_r1) = (false, false);
+                self.state.grind.release_l2();
+                self.state.wingsuit.pad_r1 = false;
                 released()
             }
             super::live::StartGate::Go { pressed } => {
-                (self.state.grind.pad_l2, self.state.wingsuit.pad_r1) = (false, false);
+                self.state.grind.release_l2();
+                self.state.wingsuit.pad_r1 = false;
                 let releasing = self
                     .state
                     .start
@@ -232,7 +227,8 @@ impl Ride {
                 }
             }
             super::live::StartGate::Free if self.pads_held || self.chat_held => {
-                (self.state.grind.pad_l2, self.state.wingsuit.pad_r1) = (false, false);
+                self.state.grind.release_l2();
+                self.state.wingsuit.pad_r1 = false;
                 released()
             }
             super::live::StartGate::Free => (input, tricks, pad),
@@ -243,8 +239,17 @@ impl Ride {
         let was_ready = ready(&self.state);
         let was_waiting = waiting(&self.state);
         if let Some(h) = self.heli.as_mut() {
-            let was = h.interaction.interact;
+            let (was, was_prepared) = (h.interaction.interact, h.interaction.prepare);
             self.session.heli_interaction(h, &mut self.state, &self.world, &tricks);
+            if h.interaction.prepare != was_prepared {
+                info!(
+                    "Ride step {}: heli interaction: prepare {} (BLN_HeliPrepareForInteraction: the right stick down \
+                     on the ground; the helicopter {:.1} m away)",
+                    self.steps + 1,
+                    if h.interaction.prepare { "on" } else { "off" },
+                    h.interaction.avoid_distance
+                );
+            }
             if !was && h.interaction.interact {
                 info!(
                     "Ride step {}: heli interaction: meeting in {:.1} ticks, kind {:?}",
@@ -471,7 +476,7 @@ impl Ride {
             self.session.drive_helicopter(h);
         }
         let r = e.rewind;
-        if self.autoplay {
+        if self.autoplay && !self.autoplay_sat_out {
             let time = (self.steps - self.autoplay_waited) as f32 / SIM_HZ;
             match self.course.as_mut() {
                 Some(p) => p.after(&r, time),
@@ -561,6 +566,7 @@ impl Ride {
         self.step_ms = if self.steps == 0 { ms } else { self.step_ms + 0.05 * (ms - self.step_ms) };
         self.distance += f64::from(before.distance(self.state.position));
         self.steps += 1;
+        self.audio_tag_log.record(self.steps, &self.state.audio_tags);
         if self.scripted()
             && let Some(times) = back_script()
         {

@@ -12,8 +12,8 @@ pub const MAX_INFO_BYTES: usize = 4096;
 
 pub const MAX_ANNOUNCED_PLAYERS: u32 = 64;
 
-// TODO(guess): 250 characters, the plan's cap (FiveM's for a server's description); settle: the server browser's
-// details pane measured with the longest descriptions operators write.
+// PORT(choice): 250 characters, the plan's cap (FiveM's for a server's description); tuning: the server browser's
+// details pane measured with the longest descriptions operators write; the original has no server browser.
 pub const MAX_DESCRIPTION_CHARS: usize = 250;
 
 pub fn description(text: &str) -> Result<&str, String> {

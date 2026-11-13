@@ -214,6 +214,7 @@ pub fn tuning() -> Tuning {
         snow_compression_restore_curve: Curve::new(vec![[0.0, 0.0], [25.809_057, 0.284_518_72], [100.0, 1.0]]),
         snow_compression_from_dig_curve: Curve::new(vec![[0.0, 0.05], [0.008, 0.05], [0.02, 0.05]]),
         prewind_carve_input_dampening_curve: Curve::new(vec![[0.0, 1.0], [1.0, 0.498_891_17]]),
+        prewind_carve_input_classic_dampening_curve: Curve::new(vec![[0.0, 1.0], [1.0, 0.25]]),
         prewind_dampens_carving: true,
         board_press_friction_modifier: 0.1,
         collision_look_ahead: 16.0,

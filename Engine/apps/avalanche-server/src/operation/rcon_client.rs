@@ -17,11 +17,12 @@ use ssx_net_proto::{BUILD_ID, DEFAULT_PORT};
 pub const PIN_FILE: &str = "rcon-servers.toml";
 const MAX_PIN_FILE: u64 = 256 * 1024;
 const MAX_PINS: usize = 1024;
-// TODO(guess): 10 s, the server's own connection time; settle: operators on slow links.
+// PORT(choice): 10 s, the server's own connection time; tuning: operators on slow links; the original has no dedicated
+// server.
 const REQUEST_TIME: Duration = Duration::from_secs(10);
 const MAX_PLAIN: usize = 1024;
-// TODO(guess): 20 s in all; settle: operators' scripts against the server's limits (RCON 2 a second, burst 8; /info 4,
-// burst 8), measured.
+// PORT(choice): 20 s in all; tuning: operators' scripts against the server's limits (RCON 2 a second, burst 8; /info 4,
+// burst 8), measured; the original has no dedicated server.
 const WAIT_BUDGET: Duration = Duration::from_secs(20);
 
 pub struct RconOptions {

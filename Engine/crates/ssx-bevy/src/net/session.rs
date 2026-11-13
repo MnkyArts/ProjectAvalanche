@@ -16,8 +16,8 @@ use crate::shell::live::{LiveEnd, LiveLevel, LiveOrigin, LiveSession};
 
 const MAX_PASSWORD_FILE: u64 = 1024;
 
-// TODO(guess): 60 s (the boot movies run to their end unless skipped, the sign-in waits for its job); settle: the
-// launch times of real sessions from a cold start.
+// PORT(choice): 60 s (the boot movies run to their end unless skipped, the sign-in waits for its job); tuning: the
+// launch times of real sessions from a cold start; the original has no real-time multiplayer.
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 
 enum State {

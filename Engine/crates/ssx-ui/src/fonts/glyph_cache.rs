@@ -74,8 +74,8 @@ pub struct RasterGlyph {
     pub scale: f32,
 }
 
-// TODO(guess): a port choice — the cap and the reset (the game's cache is one 1024² texture, 0x82726538, and a full
-// cache ends the glyph run); settle: none (the port's texture grows; outside text in any script can fill it).
+// PORT(choice): the cap and the reset, as the port's texture grows and outside text in any script can fill it; the
+// game's cache is one 1024² texture (0x82726538), and a full cache ends the glyph run.
 pub const MAX_ATLAS_HEIGHT: u32 = 8192;
 
 type GlyphKey = (usize, usize, u16, Option<GlyphFilter>);

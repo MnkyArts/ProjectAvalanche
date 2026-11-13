@@ -15,8 +15,9 @@ pub use check::{Source, Verdict};
 pub use edit::{Access, AclError};
 
 pub const ROOTS: [&str; 4] = ["command", "function", "resource", "general"];
-// TODO(guess): 256 groups, 4 096 objects and 1 024 rights a group, 4 096 requests; far above MTA's default acl.xml
-// (a handful of groups and ACLs of a few hundred rights, as recalled); settle: the ACLs of long-running servers.
+// PORT(choice): 256 groups, 4 096 objects and 1 024 rights a group, 4 096 requests; far above MTA's default acl.xml (a
+// handful of groups and ACLs of a few hundred rights, as recalled); tuning: the ACLs of long-running servers; the
+// original has no dedicated server.
 pub const MAX_GROUPS: usize = 256;
 pub const MAX_OBJECTS: usize = 4096;
 pub const MAX_RIGHTS: usize = 1024;

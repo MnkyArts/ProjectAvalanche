@@ -65,22 +65,22 @@ pub(super) fn survive_loop(
     intro: &Intro,
     intro_short: &Intro,
 ) -> Option<SurviveLoop> {
-    if m.setup.event_type != Some(ssx_physics::event::EventType::SurviveToDeath) {
+    let free_ride = ssx_physics::map::heli::free_ride_picks_up(&m.setup);
+    if m.setup.event_type != Some(ssx_physics::event::EventType::SurviveToDeath) && !free_ride {
         return None;
     }
     let heli = m.heli.as_ref()?;
     match ssx_physics::map::heli::map_heli_pickup(big_root, heli, &m.id.to_string(), character) {
         Ok(outro) => {
             let q = ssx_physics::spawn::level_start_orientation(world, at, heading);
-            info!(
-                "map {}: survive-to-death loop: {} after the finish, then the intro at {at:.2}",
-                m.id, outro.nis.binding
-            );
+            let what =
+                if free_ride { "the free ride's loop (the title update's outro)" } else { "survive-to-death loop" };
+            info!("map {}: {what}: {} after the finish, then the intro at {at:.2}", m.id, outro.nis.binding);
             let later = intro_short.clone().or_else(|| intro.clone());
             Some(SurviveLoop::new(later, Some(outro), at, q))
         }
         Err(e) => {
-            warn!("map {}: survive-to-death loop unavailable: {e:#}", m.id);
+            warn!("map {}: the heli pickup's loop unavailable: {e:#}", m.id);
             None
         }
     }

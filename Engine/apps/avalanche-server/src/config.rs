@@ -17,8 +17,8 @@ use discovery::{RawDiscovery, parse_discovery};
 pub const DEFAULT_PORT: u16 = ssx_net_proto::DEFAULT_PORT;
 pub const DEFAULT_MAX_PLAYERS: u16 = 16;
 pub const DEFAULT_NAME: &str = "Project Avalanche server";
-// TODO(guess): a port choice (the server reads no disc, so its default can only be a name); settle: phase 4's setup
-// of the server's rules data, which knows the operator's drops.
+// PORT(choice): the default drop is a name (the server reads no disc, so its default can only be a name) until phase
+// 4's setup of the server's rules data, which knows the operator's drops; the original has no dedicated server.
 pub const DEFAULT_DROP: &str = "exp_alps_vorassay_drop_3";
 const MAX_FILE: u64 = 64 * 1024;
 
@@ -243,8 +243,8 @@ pub struct PortMapping {
 }
 
 pub const DEFAULT_LIFETIME: u32 = 7200;
-// TODO(guess): a day at most (IGD 2 takes up to 604 800 s, NAT-PMP and PCP what the gateway grants); settle: gateways
-// that refuse long leases.
+// PORT(choice): a day at most (IGD 2 takes up to 604 800 s, NAT-PMP and PCP what the gateway grants); tuning: gateways
+// that refuse long leases; the original has no dedicated server.
 pub const LIFETIMES: std::ops::RangeInclusive<i64> = 120..=86_400;
 
 impl Default for PortMapping {

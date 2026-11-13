@@ -289,7 +289,7 @@ impl Helicopter {
 
     pub fn floor_joint(&self) -> Vec3 {
         let rig = &self.assets.nis.heli;
-        let pose = self.gameplay_pose(0.0);
+        let pose = self.gameplay_pose();
         let Some(chain) = rig.chain("Floor", "AITrajectory") else { return self.traj.1 };
         let (mut q, mut p) = self.traj;
         for j in chain.iter().rev() {

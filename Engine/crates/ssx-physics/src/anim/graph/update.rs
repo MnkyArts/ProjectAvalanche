@@ -2,6 +2,10 @@ use super::*;
 use ssx_formats::ghost;
 
 impl RiderGraph {
+    pub fn take_audio_tags(&mut self) -> Vec<ssx_assets::anim_eval::AudioTagEvent> {
+        self.animator.take_audio_tags()
+    }
+
     pub fn update(
         &mut self,
         s: &RiderState,
@@ -14,7 +18,6 @@ impl RiderGraph {
         self.finish(s)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn update_controllers(
         &mut self,
         s: &RiderState,
@@ -24,6 +27,10 @@ impl RiderGraph {
         dt: f32,
         physics: Option<StepPhysics>,
     ) {
+        self.animator.clear_audio_tags();
+        if let Some(st) = &mut self.start {
+            st.animator.clear_audio_tags();
+        }
         if let Some(ls) = &s.start {
             if let Some(st) = &mut self.start {
                 if !st.running {
@@ -168,6 +175,7 @@ impl RiderGraph {
             board_z,
             board_offset,
             carving_stopped: self.signal("BLN_IsCarvingStopped") != 0.0,
+            allow_airborne: self.signal("BLN_AllowAirborne") != 0.0,
             uber_bail_sliding: self.signal("BLN_uber_bail_sliding") != 0.0,
             uber_recover: recover.is_some(),
             recover_ticks: recover.unwrap_or(0.0),

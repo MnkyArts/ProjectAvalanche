@@ -16,8 +16,8 @@ pub const PER_SECOND: u32 = 10;
 pub const RETRY_AFTER: Duration = Duration::from_secs(4);
 pub const TIMEOUT: Duration = Duration::from_secs(8);
 pub const TOKEN_FOR: Duration = Duration::from_secs(25);
-// TODO(guess): 1 024 waiting, 128 at once (10 a second for 8 s is 80), 4 096 tokens; settle: the browser over a full
-// master list.
+// PORT(choice): 1 024 waiting, 128 at once (10 a second for 8 s is 80), 4 096 tokens; tuning: the browser over a full
+// master list; the original has no server browser.
 pub const MAX_WAITING: usize = 1024;
 pub const MAX_ACTIVE: usize = 128;
 pub const MAX_TOKENS: usize = 4096;

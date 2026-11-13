@@ -20,11 +20,11 @@ use crate::http::limits::{AddressLimiter, Rate, Verdict};
 
 pub const QUERY_RATE: Rate = Rate { per_second: 5.0 / 6.0, burst: 5.0 };
 pub const CACHE_FOR: Duration = Duration::from_secs(10);
-// TODO(guess): 30 s windows (the browser asks a server again every 10 s and keeps its token 25 s); settle: the
-// browser's measured query pattern over real links.
+// PORT(choice): 30 s windows (the browser asks a server again every 10 s and keeps its token 25 s); tuning: the
+// browser's measured query pattern over real links; the original has no dedicated server.
 pub const TOKEN_WINDOW: Duration = Duration::from_secs(30);
-// TODO(guess): 1 000 challenges a second (a browser asks at 10 a second; a hundred browsers at once), 4 096 addresses;
-// settle: a public server's measured query load.
+// PORT(choice): 1 000 challenges a second (a browser asks at 10 a second; a hundred browsers at once), 4 096 addresses;
+// tuning: a public server's measured query load; the original has no dedicated server.
 pub const GLOBAL_RATE: Rate = Rate { per_second: 1000.0, burst: 2000.0 };
 pub const TRACKED: usize = 4096;
 

@@ -24,6 +24,8 @@ struct Transition {
     actions: Vec<Action>,
 }
 
+type Selected = (Option<usize>, Vec<usize>, Vec<Action>);
+
 #[derive(Clone, Debug)]
 struct State {
     name: String,
@@ -298,9 +300,8 @@ impl Nav {
             .find(|&a| targets.iter().all(|&t| self.is_proper_descendant(t, a)))
     }
 
-    #[allow(clippy::type_complexity)]
-    fn select(&self, event: &str) -> Vec<(Option<usize>, Vec<usize>, Vec<Action>)> {
-        let mut out: Vec<(Option<usize>, Vec<usize>, Vec<Action>)> = Vec::new();
+    fn select(&self, event: &str) -> Vec<Selected> {
+        let mut out: Vec<Selected> = Vec::new();
         let mut taken: Vec<(usize, usize)> = Vec::new();
         for &s in &self.config {
             if !self.states[s].children.is_empty() {
@@ -361,8 +362,7 @@ impl Nav {
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn microstep_plan(&self, ts: &[(Option<usize>, Vec<usize>, Vec<Action>)]) -> Vec<Step> {
+    fn microstep_plan(&self, ts: &[Selected]) -> Vec<Step> {
         let mut exit: Vec<usize> = Vec::new();
         let mut enter: Vec<usize> = Vec::new();
         let mut default: Vec<usize> = Vec::new();

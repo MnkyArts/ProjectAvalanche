@@ -1,4 +1,4 @@
-use super::purchase::{Catalog, CatalogEntry, PurchaseError, sell_price};
+use super::purchase::{Catalog, CatalogEntry, OfferPurchase, PurchaseError, sell_price};
 use super::*;
 use crate::career::data::{Description, StoreTables, StoreTemplate};
 use crate::career::profile::Profile;
@@ -78,14 +78,14 @@ fn ctx() -> StoreContext {
 }
 
 #[test]
-fn the_generator_draws_like_the_reference_twister() {
-    let mut r = Mt19937::new(5489);
-    assert_eq!(r.next_u32(), 3_499_211_612);
-    assert_eq!(r.next_u32(), 581_869_302);
+fn the_store_draws_its_patterns() {
     let mut r = Mt19937::new(1);
-    assert!((0..1000).all(|_| r.below(7) < 7));
-    assert_eq!(r.pick(1), 0);
-    assert_eq!(r.range(5, 5), 5);
+    assert!((0..1000).all(|_| (0..7).contains(&r.below_i(7))));
+    let mut s = Mt19937::new(1);
+    let mut t = s.clone();
+    assert_eq!((s.pick(1), s.pick(0), s.range(5, 5), s.range(6, 5)), (0, 0, 5, 6));
+    assert_eq!(s.next_u32(), t.next_u32(), "no draw for one, none or an empty range");
+    assert!((0..1000).all(|_| (3..=9).contains(&r.range(3, 9))));
 }
 
 #[test]
@@ -173,9 +173,16 @@ fn items_of_another_rider_convert_by_their_look() {
     let d = data();
     let mut i = StoreItem { charlock: 7, slot: 12, descriptions: [1, 2], ..Default::default() };
     assert!(fits_rider(&d, &mut i, 8));
-    assert_eq!((i.charlock, i.descriptions), (8, [3, 0]));
-    let mut j = StoreItem { charlock: 8, slot: 12, descriptions: [3, 0], ..Default::default() };
+    assert_eq!((i.charlock, i.descriptions), (8, [3, 5]));
+    let mut k = StoreItem { charlock: 7, slot: 12, descriptions: [1, 99], ..Default::default() };
+    assert!(fits_rider(&d, &mut k, 8));
+    assert_eq!((k.charlock, k.descriptions), (8, [3, 0]));
+    let mut f = StoreItem { charlock: 7, slot: 12, descriptions: [4, 2], ..Default::default() };
+    assert!(fits_rider(&d, &mut f, 8));
+    assert_eq!((f.charlock, f.descriptions), (8, [4, 5]));
+    let mut j = StoreItem { charlock: 8, slot: 12, descriptions: [3, 5], ..Default::default() };
     assert!(!fits_rider(&d, &mut j, 9));
+    assert_eq!((j.charlock, j.descriptions), (8, [3, 5]));
     assert!(fits_rider(&d, &mut j, 0));
 }
 
@@ -188,20 +195,23 @@ fn buying_and_selling() {
     p.add_credits(1_000_000, false);
     let offer = s.offers(&d, &c, 2)[0].clone();
     let before = p.credits();
-    let id = p.buy_offer(&mut s, &d, &c, 2, offer.id, 1234, 0).unwrap();
+    let id = p.buy_offer(&mut s, &d, &c, OfferPurchase { kind: 2, id: offer.id, clock_s: 1234, now_ms: 0 }).unwrap();
     assert_eq!((id, p.credits()), (0, before - offer.cost));
     assert_eq!(p.generated[&0].cost, offer.cost);
     assert!(p.gear_types() & (1 << 3) != 0);
     assert!(s.find(2, offer.id).is_none() && s.offers(&d, &c, 2).len() == 4);
     let next = s.offers(&d, &c, 2)[0].clone();
-    assert_eq!(p.buy_offer(&mut s, &d, &c, 2, next.id, 0, 0).unwrap(), 1);
+    assert_eq!(p.buy_offer(&mut s, &d, &c, OfferPurchase { kind: 2, id: next.id, clock_s: 0, now_ms: 0 }).unwrap(), 1);
     let credits = p.credits();
     assert_eq!(p.sell_generated(&d, 0), Some(sell_price(offer.cost, 22)));
     assert_eq!(p.credits(), credits + offer.cost * 22 / 100);
     let mut poor = Profile::new();
     let dear = s.offers(&d, &c, 1).into_iter().find(|o| o.cost > 4500);
     if let Some(o) = dear {
-        assert!(matches!(poor.buy_offer(&mut s, &d, &c, 1, o.id, 0, 0), Err(PurchaseError::NotEnoughCredits { .. })));
+        assert!(matches!(
+            poor.buy_offer(&mut s, &d, &c, OfferPurchase { kind: 1, id: o.id, clock_s: 0, now_ms: 0 }),
+            Err(PurchaseError::NotEnoughCredits { .. })
+        ));
     }
     let mut cat = Catalog::default();
     cat.entries.insert(55, CatalogEntry { kind: 5, slot: -1, cost: 10_000, locked: true });
@@ -252,4 +262,29 @@ fn suits_are_offered_at_every_rider_level() {
     s.refresh(&d, &c, 1);
     assert_eq!(s.stock[KIND_SUIT as usize].len(), 8);
     assert_eq!(s.offers(&d, &c, KIND_SUIT as usize).len(), 8);
+}
+
+#[test]
+fn the_shown_special_and_its_clock() {
+    let d = data();
+    let c = ctx();
+    let mut s = Store::new(5);
+    let special = Request { special: true, ..Request::NORMAL };
+    let id = s.generate(&d, &c, 2, &special, 1000).expect("a special");
+    let due = s.find(2, id).map(|i| i.expires_ms).expect("in the stock");
+    assert_eq!(s.shown_special_left(1000), None, "nothing shown (+0x160 / +0x164 −1)");
+    s.show_special(2, id);
+    assert_eq!(s.shown_special_left(1000), Some(due - 1000));
+    assert_eq!(s.shown_special_left(due + 5), Some(0), "0x825201A0 writes 0 once the time is past");
+    s.show_special(2, 999_999);
+    assert_eq!(s.shown_special_left(1000), None, "FUN_8251FFF0 looks up stock ids from 1 000 000 only");
+    s.show_special(2, id);
+    s.clear_shown_special();
+    assert_eq!(s.shown_special_left(1000), None);
+    let normal = s.generate(&d, &c, 2, &Request::NORMAL, 1000).expect("an offer");
+    s.drop_expired_specials(2, due);
+    assert!(s.find(2, id).is_some(), "not before its end");
+    s.drop_expired_specials(2, due + 1);
+    assert!(s.find(2, id).is_none());
+    assert!(s.find(2, normal).is_some());
 }

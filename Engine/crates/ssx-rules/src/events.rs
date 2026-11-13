@@ -73,8 +73,8 @@ impl EventType {
     }
 }
 
-pub fn shows_explore_ghosts(event_type: Option<EventType>, has_bots: bool) -> bool {
-    !has_bots && event_type.is_some_and(EventType::has_explore_ghosts)
+pub fn shows_explore_ghosts(event_type: Option<EventType>) -> bool {
+    event_type.is_some_and(EventType::has_explore_ghosts)
 }
 
 pub const CLASS_UI_DROP: u32 = fnv1(b"ui_drop");
@@ -254,19 +254,19 @@ mod tests {
     }
 
     #[test]
-    fn only_ghost_events_race_explore_ghosts() {
+    fn only_ghost_events_ride_explore_ghosts() {
         let ghosts: Vec<u32> =
             (0..9).filter(|&v| EventType::from_raw(v).expect("a type").has_explore_ghosts()).collect();
         assert_eq!(ghosts, [EventType::TrickGhosts as u32, EventType::RaceGhosts as u32]);
     }
 
     #[test]
-    fn explore_ghosts_show_only_in_ghost_events_without_bots() {
-        assert!(shows_explore_ghosts(Some(EventType::RaceGhosts), false));
-        assert!(shows_explore_ghosts(Some(EventType::TrickGhosts), false));
-        assert!(!shows_explore_ghosts(Some(EventType::RaceGhosts), true));
-        assert!(!shows_explore_ghosts(Some(EventType::SurviveToBottom), false));
-        assert!(!shows_explore_ghosts(Some(EventType::SurviveToDeath), false));
-        assert!(!shows_explore_ghosts(None, false));
+    fn explore_ghosts_ride_only_the_ghost_types() {
+        assert!(shows_explore_ghosts(Some(EventType::RaceGhosts)));
+        assert!(shows_explore_ghosts(Some(EventType::TrickGhosts)));
+        assert!(!shows_explore_ghosts(Some(EventType::RaceBots)));
+        assert!(!shows_explore_ghosts(Some(EventType::SurviveToBottom)));
+        assert!(!shows_explore_ghosts(Some(EventType::SurviveToDeath)));
+        assert!(!shows_explore_ghosts(None));
     }
 }

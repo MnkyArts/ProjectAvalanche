@@ -9,8 +9,8 @@ use crate::folder::{Folder, PathFolder};
 use crate::slot::{self, Claim, SLOTS};
 use crate::{Options, Step, fault, sys};
 
-// TODO(guess): 10 s, looked at every 10 ms (an update of `exports.tsv` takes milliseconds; a writer that holds it
-// longer is stuck); settle: an update timed on a slow network folder.
+// PORT(choice): 10 s, looked at every 10 ms (an update of `exports.tsv` takes milliseconds; a writer that holds it
+// longer is stuck); tuning: an update timed on a slow network folder; the port's own file layer.
 const UPDATE_WAIT: Duration = Duration::from_secs(10);
 const UPDATE_POLL: Duration = Duration::from_millis(10);
 

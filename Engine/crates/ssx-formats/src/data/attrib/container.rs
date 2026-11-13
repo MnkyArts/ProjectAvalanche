@@ -90,6 +90,12 @@ fn expect_zero(data: &[u8], range: std::ops::Range<usize>, what: &str) -> Result
     }
 }
 
+pub fn cstr_in(vlt: &[u8], bin: &[u8], target: PtrTarget) -> Result<String> {
+    let mut r = Reader::be(if target.file == FILE_VLT { vlt } else { bin });
+    r.seek(target.offset as usize)?;
+    r.cstr()
+}
+
 impl<'a> Vault<'a> {
     pub fn parse(vlt: &'a [u8], bin: &'a [u8]) -> Result<Self> {
         let mut chunks = Vec::with_capacity(VLT_ORDER.len());
@@ -151,9 +157,7 @@ impl<'a> Vault<'a> {
     }
 
     pub fn cstr(&self, target: PtrTarget) -> Result<String> {
-        let mut r = Reader::be(self.file(target.file));
-        r.seek(target.offset as usize)?;
-        r.cstr()
+        cstr_in(self.vlt, self.bin, target)
     }
 
     pub fn export_bytes(&self, e: &Export) -> &'a [u8] {

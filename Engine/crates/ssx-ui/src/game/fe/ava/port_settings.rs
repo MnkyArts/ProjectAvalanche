@@ -9,8 +9,8 @@ use crate::game::loc::Localization;
 
 pub const MAX_FILE: u64 = ssx_assets::settings_file::MAX_FILE;
 
-// TODO(guess): a port choice — "Player", the port's offline gamertag (`USER_gamertag`); settle: none (the player sets
-// a name in Options, Player Name).
+// PORT(choice): "Player", the port's offline gamertag (`USER_gamertag`); the player sets a name in Options, Player
+// Name; the console's gamertag comes from Xbox Live.
 pub const DEFAULT_PLAYER_NAME: &str = "Player";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -374,7 +374,9 @@ const ALL: [Item; 19] = [
 
 const RENDER_HEIGHTS: [Option<u32>; 7] = [None, Some(2160), Some(1440), Some(1080), Some(900), Some(720), Some(540)];
 
-// TODO(guess): a port choice — the launcher's volumes (0 … 1 in hundredths on its slider) are shown and stepped in tenths, as the game's own speech and effect volumes step 0 … 10 (`AUDIOSETTING_*`); a step from 0.37 goes to 0.3 or 0.4; settle: none (the port's own setting).
+// PORT(choice): the launcher's volumes (0 … 1 in hundredths on its slider) are shown and stepped in tenths, as the
+// game's own speech and effect volumes step 0 … 10 (`AUDIOSETTING_*`); a step from 0.37 goes to 0.3 or 0.4; the port's
+// own setting, not the game's.
 const VOLUME_STEPS: f32 = 10.0;
 
 impl Item {

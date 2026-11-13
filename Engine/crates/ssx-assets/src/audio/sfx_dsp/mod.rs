@@ -19,7 +19,9 @@ pub fn madd(fused: bool, a: f32, b: f32, c: f32) -> f32 {
     if fused { a.mul_add(b, c) } else { a * b + c }
 }
 
-// TODO(guess): a port approximation on CPUs without FMA only — two roundings where the console has one: at most 2 of the 16-bit steps in 0.02–1.9 % of the reference rides' samples (0.02 % of a ride's, 1.9 % of `fe_audio`'s front-end walk; `SSX_SFX_FMA=off` forces this path); settle: nothing to decode (a soft-float `fmaf` is exact and far too slow).
+// PORT(choice): on CPUs without FMA only — two roundings where the console has one: at most 2 of the 16-bit steps in
+// 0.02–1.9 % of the reference rides' samples (0.02 % of a ride's, 1.9 % of `fe_audio`'s front-end walk;
+// `SSX_SFX_FMA=off` forces this path); nothing to decode (a soft-float `fmaf` is exact and far too slow).
 #[inline(always)]
 pub fn fused<R>(kernel: impl FnOnce(bool) -> R) -> R {
     #[cfg(target_arch = "x86_64")]

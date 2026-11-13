@@ -30,6 +30,11 @@ impl GameUi {
                         continue;
                     };
                     self.stats.binds.insert(name, binding.clone());
+                    if binding == fe::boot::ESRB_BINDING {
+                        self.stats.taken.insert(binding, "bootflow".into());
+                        self.fe_call(|front, _| fe::boot::bind(front, true));
+                        continue;
+                    }
                     let clip = Clip::bind(cx, &path);
                     let mut nav_events = Vec::new();
                     let mut env = HudEnv {
@@ -46,7 +51,11 @@ impl GameUi {
                 }
                 ("LocalDataStore", "UnbindData") => {
                     if let Some(binding) = self.store.binding_any(&s(1)) {
-                        self.hud.unbind(&binding);
+                        if binding == fe::boot::ESRB_BINDING {
+                            self.fe_call(|front, _| fe::boot::bind(front, false));
+                        } else {
+                            self.hud.unbind(&binding);
+                        }
                     }
                 }
                 ("LocalDataStore", "Subscribe") => {

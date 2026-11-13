@@ -15,8 +15,8 @@ use crate::library::{Library, MovieId};
 use crate::ot::Converted;
 use shape::Src;
 
-// TODO(guess): a port choice — 16 384 characters per paragraph (a hostile package movie may set any text; about 6 ms
-// of shaping at the measured 0.4 µs per Arabic character); settle: none (port feature).
+// PORT(choice): 16 384 characters per paragraph (a hostile package movie may set any text; about 6 ms of shaping at the
+// measured 0.4 µs per Arabic character); the original has no fallback fonts.
 pub const MAX_PARAGRAPH_CHARS: usize = 16_384;
 
 pub struct Field<'a> {
@@ -61,9 +61,9 @@ pub fn needs_complex(chars: &[char]) -> bool {
         && itemize::clusters(chars).iter().all(|&(a, b)| b - a == 1))
 }
 
-// TODO(guess): a port choice — the language from the paragraph's kana / Hangul (a name carries no language tag; a
-// Chinese name gets the Japanese forms of the shipped font, `locl` decides between them); settle: the player's
-// language setting as a hint (round text2's decision).
+// PORT(choice): the language from the paragraph's kana / Hangul (a name carries no language tag; a Chinese name gets
+// the Japanese forms of the shipped font, `locl` decides between them); the player's language setting as a hint is
+// round text2's decision; the original has no fallback fonts.
 fn language(chars: &[char]) -> Option<Language> {
     let has = |s: Script| chars.iter().any(|&c| itemize::script_of(c) == s);
     let tag = if has(Script::Hiragana) || has(Script::Katakana) {
@@ -121,9 +121,9 @@ pub fn paragraph(
         let c0 = units.get(line.0).map_or(0, |u| u.start);
         let base = bidi_paras.iter().find(|p| c0 < p.0).or(bidi_paras.last()).map_or(0, |p| p.1);
         let (order, width) = lines::visual(&units, line, &classes, &levels, base, bidi_on);
-        // TODO(guess): a port choice — a line's ascent and descent are its runs' fonts' (a fallback glyph's taller ink,
-        // e.g. a Devanagari or Thai mark stack, overhangs the line as the game path's fallback glyphs do); settle: none
-        // (port feature; the shipped fonts' own metrics would change line heights between scripts).
+        // PORT(choice): a line's ascent and descent are its runs' fonts' (a fallback glyph's taller ink, e.g. a
+        // Devanagari or Thai mark stack, overhangs the line as the game path's fallback glyphs do); the shipped fonts'
+        // own metrics would change line heights between scripts; the original has no fallback fonts.
         let (ascent, descent) = if line.0 == line.1 {
             para_metrics.unwrap_or(f.default_metrics)
         } else {

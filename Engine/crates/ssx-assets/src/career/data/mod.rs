@@ -1,11 +1,11 @@
 mod readers;
 mod records;
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ssx_formats::attrib::collection::{self, Collection, DecodedCollection, Field, FieldData};
+use ssx_formats::attrib::collection::{self, Collection, DecodedCollection, Field, FieldData, FieldSource};
 use ssx_formats::attrib::{NameDict, Schema, Value, Vault, fnv1};
 
 pub use readers::*;
@@ -31,6 +31,7 @@ struct Loaded {
 pub(crate) struct Vaults {
     loaded: Vec<Loaded>,
     pub dict: NameDict,
+    pub unknown: BTreeMap<u32, usize>,
 }
 
 fn read_pair(vlt: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -42,8 +43,7 @@ fn read_pair(vlt: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
 }
 
 pub(crate) struct Rec<'a> {
-    vault: &'a Loaded,
-    fields: Vec<&'a Field>,
+    fields: Vec<(u32, &'a Field, &'a Loaded)>,
 }
 
 impl Vaults {
@@ -59,30 +59,100 @@ impl Vaults {
         let dir = big_root.join("bootcache/data/xenon/attribdb");
         let (svlt, sbin) = read_pair(&dir.join("attribdb_schema.vlt"))?;
         let schema = Schema::from_vault(&Vault::parse(&svlt, &sbin)?).context("reading the schema")?;
+        let known: HashSet<u32> = schema.classes.iter().map(|c| c.key).collect();
         let mut loaded = Vec::new();
         let mut dict = NameDict::new();
-        for name in ["attribdb.vlt", "ge_attribdb.vlt"] {
-            let (vlt, bin) = read_pair(&dir.join(name))?;
+        let mut seen: HashSet<(u32, u32)> = HashSet::new();
+        let mut dlc_files: HashSet<String> = HashSet::new();
+        let mut unknown: BTreeMap<u32, usize> = BTreeMap::new();
+        let load = |name: &str,
+                    (vlt, bin): (Vec<u8>, Vec<u8>),
+                    route: bool,
+                    dict: &mut NameDict,
+                    loaded: &mut Vec<Loaded>,
+                    seen: &mut HashSet<(u32, u32)>,
+                    unknown: &mut BTreeMap<u32, usize>|
+         -> Result<()> {
             dict.add_strings_from(&vlt);
             dict.add_strings_from(&bin);
-            let (cols, decoded) = {
-                let v = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {name}"))?;
-                let cols = collection::collections(&v)?;
-                let mut decoded =
-                    cols.iter().map(|c| c.decode(&v, &schema)).collect::<ssx_formats::Result<Vec<_>>>()?;
-                if routed && name == "attribdb.vlt" {
-                    crate::content::data::events::route_ui_drops(big_root, &cols, &mut decoded);
+            let v = Vault::parse(&vlt, &bin).with_context(|| format!("parsing {name}"))?;
+            let cols = collection::collections(&v)?;
+            let mut kept = Vec::with_capacity(cols.len());
+            let mut decoded = Vec::with_capacity(cols.len());
+            for c in cols {
+                if !seen.insert((c.class, c.key)) {
+                    continue;
                 }
-                (cols, decoded)
-            };
-            let local = collection::index(&cols);
-            loaded.push(Loaded { vlt, bin, cols, decoded, local });
+                if !known.contains(&c.class) {
+                    *unknown.entry(c.class).or_default() += 1;
+                    continue;
+                }
+                decoded.push(c.decode(&v, &schema).with_context(|| format!("decoding collection {:#010x}", c.key))?);
+                kept.push(c);
+            }
+            if route {
+                crate::content::data::events::route_ui_drops(big_root, &kept, &mut decoded);
+            }
+            if kept.is_empty() {
+                return Ok(());
+            }
+            let local = collection::index(&kept);
+            loaded.push(Loaded { vlt, bin, cols: kept, decoded, local });
+            Ok(())
+        };
+        if routed {
+            if let Some(t) = crate::data_roots::tuner() {
+                load(
+                    &format!("the tuner pack ({})", t.source),
+                    (t.vlt.to_vec(), t.bin.to_vec()),
+                    false,
+                    &mut dict,
+                    &mut loaded,
+                    &mut seen,
+                    &mut unknown,
+                )?;
+            }
+            for root in crate::content::dlc::active_roots() {
+                let dir = root.join("data/xenon/attribdb");
+                let Ok(read) = std::fs::read_dir(&dir) else { continue };
+                let mut vlts: Vec<PathBuf> = read
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("vlt")))
+                    .collect();
+                vlts.sort();
+                for path in vlts {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    if name.eq_ignore_ascii_case("ge_attribdb.vlt")
+                        || name.eq_ignore_ascii_case("attribdb.vlt")
+                        || name.to_ascii_lowercase().ends_with("_track.vlt")
+                    {
+                        continue;
+                    }
+                    if !dlc_files.insert(name.clone()) {
+                        continue;
+                    }
+                    load(&name, read_pair(&path)?, false, &mut dict, &mut loaded, &mut seen, &mut unknown)?;
+                }
+            }
         }
-        Ok(Vaults { loaded, dict })
+        let attribdb = crate::data_roots::find(big_root, "data/xenon/attribdb/attribdb.vlt")
+            .unwrap_or_else(|| dir.join("attribdb.vlt"));
+        load("attribdb.vlt", read_pair(&attribdb)?, true, &mut dict, &mut loaded, &mut seen, &mut unknown)?;
+        let ge = crate::data_roots::find(big_root, "data/xenon/attribdb/ge_attribdb.vlt")
+            .unwrap_or_else(|| dir.join("ge_attribdb.vlt"));
+        let ge_name = ge.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        load(&ge_name, read_pair(&ge)?, false, &mut dict, &mut loaded, &mut seen, &mut unknown)?;
+        Ok(Vaults { loaded, dict, unknown })
     }
 
     pub fn keys_of(&self, class: u32) -> Vec<u32> {
-        self.loaded.iter().flat_map(|l| l.cols.iter().filter(|c| c.class == class).map(|c| c.key)).collect()
+        let mut seen = std::collections::HashSet::new();
+        self.loaded
+            .iter()
+            .flat_map(|l| l.cols.iter().filter(|c| c.class == class).map(|c| c.key))
+            .filter(|k| seen.insert(*k))
+            .collect()
     }
 
     pub fn parent(&self, class: u32, key: u32) -> u32 {
@@ -90,14 +160,40 @@ impl Vaults {
     }
 
     pub fn rec(&self, class: u32, key: u32) -> Result<Rec<'_>> {
-        let (l, i) = self
+        let (v, i) = self
             .loaded
             .iter()
-            .find_map(|l| l.local.get(&(class, key)).map(|&i| (l, i)))
+            .enumerate()
+            .find_map(|(v, l)| l.local.get(&(class, key)).map(|&i| (v, i)))
             .with_context(|| format!("collection {class:#010x}/{key:#010x} not found"))?;
-        let fields =
-            collection::with_inherited(&l.cols, &l.decoded, &l.local, i)?.into_iter().map(|(_, f)| f).collect();
-        Ok(Rec { vault: l, fields })
+        Ok(Rec { fields: self.with_inherited(v, i)? })
+    }
+
+    fn find(&self, class: u32, key: u32) -> Option<(usize, usize)> {
+        self.loaded.iter().enumerate().find_map(|(v, l)| l.local.get(&(class, key)).map(|&i| (v, i)))
+    }
+
+    fn with_inherited(&self, v: usize, i: usize) -> Result<Vec<(u32, &Field, &Loaded)>> {
+        let l = &self.loaded[v];
+        let mut out: Vec<(u32, &Field, &Loaded)> = l.decoded[i].fields.iter().map(|f| (l.cols[i].key, f, l)).collect();
+        let mut cur = (l.cols[i].class, l.cols[i].parent);
+        let total: usize = self.loaded.iter().map(|l| l.cols.len()).sum();
+        for _ in 0..total {
+            if cur.1 == 0 {
+                return Ok(out);
+            }
+            let (pv, pi) = self.find(cur.0, cur.1).with_context(|| {
+                format!("collection {:#010x}: parent {:#010x} not in any vault", l.cols[i].key, cur.1)
+            })?;
+            let pl = &self.loaded[pv];
+            for f in pl.decoded[pi].fields.iter().filter(|f| f.source != FieldSource::Layout) {
+                if !out.iter().any(|(_, o, _)| o.key == f.key) {
+                    out.push((pl.cols[pi].key, f, pl));
+                }
+            }
+            cur = (pl.cols[pi].class, pl.cols[pi].parent);
+        }
+        Err(anyhow::anyhow!("collection {:#010x}: parent chain loops", l.cols[i].key))
     }
 
     pub fn name(&self, class_name: &str, key: u32) -> String {
@@ -108,6 +204,42 @@ impl Vaults {
             _ => format!("{key:08x}"),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnlockKind {
+    Rider,
+    Item,
+    Geotag,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unlockable {
+    pub token: String,
+    pub key: u32,
+    pub kind: UnlockKind,
+}
+
+pub(crate) fn unlockables(v: &Vaults, read: crate::content::dlc::Unlockables) -> (Vec<Unlockable>, Vec<String>) {
+    let characters: HashSet<u32> = v.keys_of(CLASS_CHARACTER).into_iter().collect();
+    let equipment: HashSet<u32> = v.keys_of(CLASS_EQUIPMENT).into_iter().collect();
+    let mut problems = read.problems;
+    let mut out = Vec::new();
+    for token in read.tokens {
+        let key = fnv1(token.as_bytes());
+        let kind = if characters.contains(&key) {
+            UnlockKind::Rider
+        } else if equipment.contains(&key) {
+            let kind = v.rec(CLASS_EQUIPMENT, key).ok().and_then(|r| r.int(fnv1(b"type"))).unwrap_or(-1);
+            if kind == 4 { UnlockKind::Geotag } else { UnlockKind::Item }
+        } else {
+            problems.push(format!("unlockable {token:?} names no character or equipment collection"));
+            UnlockKind::Unknown
+        };
+        out.push(Unlockable { token, key, kind });
+    }
+    (out, problems)
 }
 
 fn values(d: &FieldData) -> Vec<&Value> {
@@ -137,11 +269,11 @@ fn int_of(v: &Value) -> Option<i64> {
 
 impl Rec<'_> {
     fn data(&self, key: u32) -> Option<&FieldData> {
-        self.fields.iter().find(|f| f.key == key).map(|f| &f.data)
+        self.fields.iter().find(|(_, f, _)| f.key == key).map(|(_, f, _)| &f.data)
     }
 
     pub fn keys(&self) -> Vec<u32> {
-        self.fields.iter().map(|f| f.key).collect()
+        self.fields.iter().map(|(_, f, _)| f.key).collect()
     }
 
     pub fn int(&self, key: u32) -> Option<i64> {
@@ -210,10 +342,10 @@ impl Rec<'_> {
     }
 
     pub fn raw_text(&self, key: u32, offset: u32) -> Option<String> {
-        let d = self.data(key)?;
-        let Some(Value::Raw { pointers, .. }) = values(d).first().copied() else { return None };
+        let (_, f, vault) = self.fields.iter().find(|(_, f, _)| f.key == key)?;
+        let Some(Value::Raw { pointers, .. }) = values(&f.data).first().copied() else { return None };
         let p = pointers.iter().find(|p| p.offset == offset)?;
-        let file = if p.target.file == 0 { &self.vault.vlt } else { &self.vault.bin };
+        let file = if p.target.file == 0 { &vault.vlt } else { &vault.bin };
         let rest = file.get(p.target.offset as usize..)?;
         let end = rest.iter().position(|&b| b == 0)?;
         Some(String::from_utf8_lossy(&rest[..end]).into_owned())

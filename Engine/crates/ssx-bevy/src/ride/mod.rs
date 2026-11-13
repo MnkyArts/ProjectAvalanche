@@ -1,6 +1,6 @@
 use bevy::prelude::{
-    App, FixedUpdate, IntoScheduleConfigs, PostUpdate, Quat, Resource, SystemSet, Update, Vec2, Vec3, World, info,
-    resource_exists, warn,
+    App, FixedUpdate, IntoScheduleConfigs, KeyCode, PostUpdate, PreUpdate, Quat, Resource, SystemSet, Update, Vec2,
+    Vec3, World, info, not, resource_exists, warn,
 };
 use ssx_assets::postfx_overlay::OverlayDrop;
 use ssx_physics::SIM_HZ;
@@ -27,6 +27,7 @@ mod controls;
 mod draw;
 pub mod helicopter;
 mod hud;
+mod key_player;
 pub mod live;
 mod map_intro;
 mod scripted;
@@ -38,9 +39,7 @@ pub use controls::read_live_controls;
 pub use draw::TerrainRipple;
 
 const TRIGGER_THRESHOLD: f32 = 0.5;
-const CLASSIC_GRIND_HOLD_TICKS: f32 = 10.0;
-const CLASSIC_REWIND_HOLD_TICKS: f32 = 12.0;
-const CLASSIC_WINGSUIT_HOLD_TICKS: f32 = 8.0;
+const L2_HOLD_MIN: f32 = 0.2;
 
 pub struct RideSetup {
     pub world: PhysicsWorld,
@@ -56,6 +55,7 @@ pub struct RideSetup {
     pub air_input: Option<Vec2>,
     pub grab: Option<Vec2>,
     pub tweak: bool,
+    pub shoulders: Option<[bool; 4]>,
     pub boost: bool,
     pub boost_meter: f32,
     pub screenshot_steps: Option<u32>,
@@ -64,6 +64,7 @@ pub struct RideSetup {
     pub fly_camera: bool,
     pub load_secs: f32,
     pub event_key: Option<u32>,
+    pub free_ride: bool,
     pub collected_geotags: Vec<u64>,
     pub game: bool,
     pub classic: bool,
@@ -206,6 +207,7 @@ pub struct Ride {
     pub render: Pose,
     pub render_time: f32,
     pub steps: u64,
+    pub(crate) audio_tag_log: AudioTagLog,
     pub distance: f64,
     pub input: Input,
     pub tricks: TrickInput,
@@ -214,6 +216,7 @@ pub struct Ride {
     air_input: Option<Vec2>,
     grab: Option<Vec2>,
     tweak: bool,
+    shoulders: Option<[bool; 4]>,
     boost: bool,
     boost_meter: f32,
     r2: f32,
@@ -224,6 +227,7 @@ pub struct Ride {
     rewind_pad: RewindPad,
     pub rewinding: bool,
     l2: bool,
+    l2_hold: bool,
     grind_fixed: bool,
     pub rail_debug: bool,
     last_grind_capture: f32,
@@ -243,11 +247,13 @@ pub struct Ride {
     pub back_press: bool,
     autoplay: bool,
     classic: bool,
-    classic_grind_ticks: f32,
-    classic_rewind_ticks: f32,
-    classic_wingsuit_ticks: f32,
     auto_rewind: AutoRewind,
     autoplay_waited: u64,
+    autoplay_sat_out: bool,
+    numpad_held: Vec<KeyCode>,
+    key_rewind: key_player::KeyRewindRun,
+    key_rewind_state: ssx_physics::rewind::RewindState,
+    key_holds: key_player::KeyHoldsRun,
     course: Option<ssx_physics::harness::CoursePlayer>,
     course_logged: usize,
     course_start_at: f32,
@@ -283,10 +289,6 @@ impl Ride {
     pub fn set_classic(&mut self, classic: bool) {
         self.classic = classic;
         self.state.tricks.classic = classic;
-        if !classic {
-            (self.classic_grind_ticks, self.classic_rewind_ticks) = (0.0, 0.0);
-            self.classic_wingsuit_ticks = 0.0;
-        }
     }
 
     pub fn classic(&self) -> bool {
@@ -427,6 +429,7 @@ pub fn insert(world: &mut World, r: RideLoad) -> anyhow::Result<()> {
         None => {}
     }
     if let Some(scene) = r.avalanche {
+        info!("{}", scene.summary());
         world.insert_resource(scene);
     }
     if let Some(noise) = r.noise {
@@ -448,8 +451,17 @@ pub fn insert(world: &mut World, r: RideLoad) -> anyhow::Result<()> {
 
 pub fn register(app: &mut App, hud: bool) {
     let riding = resource_exists::<Ride>;
+    crate::shell::level::scoped::<key_player::TestPad>(app);
     app.init_resource::<PausedFrames>()
         .add_systems(FixedUpdate, fixed_step.in_set(RideStepSet).run_if(riding))
+        .add_systems(
+            PreUpdate,
+            (
+                key_player::test_pad.run_if(riding),
+                key_player::test_pad_end.run_if(not(riding)).run_if(resource_exists::<key_player::TestPad>),
+            )
+                .before(bevy::input::InputSystems),
+        )
         .add_systems(
             Update,
             (
@@ -491,5 +503,71 @@ pub fn register(app: &mut App, hud: bool) {
             Update,
             (update_hud.after(animate_rider), update_trick_hud.after(animate_rider)).run_if(riding),
         );
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AudioTagLog {
+    entries: std::collections::VecDeque<(u64, ssx_assets::anim_eval::AudioTagEvent)>,
+}
+
+impl AudioTagLog {
+    pub const KEPT_STEPS: u64 = 30;
+
+    pub fn record(&mut self, step: u64, tags: &[ssx_assets::anim_eval::AudioTagEvent]) {
+        self.entries.extend(tags.iter().map(|t| (step, t.clone())));
+        while self.entries.front().is_some_and(|(s, _)| s + Self::KEPT_STEPS < step) {
+            self.entries.pop_front();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn after(&self, step: u64) -> impl Iterator<Item = &ssx_assets::anim_eval::AudioTagEvent> {
+        self.entries.iter().filter(move |(s, _)| *s > step).map(|(_, t)| t)
+    }
+}
+
+impl Ride {
+    pub fn audio_tags_after(&self, step: u64) -> impl Iterator<Item = &ssx_assets::anim_eval::AudioTagEvent> {
+        self.audio_tag_log.after(step)
+    }
+}
+
+#[cfg(test)]
+mod audio_tag_tests {
+    use super::AudioTagLog;
+    use ssx_assets::anim_eval::AudioTagEvent;
+
+    fn tag(name: &str) -> AudioTagEvent {
+        AudioTagEvent { name: name.into(), system: 4139, event: 0 }
+    }
+
+    fn names<'a>(it: impl Iterator<Item = &'a AudioTagEvent>) -> Vec<&'a str> {
+        it.map(|t| t.name.as_str()).collect()
+    }
+
+    #[test]
+    fn every_executions_tags_are_taken_once_in_order() {
+        let mut log = AudioTagLog::default();
+        log.record(1, &[tag("F_Board_Grab")]);
+        log.record(2, &[tag("BootBinding_In")]);
+        log.record(3, &[tag("F_Board_Release"), tag("Spin_Swish")]);
+        assert_eq!(names(log.after(1)), ["BootBinding_In", "F_Board_Release", "Spin_Swish"]);
+        assert!(log.after(3).next().is_none());
+    }
+
+    #[test]
+    fn old_executions_are_dropped() {
+        let mut log = AudioTagLog::default();
+        log.record(1, &[tag("old")]);
+        log.record(1 + AudioTagLog::KEPT_STEPS, &[tag("kept")]);
+        assert_eq!(names(log.after(0)), ["old", "kept"]);
+        log.record(2 + AudioTagLog::KEPT_STEPS, &[]);
+        assert_eq!(names(log.after(0)), ["kept"]);
+        log.clear();
+        assert!(log.after(0).next().is_none());
     }
 }

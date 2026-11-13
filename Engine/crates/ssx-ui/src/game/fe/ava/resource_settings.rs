@@ -1,11 +1,12 @@
 use serde_json::{Map, Value as Json};
 
-// TODO(guess): 64 MiB … 8 GiB, 2 GiB by default (`ssx_net_join::resources::DEFAULT_LIMIT`: one package at its cap; a
-// map within M8b's budgets is at most 512 MiB of models and 1 GiB of images); settle: what players set.
+// PORT(choice): 64 MiB … 8 GiB, 2 GiB by default (`ssx_net_join::resources::DEFAULT_LIMIT`: one package at its cap; a
+// map within M8b's budgets is at most 512 MiB of models and 1 GiB of images); tuning: what players set; the original
+// downloads no packages.
 pub const DOWNLOAD_STEPS_MIB: [u32; 8] = [64, 128, 256, 512, 1024, 2048, 4096, 8192];
 pub const DEFAULT_DOWNLOAD_MIB: u32 = 2048;
-// TODO(guess): 1 … 64 GiB, 8 GiB by default (four servers' worth of the 2 GiB a package may be); settle: the cache
-// sizes players keep.
+// PORT(choice): 1 … 64 GiB, 8 GiB by default (four servers' worth of the 2 GiB a package may be); tuning: the cache
+// sizes players keep; the original downloads no packages.
 pub const CACHE_STEPS_MIB: [u32; 7] = [1024, 2048, 4096, 8192, 16384, 32768, 65536];
 pub const DEFAULT_CACHE_MIB: u32 = 8192;
 

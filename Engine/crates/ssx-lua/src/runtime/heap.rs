@@ -139,7 +139,9 @@ impl Heap {
         }
     }
 
-    // TODO(guess): no weak tables (`__mode`) or `__gc` finalizers, and the collection points differ from Lua's incremental collector; settle: none needed — no disc script uses `__mode` / `__gc` (a search of the 177 scripts), only memory use differs.
+    // PORT(choice): no weak tables (`__mode`) or `__gc` finalizers, and the collection points differ from Lua's
+    // incremental collector; no disc script uses `__mode` / `__gc` (a search of the 177 scripts), only memory use
+    // differs.
     pub fn collect(&mut self, roots: &[Value]) -> usize {
         let mut marked = vec![false; self.slots.len()];
         let mut work: Vec<GcRef> = roots.iter().filter_map(Value::gc).collect();

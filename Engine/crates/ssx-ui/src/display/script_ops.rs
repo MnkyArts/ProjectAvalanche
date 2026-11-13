@@ -170,6 +170,7 @@ impl Player {
             blend: BlendMode::Normal,
             filter: None,
             visible: true,
+            advance_hidden: false,
             cache_as_bitmap: false,
             placed_frame: None,
             transformed_by_script: false,
@@ -288,32 +289,28 @@ impl Player {
         }
     }
 
-    /// `_visible` (`Sprite::SetVisible` 0x8268CEA0): the clip's own flag, and — with `noInvisibleAdvance` on — copied
-    /// to every child sprite through slot +0x184 (0x8268C160) when the clip's parent is visible (the parent's own flag
-    /// clear). A hidden parent therefore freezes its subtree; a child set visible again clears only its own flag (its
-    /// parent is hidden, so the copy stops there), which is how the equipment's hidden image buffer keeps its loader's
-    /// `onEnterFrame` alive (`frontend.md` §10.2).
     pub fn set_visible(&mut self, id: InstanceId, v: bool) {
-        let Some(i) = self.get(id) else { return };
-        if i.visible == v {
+        let hidden = !v && self.no_invisible_advance;
+        let Some(i) = self.get_mut(id) else { return };
+        i.visible = v;
+        if i.sprite().is_none() || i.advance_hidden == hidden {
             return;
         }
+        i.advance_hidden = hidden;
         let parent = i.parent;
-        if let Some(i) = self.get_mut(id) {
-            i.visible = v;
-        }
-        let copy_down = parent.is_some_and(|p| self.get(p).is_some_and(|p| p.visible));
-        if !self.no_invisible_advance || !copy_down {
+        let copy_down = parent.and_then(|p| self.get(p)).is_some_and(|p| !p.advance_hidden);
+        if !copy_down {
             return;
         }
         let mut stack = vec![id];
         while let Some(p) = stack.pop() {
-            let children: Vec<InstanceId> = self.children(p).into_iter().map(|(_, c)| c).collect();
-            for c in children {
-                if let Some(ci) = self.get_mut(c) {
-                    ci.visible = v;
+            for (_, c) in self.children(p) {
+                if let Some(ci) = self.get_mut(c)
+                    && ci.sprite().is_some()
+                {
+                    ci.advance_hidden = hidden;
+                    stack.push(c);
                 }
-                stack.push(c);
             }
         }
     }

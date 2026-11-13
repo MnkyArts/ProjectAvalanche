@@ -10,10 +10,9 @@ const TITLE_REST: Color32 = Color32::from_rgb(0xA6, 0xE9, 0xF6);
 const TITLE_BASE: f32 = 35.0;
 const SUB_BASE: f32 = 55.0;
 
-fn labels(page: Page, data_ready: bool) -> (&'static str, &'static str) {
+fn labels(page: Page, play: &'static str) -> (&'static str, &'static str) {
     match page {
-        Page::Play if data_ready => ("PLAY", "START THE GAME"),
-        Page::Play => ("PLAY", "SET UP THE GAME DATA FIRST"),
+        Page::Play => ("PLAY", play),
         Page::Host => ("HOST", "A SERVER FOR YOUR FRIENDS"),
         Page::Mods => ("MODS", "INSTALL, ORDER, SWITCH"),
         Page::Settings => ("SETTINGS", "GRAPHICS, CONTROLS, AUDIO"),
@@ -51,7 +50,7 @@ fn entry(painter: &Painter, l: &Layout, rect: Rect, (title, sub): (&str, &str), 
     text::draw(painter, pos2(x, rect.top() + SUB_BASE), sub, &sub_style);
 }
 
-pub fn show(ui: &mut Ui, l: &Layout, cursor: MenuItem, data_ready: bool, forced: Option<&str>) -> Option<MenuItem> {
+pub fn show(ui: &mut Ui, l: &Layout, cursor: MenuItem, play: &'static str, forced: Option<&str>) -> Option<MenuItem> {
     let painter = ui.painter().clone();
     let column = shapes::chamfered(l.menu, Cut { bl: CUT_TILE, ..Default::default() });
     shapes::fill(&painter, &column, theme::PANEL);
@@ -76,7 +75,7 @@ pub fn show(ui: &mut Ui, l: &Layout, cursor: MenuItem, data_ready: bool, forced:
         if i > 0 {
             rule(rect.top());
         }
-        entry(&painter, l, rect, labels(page, data_ready), Look { selected: cursor == item, hovered });
+        entry(&painter, l, rect, labels(page, play), Look { selected: cursor == item, hovered });
     }
     rule(l.entries[l.entries.len() - 1].bottom());
     let (hovered, selected) = (sense(ui, MenuItem::Exit, l.exit), cursor == MenuItem::Exit);

@@ -14,8 +14,9 @@ use ssx_net_proto::query::{Challenge, QUERY_ANSWER_SIZE, QueryAnswer, QueryReque
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::timeout;
 
-// TODO(guess): 2 s to connect, 4 s for `/info`, 1 s a UDP attempt (a check ends within 8 s, inside the heartbeat's
-// connection time of 15 s); settle: checks of servers over real links (the master's log of slow checks).
+// PORT(choice): 2 s to connect, 4 s for `/info`, 1 s a UDP attempt (a check ends within 8 s, inside the heartbeat's
+// connection time of 15 s); tuning: checks of servers over real links (the master's log of slow checks); the original
+// has no master server.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const INFO_TIMEOUT: Duration = Duration::from_secs(4);
 pub const UDP_ATTEMPT: Duration = Duration::from_secs(1);

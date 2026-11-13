@@ -41,7 +41,7 @@ pub fn activate(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.game_mode = -1;
     fe.screen = screens::id::MAIN_MENU;
     let unlocked = fe.profile.drop_state(GROUND_TUTORIAL) == ssx_assets::career::profile::DropState::Completed;
-    env.values.set_bool(0xA6, true);
+    env.values.set_bool(crate::game::values::id::FLOW_RECEIVE_NOTIFICATIONS, true);
     env.values.set_bool(0xA1, true);
     env.values.set_bool(0xA2, unlocked);
     env.values.set_bool(0xA3, unlocked);
@@ -124,7 +124,8 @@ pub fn build_list(fe: &mut FrontEnd, env: &mut FeEnv) {
     };
     fe.menu.index = match fe.menu_focus {
         MenuFocus::FirstItem => first_open,
-        // TODO(guess): a port choice — the option "Menus: the last item picked" focuses the item last picked while it is enabled and focusable (else the first open mode); settle: none (the game's build 0x825DC168 always focuses the first open mode).
+        // PORT(choice): the option "Menus: the last item picked" focuses the item last picked while it is enabled and
+        // focusable (else the first open mode); the game's build 0x825DC168 always focuses the first open mode.
         MenuFocus::LastItem => last_picked(&fe.menu).unwrap_or(first_open),
     };
 }

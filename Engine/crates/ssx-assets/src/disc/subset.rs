@@ -15,8 +15,8 @@ use super::setup::{
 
 pub const MARKER: &str = "subset.json";
 const FORMAT: u64 = 1;
-// TODO(guess): 16 MiB, 2.5 times the largest server member of the one disc measured (`cache0` `anim_all.cba`, 6 484 944
-// bytes); settle: the largest member of the other pressings of the disc.
+// PORT(choice): 16 MiB, 2.5 times the largest server member of the one disc measured (`cache0` `anim_all.cba`, 6 484
+// 944 bytes); tuning: the largest member of the other pressings of the disc; a bound of the port's server subset.
 pub const MAX_MEMBER: u64 = 16 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

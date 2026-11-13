@@ -11,7 +11,8 @@ use ssx_ui::render::{ScaleMode, stage_transform};
 use super::GameUiRes;
 use crate::ui::{UiCamera, UiScene};
 
-// TODO(guess): a port choice — a pixel-unit scroll of 40 logical pixels is a wheel notch (a line-unit scroll is one per line); settle: none (the console has no wheel).
+// PORT(choice): a pixel-unit scroll of 40 logical pixels is a wheel notch (a line-unit scroll is one per line); the
+// console has no wheel.
 const PIXELS_PER_NOTCH: f32 = 40.0;
 
 #[derive(Default)]

@@ -7,8 +7,10 @@ mod catalog;
 mod command;
 mod data_state;
 mod display;
+mod dlc_list;
 mod host;
 mod jobs;
+mod language;
 mod link_handler;
 mod main_screen;
 mod masters;
@@ -16,6 +18,8 @@ mod mod_list;
 mod settings;
 mod settings_flow;
 mod setup_flow;
+mod tu_list;
+mod tuner_page;
 mod ui;
 mod update;
 
@@ -60,7 +64,8 @@ fn main() -> eframe::Result {
     if let Some(dir) = &args.dump_art {
         std::process::exit(dump_art(&settings, dir));
     }
-    let gallery = art::Gallery::start(app::art_request(&settings));
+    let data_state = settings.data_state();
+    let gallery = art::Gallery::start(app::art_request(&settings, data_state.playable()));
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Project Avalanche")
         .with_app_id("project-avalanche")
@@ -80,6 +85,7 @@ fn main() -> eframe::Result {
                 args.screenshot.clone(),
                 gallery,
                 !args.no_update_check && update::auto_check_enabled(),
+                data_state,
             );
             if let Some(page) = args.start_page() {
                 app.go(page);
@@ -95,6 +101,7 @@ fn main() -> eframe::Result {
             app.forced_hover = args.hover.clone();
             app.window_pixels = args.window;
             app.scripted_keys = args.keys.iter().copied().collect();
+            app.scroll = args.scroll;
             app.timing = std::env::var_os("PROJECT_AVALANCHE_TIMING").map(|_| started);
             app.auto_extract = args.extract;
             app.shot_after_setup = args.after_setup;
@@ -105,6 +112,15 @@ fn main() -> eframe::Result {
             app.host.script = args.host.iter().copied().collect();
             if let Some(package) = &args.install {
                 app.mods.start_install(&cc.egui_ctx, settings::app_dir(), package.clone(), false);
+            }
+            if let Some(package) = &args.dlc_install {
+                let root = crate::dlc_list::DlcPage::root(&settings::app_dir());
+                let big = app.data_ready.then(|| app.settings.big_root());
+                app.dlc.start_install(&cc.egui_ctx, root, big, package.clone(), false);
+            }
+            if let Some(file) = &args.tuner_install {
+                let root = crate::tuner_page::TunerPage::root(&settings::app_dir());
+                app.tuner.start_install(&cc.egui_ctx, root, command::save_path(), file.clone(), false);
             }
             Ok(Box::new(app))
         }),
@@ -199,7 +215,7 @@ fn dump_art(s: &settings::Settings, dir: &Path) -> i32 {
     }
     let started = std::time::Instant::now();
     let mut failed = false;
-    let problems = art::load(&app::art_request(s), &mut |l| {
+    let problems = art::load(&app::art_request(s, s.data_ready()), &mut |l| {
         let file = dir.join(format!("{}.png", l.slot.name()));
         let (w, h) = (l.picture.width, l.picture.height);
         ssx_core::println!(

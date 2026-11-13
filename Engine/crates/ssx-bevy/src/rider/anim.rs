@@ -230,10 +230,6 @@ impl RiderAnimation {
         (&self.curr, &self.rig, self.rig_ops.effectors())
     }
 
-    pub fn drawn_records(&self) -> &[JointRecord] {
-        &self.render
-    }
-
     pub fn drawn_joint(&self, name: &str) -> Option<JointRecord> {
         self.rig.find(name).and_then(|i| self.render.get(i).copied())
     }

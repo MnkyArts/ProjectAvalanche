@@ -5,8 +5,9 @@ pub enum Tier {
     Far,
 }
 
-// TODO(guess): 150 m and 400 m, chosen by S0.2 from the error per rate and the pixels per metre at the game's field of
-// view (57…90°); settle: the tier distances seen in real sessions over the internet.
+// PORT(choice): 150 m and 400 m, chosen by S0.2 from the error per rate and the pixels per metre at the game's field of
+// view (57…90°); tuning: the tier distances seen in real sessions over the internet; the original has no real-time
+// multiplayer.
 pub const NEAR_M: f32 = 150.0;
 pub const MIDDLE_M: f32 = 400.0;
 
@@ -29,8 +30,9 @@ impl Tier {
         }
     }
 
-    // TODO(guess): 4 / 2 / 1, ordering the tiers only (lightyear sends by priority when a bandwidth quota is set; the
-    // server sets none until phase 4's limits); settle: phase 4's per-client bandwidth limit measured with 32 riders.
+    // PORT(choice): 4 / 2 / 1, ordering the tiers only (lightyear sends by priority when a bandwidth quota is set; the
+    // server sets none until phase 4's limits); tuning: phase 4's per-client bandwidth limit measured with 32 riders;
+    // the original has no real-time multiplayer.
     pub fn priority(self) -> f32 {
         match self {
             Self::Near => 4.0,

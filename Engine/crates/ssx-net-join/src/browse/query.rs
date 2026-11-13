@@ -7,8 +7,9 @@ use ssx_net_proto::players::{MAX_PLAYERS_BYTES, PlayerList};
 use ssx_net_proto::{BUILD_ID, PROTOCOL_VERSION};
 use ureq::Agent;
 
-// TODO(guess): 4 s in all and 2 s to connect (the join takes 10 s / 5 s; a list of 100 servers is asked 8 at a time, so
-// a dead server must not hold a worker long); settle: the browser over real links (phase 5's masters and queries).
+// PORT(choice): 4 s in all and 2 s to connect (the join takes 10 s / 5 s; a list of 100 servers is asked 8 at a time,
+// so a dead server must not hold a worker long); tuning: the browser over real links (phase 5's masters and queries);
+// the original has no server browser.
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(4);
 pub const QUERY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HEADERS: usize = 8 * 1024;

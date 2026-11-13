@@ -24,6 +24,7 @@ mod trick_templates;
 mod tricks;
 
 mod m8_templates;
+pub mod map_start;
 mod maps;
 
 use std::path::{Path, PathBuf};

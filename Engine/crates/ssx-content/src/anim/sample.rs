@@ -69,7 +69,11 @@ pub(super) fn sample(keys: &Keys, blend: Blend, seconds: f32) -> [f32; 4] {
     match keys.interpolation {
         Interpolation::Step if rotation => normalised(a),
         Interpolation::Step => a,
-        // TODO(guess): rotations between linear keys by the game's own blend (sign-fixed nlerp, 0x82D82160, as every disc codec samples between its keys) where glTF 2.0 asks a slerp; both agree at the keys, between keys whose quaternions are θ apart they differ by less than θ³/50 (2e-5 at θ = 0.1), and nlerp needs no sin/acos, so it is bit-identical on every platform; settle: whether modders' clips with sparse keys need slerp (compare both on an exported clip resampled to 10 keys a second).
+        // PORT(choice): rotations between linear keys by the game's own blend (sign-fixed nlerp, 0x82D82160, as every
+        // disc codec samples between its keys) where glTF 2.0 asks a slerp; both agree at the keys, between keys whose
+        // quaternions are θ apart they differ by less than θ³/50 (2e-5 at θ = 0.1), and nlerp needs no sin/acos, so it
+        // is bit-identical on every platform; tuning: whether modders' clips with sparse keys need slerp (compare both
+        // on an exported clip resampled to 10 keys a second); the game imports no glTF clips.
         Interpolation::Linear if rotation => nlerp(a, b, u),
         Interpolation::Linear if blend == Blend::Scalar => [(b[0] - a[0]).mul_add(u, a[0]), 0.0, 0.0, 0.0],
         Interpolation::Linear => {

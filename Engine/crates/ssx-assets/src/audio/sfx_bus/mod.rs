@@ -157,7 +157,7 @@ impl PatchSet {
         let mut buses = None;
         for e in &archive.entries {
             let data = archive.member(&big, e)?;
-            let Ptch::V1(p) = Ptch::parse(data).with_context(|| e.path())? else { continue };
+            let Ptch::V1(p) = Ptch::parse(&data).with_context(|| e.path())? else { continue };
             if p.name == "buses_patch" {
                 buses = Some(p);
             } else {

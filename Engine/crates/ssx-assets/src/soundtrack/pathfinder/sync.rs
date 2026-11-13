@@ -13,25 +13,34 @@ pub struct StreamStatus {
 }
 
 impl Pathfinder {
+    // TODO(guess): the status is computed from the stream's position at every call; the exe rebuilds its block
+    // (0x835CCC08) only while the stream's +0x20 is set — by its queue (0x835CD4E8 / 0x835CDBE8), start (0x835CDAF0)
+    // and stop (through vtable +8, 0x835D18E8), cleared by the rebuild — and reads it as it was in between; no other
+    // setter was found (the stores to +0x20 in 0x835C4000…0x835D2000; no call of +8 or +0x14 on a player's +0x12C);
+    // settle: 0x835C8400's output frame by frame in a run of the exe, or a caller of the vtables' +8 outside Pathfinder.
     pub fn status(&self, i: usize) -> StreamStatus {
         let Some(p) = self.players.get(i).and_then(Option::as_ref) else { return StreamStatus::default() };
-        let Some(head) = p.stream.items.front() else { return StreamStatus::default() };
-        let node = &self.mpf.nodes[head.node as usize];
-        let dur = head.duration_ms;
-        let played = (p.stream.head_frames * 1000.0 / f64::from(SAMPLE_RATE)) as u32;
-        let remaining = dur.saturating_sub(played);
-        let bars = u32::from(node.bars).max(1);
-        let bar = dur / bars;
-        let beat = if node.beats_per_bar > 0 { dur / (u32::from(node.beats_per_bar) * bars) } else { bar };
-        let mut s = StreamStatus {
-            node: Some(head.node),
-            duration: dur,
-            bar,
-            beat,
-            remaining,
-            to_bar: if bar > 0 { (remaining + 1) % bar } else { 0 },
-            to_beat: if beat > 0 { (remaining + 1) % beat } else { 0 },
-            beat_number: (dur - remaining).checked_div(beat).map_or(0, |b| b + 1),
+        let mut s = match p.stream.items.front() {
+            Some(head) => {
+                let node = &self.mpf.nodes[head.node as usize];
+                let dur = head.duration_ms;
+                let played = (p.stream.head_frames * 1000.0 / f64::from(SAMPLE_RATE)) as u32;
+                let remaining = dur.saturating_sub(played);
+                let bars = u32::from(node.bars).max(1);
+                let bar = dur / bars;
+                let beat = if node.beats_per_bar > 0 { dur / (u32::from(node.beats_per_bar) * bars) } else { bar };
+                StreamStatus {
+                    node: Some(head.node),
+                    duration: dur,
+                    bar,
+                    beat,
+                    remaining,
+                    to_bar: if bar > 0 { (remaining + 1) % bar } else { 0 },
+                    to_beat: if beat > 0 { (remaining + 1) % beat } else { 0 },
+                    beat_number: (dur - remaining).checked_div(beat).map_or(0, |b| b + 1),
+                }
+            }
+            None => StreamStatus::default(),
         };
         if p.pitch != PITCH_ONE {
             if p.pitch == 0 {
@@ -45,6 +54,11 @@ impl Pathfinder {
             }
         }
         s
+    }
+
+    pub fn first_status(&self) -> Option<StreamStatus> {
+        let i = self.players.iter().position(Option::is_some)?;
+        Some(self.status(i))
     }
 
     pub(super) fn beat_frames(&self, m: usize) -> Option<(u64, f64)> {

@@ -4,10 +4,12 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use crate::address::{canonical, never_a_server};
 pub use crate::trust::Holder;
 
-// TODO(guess): 64 networks (a proxy's network or two, IPv4 and IPv6, with room); settle: none (an operator's choice).
+// PORT(choice): 64 networks (a proxy's network or two, IPv4 and IPv6, with room; an operator's choice); the original
+// has no master server.
 pub const MAX_TRUSTED: usize = 64;
-// TODO(guess): 16 entries and 1 024 bytes (one proxy appends one entry; 16 of the longest written form, 45 bytes and
-// ", ", are 752 bytes); settle: the chains a public master behind its proxy sees (its refused-header counter).
+// PORT(choice): 16 entries and 1 024 bytes (one proxy appends one entry; 16 of the longest written form, 45 bytes and
+// ", ", are 752 bytes); tuning: the chains a public master behind its proxy sees (its refused-header counter); the
+// original has no master server.
 pub const MAX_FORWARDED_ENTRIES: usize = 16;
 pub const MAX_FORWARDED_BYTES: usize = 1024;
 const MAX_ENTRY: usize = 45;

@@ -8,17 +8,18 @@ use ssx_rules::intro::START_FIRST;
 use super::limits::*;
 use super::{Counts, Finding, Measure};
 
-// TODO(guess): 90 executions (3 s), port bounds — a report waits for the samples of its execution, which come within
-// the round trip and its resends (measured under 1 s); settle: the reports' largest lag behind their samples.
+// PORT(choice): 90 executions (3 s), port bounds — a report waits for the samples of its execution, which come within
+// the round trip and its resends (measured under 1 s); tuning: the reports' largest lag behind their samples; the
+// original has no validation.
 const RECENT_EXECUTIONS: f64 = 90.0;
-// TODO(guess): 64 reports (a run reports 9 splits, a trick round a combo every few seconds), a port bound; settle: the
-// most reports waiting at once in the network runs.
+// PORT(choice): 64 reports (a run reports 9 splits, a trick round a combo every few seconds), a port bound; tuning: the
+// most reports waiting at once in the network runs; the original has no validation.
 const MAX_PENDING: usize = 64;
-// TODO(guess): 4 096 intervals, a port bound (a sample's step each: about 4.5 minutes of samples before merging);
-// settle: none needed (merging keeps the allowance).
+// PORT(choice): 4 096 intervals, a port bound (a sample's step each: about 4.5 minutes of samples before merging;
+// merging keeps the allowance); the original has no validation.
 const MAX_SLOWED: usize = 4096;
-// TODO(guess): 300 executions (10 s): a longer gap is a stall, not a ride, and the step's envelope grows with it;
-// settle: the largest honest gap between samples in the network runs.
+// PORT(choice): 300 executions (10 s): a longer gap is a stall, not a ride, and the step's envelope grows with it;
+// tuning: the largest honest gap between samples in the network runs; the original has no validation.
 const MAX_STEP_GAP: f64 = 300.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

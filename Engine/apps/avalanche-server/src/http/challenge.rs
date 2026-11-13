@@ -11,12 +11,12 @@ use ssx_net_proto::keys::{ServerKey, random_bytes};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
-// TODO(guess): 30 s, three HTTP timeouts of the client's join (the info, the challenge, the join); settle: the
-// join times of phase 2's clients over real links.
+// PORT(choice): 30 s, three HTTP timeouts of the client's join (the info, the challenge, the join); tuning: the join
+// times of phase 2's clients over real links; the original has no dedicated server.
 pub const CHALLENGE_LIFETIME: Duration = Duration::from_secs(30);
 
-// TODO(guess): 8 192, far above the joins the per-address limits admit in a challenge's lifetime from a few hundred
-// addresses; settle: the join rate of phase 4's public servers.
+// PORT(choice): 8 192, far above the joins the per-address limits admit in a challenge's lifetime from a few hundred
+// addresses; tuning: the join rate of phase 4's public servers; the original has no dedicated server.
 pub const MAX_USED_CHALLENGES: usize = 8192;
 
 const DOMAIN: &[u8] = b"SSXA challenge v1\0";

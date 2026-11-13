@@ -46,7 +46,9 @@ pub fn level_frame(
             ui.values.set_bool(ssx_ui::game::values::id::READY, true);
             ui.fe_call(ssx_ui::game::fe::pads::hud_ready);
             ui.fe_call(ssx_ui::game::fe::flow::hud_ready);
-            // TODO(guess): the world drawn for `DRAWN_FRAMES` frames stands for the camera's streaming query finding its entries resident (0x824D1998 +0x74, 0x82980620); settle: none (0x824D0A00 / 0x824D1AC8 only place it in the level's start).
+            // PORT(choice): the world drawn for `DRAWN_FRAMES` frames stands for the camera's streaming query finding
+            // its entries resident (0x824D1998 +0x74, 0x82980620; 0x824D0A00 / 0x824D1AC8 only place it in the level's
+            // start); the port does not stream the level from a disc.
             ui.fe_call(ssx_ui::game::fe::flow::stream_ready);
             if let Some(a) = audio.as_mut() {
                 a.gameplay_start();

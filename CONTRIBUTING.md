@@ -42,14 +42,23 @@ Draft pull requests run no CI until they are marked ready for review.
 - Rust 2024, formatted by `rustfmt` (`Engine/rustfmt.toml`, width 120); clippy clean with `-D warnings`.
 - Parsers read from `&[u8]` with bounds checks and return errors: no panics or unwraps on data from the disc.
 - Name things after what the data is; unknown fields stay in the structure as `unk_*`.
-- **Guess markers**: every guess, approximation, port choice or stand-in for undecoded game behaviour gets a comment
-  at the code site, readable on its own:
+- **Guess markers**: every guess, approximation or stand-in for undecoded game behaviour gets a comment at the code
+  site, readable on its own:
 
   ```rust
   // TODO(guess): <what is guessed>; <what is known: addresses, names, numbers, what was tried>; settle: <what would settle it>
   ```
 
   A change that decodes the behaviour removes the marker.
+- **Port choices**: a decision of the port's own where the original has nothing to decode (the PC's keyboard, mouse,
+  windows and files, aspect ratios wider than 16:9, the launcher, mods, online play and servers, engine mechanics
+  with no console counterpart) gets a comment of its own:
+
+  ```rust
+  // PORT(choice): <the choice and its facts>; <what the console had instead>
+  ```
+
+  A choice that replaces undecoded game behaviour is a guess, not a port choice.
 - The published code carries no comments except these markers and the command-line help texts. Explain your change
   in the pull request's description instead; reviewers keep what matters.
 

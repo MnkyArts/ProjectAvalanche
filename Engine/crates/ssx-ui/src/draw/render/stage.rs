@@ -18,11 +18,11 @@ pub fn stage_scale(stage: (f32, f32), viewport: (f32, f32), mode: ScaleMode) -> 
             (k, k)
         }
         ScaleMode::NoBorder => {
-            // TODO(guess): a viewport wider than the stage (21:9, 32:9 — wider than any display the game knew: 16:9
-            // at 1280 × 720, or 4:3 at 960 × 720, 0x82FB57A0) shows the whole stage at the viewport's height, centred,
-            // the sides beyond it showing what the movies draw there and the 3-D scene behind (`noBorder` would scale
-            // to the width and crop the top and bottom: the HUD's and the menus' edges lost); 16:9 and narrower keep
-            // `noBorder` exactly (the FE view set-up's SetViewScaleMode(3), 0x82593800); settle: none (a port choice).
+            // PORT(choice): a viewport wider than the stage (21:9, 32:9 — wider than any display the game knew: 16:9 at
+            // 1280 × 720, or 4:3 at 960 × 720, 0x82FB57A0) shows the whole stage at the viewport's height, centred, the
+            // sides beyond it showing what the movies draw there and the 3-D scene behind (`noBorder` would scale to
+            // the width and crop the top and bottom: the HUD's and the menus' edges lost); 16:9 and narrower keep
+            // `noBorder` exactly (the FE view set-up's SetViewScaleMode(3), 0x82593800); the console never drew wider.
             let k = if vw * sh > vh * sw { vh / sh } else { (vw / sw).max(vh / sh) };
             (k, k)
         }

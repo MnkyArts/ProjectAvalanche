@@ -356,12 +356,12 @@ fn build_frame(
         }
         list
     };
-    // TODO(guess): beside a stage that a screen covers opaquely (the title's backdrop) a wider window shows black, not
+    // PORT(choice): beside a stage that a screen covers opaquely (the title's backdrop) a wider window shows black, not
     // the 3-D layer under the screen (the globe), which the game's 16:9 picture never showed under such a screen; black
-    // is what the title's backdrop ends in at both edges (at 1920 x 1080: (0, 0, 0) to (0, 1, 2)); settle: none (the
-    // game drew nothing beside its 16:9 stage).
-    // TODO(guess): a colour or gradient backdrop over the whole stage (the pause's and the results' dimmers) reaches the
-    // window's edges, so the side is dimmed as the stage is; settle: none (the game drew nothing beside its stage).
+    // is what the title's backdrop ends in at both edges (at 1920 x 1080: (0, 0, 0) to (0, 1, 2)); the game drew
+    // nothing beside its 16:9 stage.
+    // PORT(choice): a colour or gradient backdrop over the whole stage (the pause's and the results' dimmers) reaches
+    // the window's edges, so the side is dimmed as the stage is; the game drew nothing beside its stage.
     let beside = list.shows_beside_stage();
     let hidden_beside = beside && list.covers_stage(&scene.lib, &mut scene.opaque);
     if beside {

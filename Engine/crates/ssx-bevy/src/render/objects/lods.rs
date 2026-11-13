@@ -42,6 +42,8 @@ struct PlacementSlot {
     current: Transform,
     entities: Vec<Vec<(Entity, usize)>>,
     state: Option<(usize, Draw)>,
+    /// A foreground mountain (terrain_foreground.fx): scenery past the course.
+    foreground: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,7 +212,10 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
             entities.push(lod_entities);
         }
         let (centre, radius) = placement_bounds(&loaded.lods[*object], placement);
+        let foreground =
+            lods.iter().flatten().any(|&(_, m)| matches!(material_handles[m], MaterialHandle::Foreground(_)));
         slots.push(PlacementSlot {
+            foreground,
             centre,
             radius,
             object: *object,
@@ -257,6 +262,15 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
     });
 }
 
+/// A port fix: whether the camera is over a foreground mountain's footprint (inside its box across its own ground
+/// plane, 5 % wider). Such a mountain is placed over the course (Silverthrone's): it is not drawn while the camera is
+/// there, where it stood as ghost mountains around the run (they have no collision), and drawn again from outside.
+fn over_footprint(lod: &ObjectLod, t: &Transform, eye: Vec3) -> bool {
+    let local = t.compute_affine().inverse().transform_point3(eye) - lod.centre;
+    let half = lod.half * 1.05;
+    local.x.abs() <= half.x && local.z.abs() <= half.z
+}
+
 fn choose_lod(thresholds: &[f32], metric: f32) -> (Option<usize>, f32) {
     let lod = if metric > VIEW_SIZE_CULL { thresholds.iter().position(|&t| t <= metric.max(0.0)) } else { None };
     let fade = thresholds.last().map_or(1.0, |&last| ((metric - last) * FADE_SLOPE).min(1.0));
@@ -297,6 +311,7 @@ pub(super) fn update_object_lods(
         let object = &lods.objects[slot.object];
         let (lod, fade) = choose_lod(&object.thresholds, metric);
         let lod = lod.filter(|&k| k < slot.entities.len());
+        let lod = lod.filter(|_| !(slot.foreground && over_footprint(object, &slot.current, eye)));
         let near_depth = (slot.centre - eye).dot(forward) - slot.radius;
         let draw = match object.class {
             ModelClass::Prelight if fade < 1.0 => Draw::Fading,

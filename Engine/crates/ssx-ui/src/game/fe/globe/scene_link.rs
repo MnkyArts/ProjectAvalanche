@@ -36,7 +36,7 @@ pub(super) fn range_valid(fe: &FrontEnd, key: u32) -> bool {
     fe.game_mode != 1 || fe.profile.range_modes.get(&key).is_some_and(|w| w[1] != 0)
 }
 
-pub(super) struct Flow<'a>(&'a FrontEnd);
+pub(super) struct Flow<'a>(pub(super) &'a FrontEnd);
 
 pub(super) const FINAL_PEAK: u32 = 0xCA56_8EDE;
 pub(super) const FINAL_PEAK_GATE: u32 = 0x65E4_C947;
@@ -155,6 +155,7 @@ pub fn scene_update(fe: &mut FrontEnd, env: &mut FeEnv, dt: f64) {
     if let Some(d) = ev.drop {
         fe.note(format!("globe: the stick selects drop {d:#x}"));
         fe.globe.drop = d;
+        remember(fe, 2, d);
         drop_chosen(fe, env, d);
     }
     if visible {
@@ -177,11 +178,13 @@ pub(super) fn drop_chosen(fe: &mut FrontEnd, env: &mut FeEnv, drop: u32) {
 
 pub(super) fn focus_peak(fe: &mut FrontEnd, peak: u32) {
     fe.globe.peak = peak;
+    remember(fe, 1, peak);
     fe.globe.drop = child_focus(fe, 2, peak);
 }
 
 pub(super) fn focus_range(fe: &mut FrontEnd, range: u32) {
     fe.globe.range = range;
+    remember(fe, 0, range);
     let peak = child_focus(fe, 1, range);
     focus_peak(fe, peak);
 }

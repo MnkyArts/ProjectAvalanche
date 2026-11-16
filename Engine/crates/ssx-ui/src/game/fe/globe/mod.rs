@@ -113,6 +113,9 @@ pub fn child_focus(fe: &mut FrontEnd, level: u32, node: u32) -> u32 {
     if level > 0 && node == 0 {
         return 0;
     }
+    if let Some(last) = remembered(fe, level, node) {
+        return last;
+    }
     let mode = fe.game_mode;
     if mode == 1 {
         let (is_peak, is_range) = (fe.career.peak(node).is_some(), fe.career.range(node).is_some());
@@ -168,6 +171,45 @@ pub fn child_focus(fe: &mut FrontEnd, level: u32, node: u32) -> u32 {
     }
 }
 
+// TODO(guess): a port choice — each globe mode (Explore, World Tour, Freeride, Global Events) opens on the range, peak
+// and drop last looked at in it, kept in the profile's attributes (`PGR0`..`PGD3`: port, globe, range / peak / drop,
+// mode) so they last across restarts; not while the World Tour leads the way (its progression or the new game's
+// guide); settle: none (the disc opens on its own pick each time).
+fn memory_key(level: u32, mode: i64) -> Option<u32> {
+    let mode = u8::try_from(mode).ok().filter(|m| *m <= 3)?;
+    let what = *b"RPD".get(level as usize)?;
+    Some(u32::from_be_bytes([b'P', b'G', what, b'0' + mode]))
+}
+
+fn guided(fe: &FrontEnd) -> bool {
+    fe.progression.running() || fe.profile.new_game_active()
+}
+
+pub(super) fn remember(fe: &mut FrontEnd, level: u32, node: u32) {
+    if node == 0 || guided(fe) {
+        return;
+    }
+    if let Some(key) = memory_key(level, fe.game_mode) {
+        fe.profile.attribs.insert(key, i64::from(node as i32));
+    }
+}
+
+fn remembered(fe: &FrontEnd, level: u32, parent: u32) -> Option<u32> {
+    use scene::GlobeFlow;
+    if guided(fe) {
+        return None;
+    }
+    let last = *fe.profile.attribs.get(&memory_key(level, fe.game_mode)?)? as u32;
+    let flow = scene_link::Flow(fe);
+    let ok = flow.shown(last)
+        && match level {
+            0 => fe.career.range(last).is_some() && scene_link::range_valid(fe, last),
+            1 => fe.career.peak(last).is_some_and(|p| p.range == parent),
+            _ => open_drops(fe, 2, parent).contains(&last),
+        };
+    ok.then_some(last)
+}
+
 pub fn peak_drops(fe: &FrontEnd) -> Vec<u32> {
     mode_events(fe)
         .into_iter()
@@ -205,6 +247,14 @@ pub fn provider_update(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.globe.provider_node = e.key;
     if !changed {
         return;
+    }
+    if let Some(level) = match e.kind {
+        1 => Some(0),
+        2 => Some(1),
+        3 => Some(2),
+        _ => None,
+    } {
+        remember(fe, level, e.key);
     }
     fe.globe.provider_is_drop = e.kind == 3;
     fe.note(format!("SelectedGlobeNodeMessage {{{}, {:#010x}}} (the globe's builder)", e.kind, e.key));

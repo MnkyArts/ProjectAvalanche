@@ -1,30 +1,79 @@
-# Project Avalanche
+<h1 align="center">
+  <a href="https://projavalanche.com/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/logo-light.svg">
+      <img alt="Project Avalanche, the SSX 2012 PC port" src="docs/logo-light.svg" width="600">
+    </picture>
+  </a>
+</h1>
 
-[![build](https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml/badge.svg)](https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml)
-[![Download for Windows](https://img.shields.io/badge/download-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/MnkyArts/ProjectAvalanche/releases/latest/download/ProjectAvalanche-windows-x64.zip)
-[![Download for Linux](https://img.shields.io/badge/download-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/MnkyArts/ProjectAvalanche/releases/latest/download/ProjectAvalanche-linux-x64.tar.gz)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/XrFGQEfwdJ)
+<p align="center"><b>SSX (2012) on PC.</b> A native Windows and Linux port of EA's snowboarding game, written in Rust.</p>
 
-A ground-up native PC port of **SSX (2012)**, rebuilt in Rust on the [Bevy](https://bevy.org) engine with help from Claude — no
-emulation, no recompilation. The original formats are reverse-engineered from the retail Xbox 360 disc and
-re-implemented as independent Rust code, and so is the game's behaviour, read from the game's own code.
+<p align="center">
+  <a href="https://github.com/MnkyArts/ProjectAvalanche/releases/latest/download/ProjectAvalanche-windows-x64.zip"><img alt="Download SSX 2012 PC port for Windows" src="https://img.shields.io/badge/download-Windows-0078D4?logo=windows&logoColor=white"></a>
+  <a href="https://github.com/MnkyArts/ProjectAvalanche/releases/latest/download/ProjectAvalanche-linux-x64.tar.gz"><img alt="Download SSX 2012 PC port for Linux" src="https://img.shields.io/badge/download-Linux-FCC624?logo=linux&logoColor=black"></a>
+  <a href="https://projavalanche.com/"><img alt="Website: projavalanche.com" src="https://img.shields.io/badge/website-projavalanche.com-0A9AC0"></a>
+  <a href="https://discord.com/invite/XrFGQEfwdJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white"></a>
+  <a href="https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml"><img alt="Build" src="https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml/badge.svg"></a>
+</p>
 
-**Status:** playable from start to finish, still in progress. The game runs in one window: the boot movies, the
-menus and a new profile, World Tour and Explore, the drops with the rider physics decoded from the game's code, the
-HUD, the music, speech and sound effects, the results, and the saved progress. Players have finished all nine World
-Tour chapters and ridden every track of the disc in Explore without a major issue; the DLC tracks have seen less
-play. Smaller bugs remain and get fixed release by release, so please report what you find on the
-[issue tracker](https://github.com/MnkyArts/ProjectAvalanche/issues). The launcher sets the game data up from your
-own disc image. What is not decoded yet is approximated and marked in the code
-(see [Open questions in the code](#open-questions-in-the-code)).
+Project Avalanche is an unofficial, open-source PC port of SSX (2012), EA's snowboarding game for Xbox 360 and
+PlayStation 3. It is a reimplementation, not an emulator, a decompilation or a static recompilation: the game's file
+formats and behaviour were reverse-engineered from the retail Xbox 360 disc and rebuilt as new code in Rust on the
+[Bevy](https://bevy.org) engine. It runs natively on Windows and Linux and sets up its game data from your own Xbox 360
+disc image.
 
-**You need your own copy of the game:** an ISO image dumped from your retail Xbox 360 disc of SSX (2012). No
-game data is included in this repository or in its builds.
+The port is built with help from Claude and is playable from start to finish: the boot movies, the menus and a new
+profile, World Tour and Explore, the rider physics decoded from the game's own code, the HUD, the music, speech and
+sound effects, the results and your saved progress. Players have finished all nine World Tour chapters and ridden
+every track on the disc in Explore. The DLC tracks have seen less play. Each release fixes details that still differ
+from the console, so please report what you find on the
+[issue tracker](https://github.com/MnkyArts/ProjectAvalanche/issues). Behaviour that isn't decoded yet is
+approximated and marked in the code (see [Open questions in the code](#open-questions-in-the-code)).
 
-**Servers, scripts and mods:** the [wiki](https://github.com/MnkyArts/ProjectAvalanche/wiki) covers hosting a server,
-writing Luau scripts and making mods, maps and gamemodes.
+**You need your own copy of the game:** an ISO image dumped from your retail Xbox 360 disc of SSX (2012). No game
+data is included in this repository or in its downloads.
 
-## Play on Windows
+**Website:** [projavalanche.com](https://projavalanche.com/) has the [download page](https://projavalanche.com/download/),
+a guide to [playing SSX 2012 on PC](https://projavalanche.com/play-ssx-2012-on-pc/), the
+[changelog](https://projavalanche.com/changelog/) and the [FAQ](https://projavalanche.com/faq/). The
+[wiki](https://github.com/MnkyArts/ProjectAvalanche/wiki) covers hosting a server, writing Luau scripts and making
+mods, maps and gamemodes.
+
+## Features
+
+- The whole career (World Tour), and Explore on every track of the disc with medals, leaderboards and your own
+  personal best ghost.
+- Rider physics decoded from the original executable: carving, tricks, boost and rewinds, checked against the
+  console.
+- Online drops on the official servers, or on a dedicated server you host yourself (Windows or Linux, headless).
+  Servers on your own network show up in the LAN tab.
+- The DLC (Mount Eddie, Japan and the bonus packs), title updates 1.02 and 3.02 and the level-15 update, all from
+  your own dumps.
+- Mods: custom maps, resources and gamemodes with Luau scripts.
+- A launcher that sets the game up from your ISO, extracts it once (about 4.7 GB) and keeps itself up to date.
+- Gamepad or keyboard, and Discord Rich Presence (you can switch it off).
+
+## SSX 2012 decomp, recomp or emulator?
+
+If you have looked for a way to play SSX (2012) on PC, you have probably come across emulators and the idea of an
+SSX 2012 decomp or recomp. Project Avalanche is a different kind of port. The table shows how they compare:
+
+| | How it works | EA's code in the download | Native PC program |
+|---|---|---|---|
+| Emulator (Xenia, RPCS3) | runs the unchanged console game in software that imitates the Xbox 360 or the PS3 | the console executable, as it is | no, a console is emulated |
+| Decomp (decompilation) | turns the game's machine code back into C or C++ source, function by function | source reconstructed from EA's code | yes, once the source is ported |
+| Recomp (static recompilation) | translates the console's PowerPC code into C++ ahead of time | EA's code in translated form | yes |
+| **Project Avalanche** (reimplementation) | reverse-engineers the formats and the behaviour, then writes a new program that reads your disc's data | **none**: new Rust code under the MIT License | yes, on Windows and Linux |
+
+The original game is still the reference. We read its executable in Ghidra and its scripts and shaders from the
+disc to learn how it behaves, then write that behaviour as our own code. That is also why the port can have things
+the console version never had: a Linux version, servers you host yourself and mods. More on the website:
+[SSX 2012 decomp](https://projavalanche.com/ssx-2012-decomp/) and
+[SSX 2012 recomp](https://projavalanche.com/ssx-2012-recomp/).
+
+## Play SSX 2012 on Windows
 
 1. Download the Windows build (the `ProjectAvalanche-windows-x64` artifact of a CI run, or a release) and
    unpack it anywhere: `Project Avalanche.exe`, `avalanche-game.exe` (the game), `avalanche-movie.exe` (the game's
@@ -46,7 +95,7 @@ Every choice is remembered in `%LOCALAPPDATA%\Project Avalanche\settings.json`. 
 from your own game data once it is set up; your own PNGs in `%LOCALAPPDATA%\Project Avalanche\LauncherArt\`
 replace them.
 
-## Play on Linux
+## Play SSX 2012 on Linux
 
 1. Download the Linux build (the `ProjectAvalanche-linux-x64` artifact of a CI run, or a release) and
    unpack `ProjectAvalanche-linux-x64.tar.gz` into a folder of its own (it has no top-level folder:
@@ -61,7 +110,7 @@ It needs a GPU with a Vulkan driver, ALSA for sound (PipeWire and PulseAudio pro
 XDG desktop portal for the ISO file picker. The build is made on Ubuntu 24.04 (x86-64) and runs on distributions
 with that glibc or newer.
 
-## DLC, title update and level 15
+## SSX 2012 DLC, title update and level 15
 
 The port plays the DLC, the title update and the level-15 update from **your own** copies of them. Nothing is
 downloaded and no game content is shared. All three are in the launcher under **Settings, Game Data** (scroll down
@@ -115,16 +164,11 @@ The downloads above always take the latest release: the Windows `.zip` for a man
 `.tar.gz`; the launcher uses its own `ProjectAvalanche-windows-x64.tar.gz` /
 `ProjectAvalanche-linux-x64.tar.gz` assets.
 
-## Discord
+## Online play and dedicated servers
 
-While the game runs and the Discord app is open on the same computer, your Discord profile shows what you are doing
-in Project Avalanche: the menus, the mode and event, the drop and its mountain (or the map), a timer and your
-result, with buttons to get the game and to join its Discord server. The game talks only to the Discord app on your
-computer and sends nothing else: not your name, your save, your rider or the server you play on. It is on by
-default; **Settings, Discord** turns it off (the game then does not connect to Discord at all). A change applies the
-next time the game starts.
-
-## Host a server
+Online drops run on dedicated servers. Join one from the game's Internet tab (the public server list), from the LAN
+tab, or by its address. Players and servers need the same version, because the network protocol changes between
+releases.
 
 **On your computer:** the launcher's **HOST** page sets up a server folder (the rules it needs come from your own game
 data, about 21 MB), starts the dedicated server as its own program, shows its output, joins it with the game and stops
@@ -150,6 +194,25 @@ choose **Dockerfile**), set the domain, and press Deploy. `docker-compose.yaml` 
 configured for Coolify's proxy, which holds the certificate. On a plain host, `Engine/assets/master/deploy/` has a
 systemd unit, a certbot hook and a Compose file for direct TLS.
 
+## Mods
+
+Custom maps, resources and gamemodes are packages with a `resource.toml`, scripted in Luau. You can install mods for
+yourself, and a server can run them for its players. The wiki covers
+[installing mods](https://github.com/MnkyArts/ProjectAvalanche/wiki/Installing-Mods),
+[making a mod](https://github.com/MnkyArts/ProjectAvalanche/wiki/Making-a-Mod),
+[a map](https://github.com/MnkyArts/ProjectAvalanche/wiki/Making-a-Map) and
+[a gamemode](https://github.com/MnkyArts/ProjectAvalanche/wiki/Making-a-Gamemode), and
+[resources on a server](https://github.com/MnkyArts/ProjectAvalanche/wiki/Server-Resources).
+
+## Discord Rich Presence
+
+While the game runs and the Discord app is open on the same computer, your Discord profile shows what you are doing
+in Project Avalanche: the menus, the mode and event, the drop and its mountain (or the map), a timer and your
+result, with buttons to get the game and to join its Discord server. The game talks only to the Discord app on your
+computer and sends nothing else: not your name, your save, your rider or the server you play on. It is on by
+default; **Settings, Discord** turns it off (the game then does not connect to Discord at all). A change applies the
+next time the game starts.
+
 ## Controls
 
 An Xbox-style gamepad with the game's own layout is recommended: the game was made for a pad. The keyboard
@@ -159,6 +222,40 @@ works too; the launcher lists the keys under **Settings, Controls**:
 |---|---|
 | In the menus | Enter = START, Space = A, Backspace = B, X, Y, arrow keys = D-pad, Q / E = LB / RB, W A S D = left stick (the globe), F1 skips a movie |
 | On the mountain | arrow keys or W A S D = left stick (steer, tuck, brake), Space = A (jump), I / J / L / K = Y / X / B / A, Shift = RT, Ctrl = LT, E = RB, Backspace = LB (rewind), Esc = START (pause) |
+
+## SSX 2012 on PC: questions
+
+### Can I play SSX 2012 on PC?
+
+Yes. SSX (2012) came out only on Xbox 360 and PlayStation 3, and EA never released a PC or Steam version. Project
+Avalanche runs it natively on Windows and Linux. You need an ISO image of your own retail Xbox 360 disc; the
+launcher sets the game data up from it.
+
+### Should I use Xenia or RPCS3 instead?
+
+An emulator such as Xenia (Xbox 360) or RPCS3 (PlayStation 3) runs the console version inside an emulated console.
+Project Avalanche runs SSX (2012) as a native Windows or Linux program, with online play on dedicated servers and
+mods. It reads an Xbox 360 disc image; the PlayStation 3 version is not used.
+
+### Is there an SSX 2012 decomp or recomp?
+
+Project Avalanche is neither. It contains no decompiled EA code and no PowerPC code translated from the Xbox 360
+executable. If you were looking for a decomp or a recomp to play the game natively on PC, this gives you that result
+without shipping EA's code. The table in [SSX 2012 decomp, recomp or emulator?](#ssx-2012-decomp-recomp-or-emulator)
+shows the difference.
+
+### Is this related to the SSX Tricky or SSX 3 decomps?
+
+No. The decompilation and recompilation projects for the earlier SSX games on PlayStation 2 are separate efforts.
+Project Avalanche covers SSX (2012) only.
+
+### Which systems does it run on?
+
+Windows x64 and Linux x86-64, plus a headless dedicated server for both. There is no macOS build at the moment.
+
+### Is Project Avalanche affiliated with EA?
+
+No. It is an independent community project, not affiliated with, endorsed or sponsored by Electronic Arts.
 
 ## Build from source
 
@@ -189,8 +286,8 @@ its data in `~/.local/share/project-avalanche` (`$XDG_DATA_HOME/project-avalanch
 overrides it). Once the data is set up, the game also starts on its own:
 `target/release/avalanche-game --big-root <data folder>/GameData/big` (`--help` lists the options).
 
-The checks the CI runs on every push (it also builds the Windows and the Linux download; a `v*` tag makes a
-release with both):
+The checks the CI runs (a snapshot also builds the Windows and the Linux download, and a `v*` tag releases
+both):
 
 ```sh
 cargo fmt --all --check
@@ -213,7 +310,7 @@ Bug reports, accuracy reports and decoded guesses are welcome: see [CONTRIBUTING
 [Code of Conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md). Questions and help with the setup:
 the [Discord server](https://discord.com/invite/XrFGQEfwdJ).
 
-## Layout
+## Repository layout
 
 The Rust workspace is in `Engine/`:
 
@@ -272,7 +369,7 @@ SSX community:
 
 - [SSX-Library](https://github.com/GlitcherOG/SSX-Library) and
   [SSX Collection Multitool](https://github.com/GlitcherOG/SSX-Collection-Multitool) (GlitcherOG and
-  contributors): the community's research into the SSX (2012) formats on the PS3 disc — the BIG archives, the
+  contributors): the community's research into the SSX (2012) formats on the PS3 disc: the BIG archives, the
   GEOM models, the attribute vaults, the skinned models' scene files (CRSF).
 - [bigfile](https://github.com/SSXModding/bigfile) and [SSXTools](https://github.com/SSXModding/SSXTools)
   ([SSXModding](https://github.com/SSXModding)): EA BIG archives and RefPack compression.
@@ -321,7 +418,7 @@ Reverse engineering:
   hex and structure work.
 - [skate-3-rust-engine](https://github.com/SK8-ENGINE/skate-3-rust-engine) (SK8-ENGINE): ideas from a
   comparable Rust / Bevy port of an EA Xbox 360 game; the Skate 3 tools it carries were leads for the
-  animation and collision formats — the ABIN animation importer from
+  animation and collision formats: the ABIN animation importer from
   [skate-3-trick-toolkit](https://github.com/chasmlol/skate-3-trick-toolkit) (chasmlol) and the collision mesh
   reader of the Skate 3 Custom Engine Layer contributors.
 

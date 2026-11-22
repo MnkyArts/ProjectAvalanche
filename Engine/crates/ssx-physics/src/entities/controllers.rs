@@ -42,16 +42,6 @@ pub struct LightRun {
     pub update: LightUpdate,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct PostFxRun {
-    pub preset: Name,
-    pub weight: f32,
-    pub blend_in: f32,
-    pub modulated: bool,
-    pub modulation: Option<(u16, bool)>,
-    pub started: bool,
-}
-
 pub const MAX_OPS: usize = 256;
 
 fn push_op(ops: &mut Vec<ParticleOp>, next_seq: &mut u64, target: ParticleTarget, switch: Switch) {
@@ -67,7 +57,7 @@ pub struct PlayerFx {
     pub particles: Vec<ParticleOp>,
     pub next_seq: u64,
     pub lights: BTreeMap<String, LightRun>,
-    pub postfx: BTreeMap<u64, PostFxRun>,
+    pub modulated: BTreeMap<String, (u16, bool)>,
     pub render_attributes: BTreeMap<String, [f32; 4]>,
     pub head_lamp_scale: f32,
     pub oxygen: bool,
@@ -75,7 +65,6 @@ pub struct PlayerFx {
     pub world_ao: f32,
     pub ripples: u32,
     pub ripple: Option<Vec3>,
-    pub goggles_layer: ssx_assets::postfx_state::Layer<ssx_assets::postfx_state::PostFxState>,
     pub goggles: Option<ssx_assets::postfx_topogrid::GogglesTrack>,
     pub goggles_pulse: f32,
     pub goggles_copies: u32,
@@ -84,10 +73,6 @@ pub struct PlayerFx {
 impl PlayerFx {
     pub fn head_lamp(&self) -> Option<f32> {
         self.lights.values().find(|l| l.head_lamp && l.on).map(|l| l.factor)
-    }
-
-    pub fn modulated_weight(&self, preset: &str) -> Option<f32> {
-        self.postfx.values().find(|p| p.modulated && p.preset.is(preset)).map(|p| p.weight)
     }
 
     pub fn render_attribute(&self, name: &str) -> Option<[f32; 4]> {
@@ -147,6 +132,8 @@ enum InstState {
     RenderAttribute { kept: Option<[f32; 4]>, elapsed: f32 },
     Ao { elapsed: f32, start: f32 },
     AoGroundContact { samples: std::collections::VecDeque<(f32, f32)>, elapsed: f32, start: f32 },
+    PostFx { handle: u32 },
+    PostFxStarted,
 }
 
 impl EntityController {
@@ -296,7 +283,7 @@ impl Controllers {
             }
             c.update(dt, &mut w);
         }
-        self.fx.goggles_layer.update(dt);
+        ctx.sw.postfx.update(dt);
         let mut host = entity::SessionHost { ctx };
         self.update_entities(dt, &mut host, first);
     }
@@ -431,7 +418,7 @@ pub fn postfx_presets(
     out
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NamedEntity {
     pub name: String,
     pub object: u32,

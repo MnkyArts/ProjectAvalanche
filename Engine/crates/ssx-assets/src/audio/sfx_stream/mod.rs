@@ -19,7 +19,7 @@ pub use parse::{BlockKind, BlockType};
 pub(crate) use pool::music_pool_test_lock;
 pub use pool::{Lease, Pool, UNSTEALABLE, music_pool, new_owner};
 pub use slot::{Block, Next, Slot};
-pub use wait::{WAITED_DRY, WAITED_FIRST, WaitRecord, take_longest};
+pub use wait::{WAITED_DRY, WAITED_FIRST, WAITED_NS, WaitRecord, take_longest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ring {

@@ -177,3 +177,98 @@ impl GameUi {
         None
     }
 }
+
+impl GameUi {
+    pub fn hud_view_files(&self, vm: &mut Vm, lib: &mut Library, player: &mut Player) -> Vec<String> {
+        let Some(app) = self.handler.as_deref().and_then(|h| h.strip_suffix(".mFrameworkEventHandler")) else {
+            return Vec::new();
+        };
+        let views = self.store.view_models.values().filter(|m| is_hud_view_model(&m.name)).map(|m| m.view.as_str());
+        view_map_files(vm, lib, player, app, views)
+    }
+}
+
+pub(crate) fn is_hud_view_model(name: &str) -> bool {
+    name == "hud" || name.starts_with("hud_")
+}
+
+pub(crate) fn view_map_files<'a>(
+    vm: &mut Vm,
+    lib: &mut Library,
+    player: &mut Player,
+    app: &str,
+    views: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let Some(map) = vm.peek_path(lib, player, &format!("{app}.mNavigator.mViewMapReference.mMap")) else {
+        return Vec::new();
+    };
+    let cx = vm.ctx(lib, player);
+    views
+        .into_iter()
+        .filter_map(|view| match cx.peek_member(&cx.peek_member(&map, view)?, "mViewPath")? {
+            Value::String(path) => Some(path.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::display::tests::{empty_lib, movie};
+
+    #[test]
+    fn the_hud_view_models_are_hud_and_its_containers() {
+        for name in ["hud", "hud_hudmeters", "hud_boostnotification", "hud_tutorialhud"] {
+            assert!(is_hud_view_model(name), "{name}");
+        }
+        for name in ["pausemenu", "mainmenu", "huddle", "ava_hub", "eventtimer"] {
+            assert!(!is_hud_view_model(name), "{name}");
+        }
+    }
+
+    fn marks(cx: &mut crate::avm1::Ctx, _: Value, _: &[Value]) -> Result<Value, crate::avm1::Fault> {
+        let global = Value::Object(cx.vm.global);
+        cx.set_member(&global, "ran", Value::Bool(true))?;
+        Ok(Value::str("views/hud/answered.swf"))
+    }
+
+    #[test]
+    fn the_view_map_names_each_views_file_as_data() {
+        let mut lib = empty_lib();
+        let m = movie(&mut lib, vec![vec![]]);
+        let (mut vm, mut player) = (Vm::new(), Player::new());
+        vm.load_level(&mut lib, &mut player, m, 0);
+        {
+            let mut cx = vm.ctx(&mut lib, &mut player);
+            let root = cx.player.levels[&0];
+            let mut at = Value::Object(cx.object_for(root));
+            for name in ["app", "mNavigator", "mViewMapReference", "mMap"] {
+                let o = Value::Object(cx.new_object());
+                cx.set_member(&at, name, o.clone()).unwrap();
+                at = o;
+            }
+            for (view, path) in [
+                ("hud", Value::str("views/hud.swf")),
+                ("hudmeters", Value::str("views/hud/hudmeterscontainer.swf")),
+                ("odd", Value::Number(3.0)),
+            ] {
+                let o = Value::Object(cx.new_object());
+                cx.set_member(&o, "mViewPath", path).unwrap();
+                cx.set_member(&at, view, o).unwrap();
+            }
+            let marks = Value::Object(cx.new_native(marks));
+            let lazy = Value::Object(cx.new_object());
+            let (add, home) = cx.get_method(&lazy, "addProperty").unwrap();
+            let added = cx.call(&add, lazy.clone(), &[Value::str("mViewPath"), marks.clone(), Value::Null], home);
+            assert!(matches!(added, Ok(Value::Bool(true))));
+            cx.set_member(&at, "lazy", lazy).unwrap();
+            cx.set_member(&at, "__resolve", marks).unwrap();
+        }
+        let views = ["hudmeters", "missing", "odd", "lazy", "hud"];
+        let files = view_map_files(&mut vm, &mut lib, &mut player, "_level0.app", views);
+        assert_eq!(files, ["views/hud/hudmeterscontainer.swf", "views/hud.swf"]);
+        assert!(vm.get_path(&mut lib, &mut player, "_global.ran").is_none(), "no getter and no __resolve ran");
+        assert!(view_map_files(&mut vm, &mut lib, &mut player, "_level0.other", ["hud"]).is_empty());
+    }
+}

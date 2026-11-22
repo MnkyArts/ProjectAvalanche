@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use bevy::ecs::component::ComponentId;
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::{
-    Add, App, Asset, Assets, ChildOf, Commands, Component, Entity, Fixed, Has, Image, Last, Mesh, Name, Node, On, Res,
-    Resource, StandardMaterial, Time, Transform, Vec2, Vec3, With, Without, World, default, info, warn,
+    Add, App, Asset, Assets, ChildOf, Commands, Component, Entity, Fixed, Has, Image, Last, Mesh, Mut, Name, Node, On,
+    Res, Resource, StandardMaterial, Time, Transform, Vec2, Vec3, With, Without, World, default, info, warn,
 };
 use ssx_physics::character::DEFAULT_GEAR_MIX;
 use ssx_physics::rider::Input;
@@ -117,6 +117,8 @@ pub struct LevelData {
     geotags: Option<geotags::Loaded>,
     bots: Option<bots::Loaded>,
     particles: Option<crate::particles::LoadedParticles>,
+    local_lights: lighting::local::LoadedLocalLights,
+    reflection: Option<lighting::game::LoadedReflection>,
     pub load_secs: f32,
     pub map_music: Option<ssx_content::ContentId>,
 }
@@ -128,103 +130,35 @@ impl LevelData {
         }
         let start = Instant::now();
         let name = terrain::track_name(&spec.track_dir);
-        let big_root = spec.big_root.clone().or_else(|| crate::render::terrain::look::find_big_root(&spec.track_dir));
+        let big_root = spec.big_root.clone();
         if let Some(root) = &big_root {
             crate::render::fx_states::init(root);
         }
-        let shading = match spec.shading {
-            Some(ShadingArg::Height) => terrain::Shading::Vertex(terrain::ColorMode::Height),
-            Some(ShadingArg::Material) => terrain::Shading::Vertex(terrain::ColorMode::Material),
-            Some(ShadingArg::Textured) => {
-                terrain::Shading::Textured(terrain::load_textured(&spec.track_dir, &name, big_root.clone())?)
-            }
-            None => match terrain::load_textured(&spec.track_dir, &name, big_root.clone()) {
-                Ok(textured) => terrain::Shading::Textured(textured),
-                Err(e) => {
-                    warn!("textured shading unavailable, using height: {e:#}");
-                    terrain::Shading::Vertex(terrain::ColorMode::Height)
-                }
-            },
-        };
-        let lighting = match big_root.as_ref().map(|root| lighting::load(root, &name, &spec.drop)) {
-            Some(Ok(l)) => Some(l),
-            Some(Err(e)) if spec.drop_explicit => return Err(e),
-            Some(Err(e)) => {
-                warn!("track lighting unavailable: {e:#}");
-                None
-            }
-            None => None,
-        };
+        // PORT(choice): the level's parts load side by side on the cores (`load_pool`): the terrain's materials beside
+        // the lighting; then the objects, the terrain, the sky and post beside the ride and the parts that follow it.
+        // One after another they took 5.7 s of alps0101's load on this thread (development laptop, `trace_chrome`;
+        // the objects 2.7 s, the ride 1.6 s, its bots 0.8 s), side by side the ride's path alone is left. Each part
+        // reads what it read one after another and builds the same data; the parts that draw from the game's global
+        // generator (the ride's bots, geotags and avalanche) stay on this thread in their order. The console's loader
+        // threads are not decoded.
+        let (lighting, shading) = crate::load_pool::join(
+            "level terrain materials",
+            || load_lighting(spec, &name, big_root.as_deref()),
+            || load_shading(spec, &name, big_root.as_deref()),
+        );
+        let shading = shading?;
+        let lighting = lighting?;
         let drop_key = lighting.as_ref().map(|l| l.drop_key);
-        let objects = match (&big_root, spec.objects) {
-            (_, false) => None,
-            (Some(root), true) => {
-                objects::load(root, &name, drop_key).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
-            }
-            (None, true) => {
-                warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
-                None
-            }
-        };
-        let drop_files = drop_terrain_files(big_root.as_deref(), &spec.track_dir, &name, drop_key)?;
-        let track = terrain::load(&spec.track_dir, spec.subdivide, drop_files.as_deref())?;
-        let camera = camera::CameraStart {
-            pose: camera::initial_pose(&track, spec.camera, spec.look_at, spec.aspect),
-            bounds: track.bounds,
-        };
-        let mut status = Vec::new();
-        let sky = match (&lighting, &big_root) {
-            (Some(l), Some(root)) => sky::load(l, root),
-            _ => Err(anyhow::anyhow!("no track lighting preset")),
-        };
-        let sky = sky
-            .inspect(|s| status.push(s.status.clone()))
-            .inspect_err(|e| {
-                warn!("game sky off: {e:#}");
-                status.push(format!("sky: off ({e:#}); flat clear colour"));
-            })
-            .ok();
-        let post = match (&lighting, &big_root) {
-            (Some(l), Some(root)) => post::load(l, root, spec.screenshot),
-            _ => Err(anyhow::anyhow!("no track lighting preset")),
-        };
-        let post = post
-            .inspect(|p| status.push(p.status.clone()))
-            .inspect_err(|e| {
-                warn!("game post chain off: {e:#}");
-                status.push(format!("post: off ({e:#}); Bevy tonemapping"));
-            })
-            .ok();
-        let mut riders = None;
-        let ride = match &spec.ride {
-            Some(options) => {
-                let root = big_root.as_deref().context("--ride needs the extracted archive root (--big-root)")?;
-                let level = lighting.as_ref().map(|l| l.level.clone());
-                let (setup, decision) =
-                    load_ride(options, &spec.character, root, &spec.track_dir, &name, drop_key, level.as_deref())?;
-                riders = Some(decision);
-                Some(ride::prepare(setup, root, lighting.as_ref())?)
-            }
-            None => None,
-        };
-        let riding = ride.is_some();
-        let root = big_root.as_deref();
-        let heli = helicopter::load_level(root, Some(&name), ride.as_ref().and_then(ride::RideLoad::heli_intro));
-        let ghosts = if loads_ghost_holograms(ride.as_ref().map(|r| &r.ride().session)) {
-            ghosts::load_level(root, &name, drop_key, ride.as_ref().map(ride::RideLoad::ride))
+        let world = || load_world(spec, &name, big_root.as_deref(), drop_key, lighting.as_ref(), &shading);
+        let rides = || load_rides(spec, &name, big_root.as_deref(), drop_key, lighting.as_ref());
+        let (rides, world) = if ride_keeps_policy(spec, big_root.as_deref()) {
+            crate::load_pool::join("level world", rides, world)
         } else {
-            None
+            let world = world();
+            (rides(), world)
         };
-        let geotags = geotags::load_level(root, &name, riding);
-        let bots = ride.as_ref().and_then(|r| bots::load_level(root, &name, drop_key, r.ride(), riders.as_ref()));
-        let particles = root.and_then(|root| {
-            crate::particles::load_level(
-                root,
-                ride.as_ref().map(ride::RideLoad::ride),
-                lighting.as_ref(),
-                ride.as_ref().and_then(ride::RideLoad::avalanche),
-            )
-        });
+        let WorldParts { track, camera, objects, sky, post, status } = world?;
+        let RideParts { ride, heli, ghosts, geotags, bots, particles, local_lights, reflection } = rides?;
         Ok(LevelData {
             name,
             big_root,
@@ -242,6 +176,8 @@ impl LevelData {
             geotags,
             bots,
             particles,
+            local_lights,
+            reflection,
             load_secs: start.elapsed().as_secs_f32(),
             map_music: None,
         })
@@ -249,6 +185,50 @@ impl LevelData {
 
     pub fn max_boost(&self) -> f32 {
         self.ride.as_ref().map_or(0.0, |r| r.ride().world().tuning.scoring.max_boost)
+    }
+
+    pub fn queue_textures(&mut self, world: &mut World) {
+        world.try_resource_scope(|world, mut uploads: Mut<crate::render::uploads::LevelUploads>| {
+            let mut images = world.resource_mut::<Assets<Image>>();
+            let (uploads, images) = (&mut *uploads, &mut *images);
+            self.shading.queue_textures(uploads, images);
+            if let Some(o) = self.objects.as_mut() {
+                o.queue_textures(uploads, images);
+            }
+            // PORT(choice): the textures the level's other parts build on its loading thread go through the queue
+            // before its spawn as the terrain's and the objects' do: the rider's, the board's, the avalanche's, the
+            // helicopter's, the racers', the sky's (with its mid-ground and a package's background), the local lights'
+            // projections and the reflection cube. Added in the spawn they went up at once in the frame after it,
+            // 33-58 ms of its `prepare_assets::<GpuImage>` (alps0101, the heli drop, Mount Eddie; development laptop,
+            // `trace_chrome`). Their materials are still made in the spawn, in their order, with every texture on the
+            // GPU, as before; the console streams its levels into memory it owns.
+            if let Some(r) = self.ride.as_mut() {
+                r.queue_images(uploads, images);
+            }
+            if let Some(h) = self.heli.as_mut() {
+                h.queue_images(uploads, images);
+            }
+            if let Some(b) = self.bots.as_mut() {
+                b.queue_images(uploads, images);
+            }
+            if let Some(s) = self.sky.as_mut() {
+                s.queue_images(uploads, images);
+            }
+            self.local_lights.queue_image(uploads, images);
+            if let Some(r) = self.reflection.as_mut() {
+                r.queue_image(uploads, images);
+            }
+            // PORT(choice): the snow tracks' two textures (`LookupTableMap`, `DispTilesMap`, made on the loading thread
+            // with the terrain's draws), the survival overlay's two maps and the TOPOGRID's grid go through the queue
+            // last, after the textures above, which keep their places in it. Added in the spawn they went up in the
+            // frame after it with the parts' meshes (`prepare_assets::<GpuImage>` 14.7 ms of a 72 ms render frame at
+            // alps0101's spawn, development laptop, `trace_chrome`). The same textures, made from the same data, with
+            // the same recipes for the hot reload; the console streams its levels into memory it owns.
+            self.track.queue_textures(uploads, images);
+            if let Some(r) = self.ride.as_mut() {
+                r.queue_post_images(uploads, images);
+            }
+        });
     }
 
     pub fn insert(self, world: &mut World) -> Result<()> {
@@ -295,7 +275,214 @@ impl LevelData {
         if let Some(p) = self.particles {
             p.insert(world);
         }
+        lighting::local::insert(world, self.local_lights);
+        if let Some(r) = self.reflection {
+            lighting::game::insert_reflection(world, r);
+        }
         Ok(())
+    }
+}
+
+fn load_shading(spec: &LevelSpec, name: &str, big_root: Option<&Path>) -> Result<terrain::Shading> {
+    Ok(match spec.shading {
+        Some(ShadingArg::Height) => terrain::Shading::Vertex(terrain::ColorMode::Height),
+        Some(ShadingArg::Material) => terrain::Shading::Vertex(terrain::ColorMode::Material),
+        Some(ShadingArg::Textured) => terrain::Shading::Textured(terrain::load_textured(big_root, name)?),
+        None => match terrain::load_textured(big_root, name) {
+            Ok(textured) => terrain::Shading::Textured(textured),
+            Err(e) => {
+                warn!("textured shading unavailable, using height: {e:#}");
+                terrain::Shading::Vertex(terrain::ColorMode::Height)
+            }
+        },
+    })
+}
+
+fn load_lighting(spec: &LevelSpec, name: &str, big_root: Option<&Path>) -> Result<Option<lighting::GameLighting>> {
+    Ok(match big_root.map(|root| lighting::load(root, name, &spec.drop)) {
+        Some(Ok(l)) => Some(l),
+        Some(Err(e)) if spec.drop_explicit => return Err(e),
+        Some(Err(e)) => {
+            warn!("track lighting unavailable: {e:#}");
+            None
+        }
+        None => None,
+    })
+}
+
+struct WorldParts {
+    track: terrain::LoadedTrack,
+    camera: camera::CameraStart,
+    objects: Option<objects::LoadedObjects>,
+    sky: Option<sky::SkyLoad>,
+    post: Option<post::PostLoad>,
+    status: Vec<String>,
+}
+
+fn load_world(
+    spec: &LevelSpec,
+    name: &str,
+    big_root: Option<&Path>,
+    drop_key: Option<u32>,
+    lighting: Option<&lighting::GameLighting>,
+    shading: &terrain::Shading,
+) -> Result<WorldParts> {
+    let objects = || match (big_root, spec.objects) {
+        (_, false) => None,
+        (Some(root), true) => {
+            objects::load(root, name, drop_key).inspect_err(|e| warn!("track objects unavailable: {e:#}")).ok()
+        }
+        (None, true) => {
+            warn!("track objects unavailable: no extracted archive root (Game-Data/Extracted/big) found");
+            None
+        }
+    };
+    let terrain = || -> Result<(terrain::LoadedTrack, camera::CameraStart)> {
+        let drop_files = drop_terrain_files(big_root, &spec.track_dir, name, drop_key)?;
+        let mut track = terrain::load(&spec.track_dir, big_root, spec.subdivide, drop_files.as_deref())?;
+        let camera = camera::CameraStart {
+            pose: camera::initial_pose(&track, spec.camera, spec.look_at, spec.aspect),
+            bounds: track.bounds,
+        };
+        track.cut_draws(shading);
+        Ok((track, camera))
+    };
+    let sky_post = || {
+        let sky = match (lighting, big_root) {
+            (Some(l), Some(root)) => sky::load(l, root),
+            _ => Err(anyhow::anyhow!("no track lighting preset")),
+        };
+        let post = match (lighting, big_root) {
+            (Some(l), Some(root)) => post::load(l, root, spec.screenshot),
+            _ => Err(anyhow::anyhow!("no track lighting preset")),
+        };
+        (sky, post)
+    };
+    let (terrain, (objects, (sky, post))) =
+        crate::load_pool::join("level objects", terrain, || crate::load_pool::join("level sky", objects, sky_post));
+    let (track, camera) = terrain?;
+    let mut status = Vec::new();
+    let sky = sky
+        .inspect(|s| status.push(s.status.clone()))
+        .inspect_err(|e| {
+            warn!("game sky off: {e:#}");
+            status.push(format!("sky: off ({e:#}); flat clear colour"));
+        })
+        .ok();
+    let post = post
+        .inspect(|p| status.push(p.status.clone()))
+        .inspect_err(|e| {
+            warn!("game post chain off: {e:#}");
+            status.push(format!("post: off ({e:#}); Bevy tonemapping"));
+        })
+        .ok();
+    Ok(WorldParts { track, camera, objects, sky, post, status })
+}
+
+struct RideParts {
+    ride: Option<ride::RideLoad>,
+    heli: Option<helicopter::Loaded>,
+    ghosts: Option<ghosts::Loaded>,
+    geotags: Option<geotags::Loaded>,
+    bots: Option<bots::Loaded>,
+    particles: Option<crate::particles::LoadedParticles>,
+    local_lights: lighting::local::LoadedLocalLights,
+    reflection: Option<lighting::game::LoadedReflection>,
+}
+
+fn load_rides(
+    spec: &LevelSpec,
+    name: &str,
+    big_root: Option<&Path>,
+    drop_key: Option<u32>,
+    lighting: Option<&lighting::GameLighting>,
+) -> Result<RideParts> {
+    let mut riders = None;
+    let ride = match &spec.ride {
+        Some(options) => {
+            let root = big_root.context("--ride needs the extracted archive root (--big-root)")?;
+            let level = lighting.map(|l| l.level.clone());
+            let (setup, decision) =
+                load_ride(options, &spec.character, root, &spec.track_dir, name, drop_key, level.as_deref())?;
+            riders = Some(decision);
+            Some(ride::prepare(setup, root, lighting)?)
+        }
+        None => None,
+    };
+    let riding = ride.is_some();
+    let root = big_root;
+    let lights = || {
+        let local = lighting::local::load_level(root, lighting, ride.as_ref().map(ride::RideLoad::ride));
+        (local, lighting.map(lighting::game::load_reflection))
+    };
+    let follow = || ride_parts(name, root, drop_key, lighting, ride.as_ref(), riders.as_ref(), riding);
+    let (parts, (local_lights, reflection)) = crate::load_pool::join("level lights", follow, lights);
+    let FollowParts { heli, ghosts, geotags, bots, particles } = parts;
+    Ok(RideParts { ride, heli, ghosts, geotags, bots, particles, local_lights, reflection })
+}
+
+struct FollowParts {
+    heli: Option<helicopter::Loaded>,
+    ghosts: Option<ghosts::Loaded>,
+    geotags: Option<geotags::Loaded>,
+    bots: Option<bots::Loaded>,
+    particles: Option<crate::particles::LoadedParticles>,
+}
+
+fn ride_parts(
+    name: &str,
+    root: Option<&Path>,
+    drop_key: Option<u32>,
+    lighting: Option<&lighting::GameLighting>,
+    ride: Option<&ride::RideLoad>,
+    riders: Option<&ssx_assets::content::characters::budget::RiderLooks>,
+    riding: bool,
+) -> FollowParts {
+    let heli = helicopter::load_level(root, Some(name), ride.and_then(ride::RideLoad::heli_intro));
+    let ghosts = if loads_ghost_holograms(ride.map(|r| &r.ride().session)) {
+        ghosts::load_level(root, name, drop_key, ride.map(ride::RideLoad::ride))
+    } else {
+        None
+    };
+    let geotags = geotags::load_level(root, name, riding);
+    let bots = ride.and_then(|r| bots::load_level(root, name, drop_key, r.ride(), riders));
+    let particles = root.map(|root| {
+        let mut p = crate::particles::load_level(
+            root,
+            ride.map(ride::RideLoad::ride),
+            lighting,
+            ride.and_then(ride::RideLoad::avalanche),
+        );
+        load_particle_effects(&mut p, root, lighting, ride, heli.as_ref());
+        p
+    });
+    FollowParts { heli, ghosts, geotags, bots, particles }
+}
+
+fn load_particle_effects(
+    particles: &mut crate::particles::LoadedParticles,
+    root: &Path,
+    lighting: Option<&lighting::GameLighting>,
+    ride: Option<&ride::RideLoad>,
+    heli: Option<&helicopter::Loaded>,
+) {
+    let rider = lighting.and(ride).and_then(ride::RideLoad::rider_effect_inputs);
+    let track = lighting.and_then(lighting::GameLighting::disc_track);
+    particles.load_effects(root, track, rider, heli.map(helicopter::Loaded::effect_inputs));
+}
+
+fn ride_policy(options: &RideOptions, content: &ssx_assets::content::GameContent) -> ssx_content::policy::ClientMods {
+    let policy = content.session_policy().unwrap_or(ssx_content::policy::ClientMods::SESSION_DEFAULT);
+    if options.live.is_some() { policy } else { ssx_content::policy::ClientMods::Any }
+}
+
+fn ride_keeps_policy(spec: &LevelSpec, big_root: Option<&Path>) -> bool {
+    match (&spec.ride, big_root) {
+        (Some(options), Some(root)) => {
+            let content = ssx_assets::content::GameContent::of(root);
+            ride_policy(options, &content) == content.sim_policy()
+        }
+        _ => true,
     }
 }
 
@@ -312,10 +499,15 @@ fn drop_terrain_files(
         anyhow::bail!("{track}: drop {key:#010x} has no start locator");
     };
     let all = ssx_assets::terrain::track_file_names(track_dir)?;
-    let drawn: Vec<String> = ssx_assets::terrain::select_drop_files(&all, Some(&start.terrain_files))
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let chosen = ssx_assets::terrain::select_drop_files(&all, Some(&start.terrain_files));
+    let mut drawn: Vec<String> = Vec::with_capacity(chosen.len());
+    for name in &start.terrain_files {
+        if let Some(file) = chosen.iter().find(|f| f.eq_ignore_ascii_case(name))
+            && !drawn.iter().any(|d| d == file)
+        {
+            drawn.push((*file).to_owned());
+        }
+    }
     info!("terrain: drop {key:#010x} draws {} of {} files {drawn:?}", drawn.len(), all.len());
     Ok(Some(drawn))
 }
@@ -333,8 +525,7 @@ fn load_ride(
     let start = Instant::now();
     let session = cli.live.is_some();
     let content = ssx_assets::content::GameContent::of(big_root);
-    let policy = content.session_policy().unwrap_or(ssx_content::policy::ClientMods::SESSION_DEFAULT);
-    content.set_sim_policy(if session { policy } else { ssx_content::policy::ClientMods::Any });
+    content.set_sim_policy(ride_policy(cli, &content));
     let sim_content_id = cli
         .event_name
         .as_deref()
@@ -342,24 +533,32 @@ fn load_ride(
         .and_then(|event| ssx_assets::content::data::simid::result_sim_id(big_root, track, event));
     let drop =
         drop_key.and_then(|key| spawn::load_drop_starts(big_root, track).ok()?.iter().position(|s| s.drop_key == key));
-    let world = match drop {
-        Some(d) => spawn::track_world_for_drop(big_root, track_dir, track, DEFAULT_GEAR_MIX, true, d),
-        None => spawn::track_world(big_root, track_dir, track, DEFAULT_GEAR_MIX, true),
-    }
-    .context("building the ride's physics world")?;
-    if let Some(d) = &world.collision.stats.prop_decision {
-        info!("ride: {d}");
-    }
-    for p in &world.collision.stats.prop_packages {
-        info!("ride: collision from a package: {p}");
-    }
-    let spawn = match drop {
-        Some(d) => spawn::spawn_pose_for_drop(&world, d, cli.spawn, cli.heading)?,
-        None => {
-            let bounds = spawn::Boundary::load(track_dir, track);
-            spawn::spawn_pose(&world, bounds.as_ref(), cli.spawn, cli.heading)?
+    let world_and_spawn = || -> Result<_> {
+        let world = match drop {
+            Some(d) => spawn::track_world_for_drop(big_root, track_dir, track, DEFAULT_GEAR_MIX, true, d),
+            None => spawn::track_world(big_root, track_dir, track, DEFAULT_GEAR_MIX, true),
         }
+        .context("building the ride's physics world")?;
+        if let Some(d) = &world.collision.stats.prop_decision {
+            info!("ride: {d}");
+        }
+        for p in &world.collision.stats.prop_packages {
+            info!("ride: collision from a package: {p}");
+        }
+        let spawn = match drop {
+            Some(d) => spawn::spawn_pose_for_drop(&world, d, cli.spawn, cli.heading)?,
+            None => {
+                let bounds = spawn::Boundary::load(track_dir, track);
+                spawn::spawn_pose(&world, bounds.as_ref(), cli.spawn, cli.heading)?
+            }
+        };
+        Ok((world, spawn))
     };
+    let (world, looks) = crate::load_pool::join("ride looks", world_and_spawn, || {
+        ride_looks(cli, character, big_root, level, Some(track))
+    });
+    let (world, spawn) = world?;
+    let looks = looks?;
     let load_secs = start.elapsed().as_secs_f32();
     let w = RideWorld {
         world,
@@ -372,7 +571,7 @@ fn load_ride(
         track_name: track,
         sim_content_id,
     };
-    ride_setup(cli, character, big_root, level, w)
+    Ok(setup_with_looks(cli, big_root, w, looks))
 }
 
 pub(super) struct RideWorld<'a> {
@@ -394,11 +593,31 @@ pub(super) fn ride_setup(
     level: Option<&ssx_assets::content::level::LevelPackages>,
     w: RideWorld<'_>,
 ) -> Result<(ride::RideSetup, ssx_assets::content::characters::budget::RiderLooks)> {
+    let looks = ride_looks(cli, character, big_root, level, w.vault_track)?;
+    Ok(setup_with_looks(cli, big_root, w, looks))
+}
+
+pub(super) struct RideLooks {
+    board: Option<rider_visual::LoadedBoard>,
+    game_setup: Option<ssx_physics::gear::GameSetup>,
+    stand_in: String,
+    wire_key: u32,
+    rider: Option<rider_skin::LoadedRider>,
+    decision: ssx_assets::content::characters::budget::RiderLooks,
+}
+
+pub(super) fn ride_looks(
+    cli: &RideOptions,
+    character: &str,
+    big_root: &Path,
+    level: Option<&ssx_assets::content::level::LevelPackages>,
+    vault_track: Option<&str>,
+) -> Result<RideLooks> {
     let session = cli.live.is_some();
     let policy = ssx_assets::content::GameContent::of(big_root)
         .session_policy()
         .unwrap_or(ssx_content::policy::ClientMods::SESSION_DEFAULT);
-    let board = rider_visual::load_board(big_root, w.vault_track)
+    let board = rider_visual::load_board(big_root, vault_track)
         .inspect_err(|e| warn!("snowboard mesh unavailable, drawing a placeholder: {e:#}"))
         .ok();
     let mut game_setup =
@@ -427,13 +646,23 @@ pub(super) fn ride_setup(
             s.character = ssx_formats::attrib::fnv1(stand_in.as_bytes());
         }
     }
-    let rider = rider_skin::load_rider(big_root, w.vault_track, &rr.request)
+    let rider = rider_skin::load_rider(big_root, vault_track, &rr.request)
         .inspect_err(|e| warn!("character {character} unavailable, drawing a placeholder capsule: {e:#}"))
         .ok()
         .map(|mut r| {
             r.riders = Some(rr.decision.clone());
             r
         });
+    Ok(RideLooks { board, game_setup, stand_in, wire_key, rider, decision: rr.decision })
+}
+
+fn setup_with_looks(
+    cli: &RideOptions,
+    big_root: &Path,
+    w: RideWorld<'_>,
+    looks: RideLooks,
+) -> (ride::RideSetup, ssx_assets::content::characters::budget::RiderLooks) {
+    let RideLooks { board, game_setup, stand_in, wire_key, rider, decision } = looks;
     let fixed_input = cli.input.map(|v| Input { steer: v.x, brake: v.y, tuck: v.z, jump: false, ..Input::default() });
     let setup = ride::RideSetup {
         world: w.world,
@@ -473,13 +702,16 @@ pub(super) fn ride_setup(
         sim_content_id: w.sim_content_id,
         map: w.map,
     };
-    Ok((setup, rr.decision))
+    (setup, decision)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Registration {
     pub wireframe: bool,
+    pub view_distance: ssx_assets::port_options::ViewDistance,
     pub viewer_hud: bool,
+    pub shadow_quality: ssx_assets::port_options::ShadowQuality,
+    pub post_levels: crate::render::post::PostLevels,
 }
 
 pub fn render_plugin() -> bevy::render::RenderPlugin {
@@ -492,6 +724,31 @@ pub fn render_plugin() -> bevy::render::RenderPlugin {
         .into(),
         ..default()
     }
+}
+
+pub fn task_pool_plugin() -> bevy::app::TaskPoolPlugin {
+    let mut task_pool_options = bevy::app::TaskPoolOptions::default();
+    let threads = compute_threads(bevy::tasks::available_parallelism());
+    task_pool_options.compute.min_threads = threads;
+    task_pool_options.compute.max_threads = threads;
+    bevy::app::TaskPoolPlugin { task_pool_options }
+}
+
+fn compute_threads(cpus: usize) -> usize {
+    // PORT(choice): the compute pool gets every CPU but one (the main thread's), at most four, at least one. Bevy
+    // 0.20's default gives the I/O and the async-compute pools 25 % of the CPUs each (rounded, 1–4 threads) and the
+    // compute pool the rest: 2 threads with 4 or 6 CPUs, 8 with 16 (here 3, 4 and 4). During a ride the main world's
+    // systems, the render world's, the render graph's, the command encoders' finish and the ride's workers share the
+    // compute pool; the async pool's threads run 0.00 ms of CPU a frame. Measured on the dev laptop (Core Ultra 7 255H:
+    // 6 P-, 8 E- and 2 LP-E-cores) with the swap chain's image taken after the present (`render::swap_chain`). With
+    // two threads the render graph meets the main update's systems on both: 4 P-cores, alps0101, `render_system` 2.32
+    // ms with Bevy's own acquire, 2.83 with 2 threads, 2.46–2.47 with 3; 6 P-cores, 4 threads against 2, Mount Eddie's
+    // p99 11.94–11.99 -> 10.46–10.54 ms. More threads look for work, take the E-cores and lower the clocks: 6 P-cores,
+    // 5 threads against 4, the main thread 6.37–6.43 -> 6.04–6.19 ms; all 16 CPUs, Bevy's 8 against 4, alps0101's
+    // frame 7.94–8.04 -> 7.29–7.35 ms, and without the acquire after the present the pool's CPU 21.1–21.3 -> 14.4–14.7
+    // ms a frame, the main thread on a P-core in 62–65 -> 78–79 % of its samples. Engine mechanics: the console's
+    // threads were the game's own.
+    cpus.saturating_sub(1).clamp(1, 4)
 }
 
 pub fn log_plugin() -> bevy::log::LogPlugin {
@@ -535,6 +792,9 @@ pub fn register(app: &mut App, r: Registration) {
         app.init_schedule(label);
     }
     app.insert_resource(Time::<Fixed>::from_hz(f64::from(ssx_physics::SIM_HZ)));
+    app.insert_resource(crate::render::terrain::ViewDistance(r.view_distance))
+        .insert_resource(crate::render::shadows::ShadowSettings(r.shadow_quality))
+        .insert_resource(r.post_levels);
     app.add_plugins((
         bevy::pbr::wireframe::WireframePlugin::default(),
         crate::render::scene::ScenePlugin { wireframe: r.wireframe },
@@ -547,6 +807,8 @@ pub fn register(app: &mut App, r: Registration) {
         crate::render::snow_tracks::SnowTracksPlugin,
         crate::render::lighting::local::LocalLightsPlugin,
         crate::particles::ParticlesPlugin,
+        crate::render::device_poll::DevicePollPlugin,
+        crate::render::swap_chain::SwapChainPlugin,
     ));
     if r.viewer_hud {
         app.add_plugins(crate::shell::viewer_hud::HudPlugin);
@@ -765,5 +1027,11 @@ mod tests {
             assert!(!ride(Some(t), None, false), "{t:?}");
         }
         assert!(!ride(None, None, false));
+    }
+
+    #[test]
+    fn the_compute_pool_takes_every_cpu_but_one_at_most_four() {
+        let threads = |cpus| super::compute_threads(cpus);
+        assert_eq!([1, 2, 3, 4, 5, 6, 16, 64].map(threads), [1, 1, 2, 3, 4, 4, 4, 4]);
     }
 }

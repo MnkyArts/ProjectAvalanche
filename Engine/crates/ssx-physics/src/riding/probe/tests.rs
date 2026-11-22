@@ -81,8 +81,11 @@ fn the_chord_is_never_a_ground_candidate() {
 fn a_probe_starting_under_a_ceiling_publishes_its_underside() {
     let mut c = CollisionWorld::default();
     add_floor(&mut c, [-10.0, 10.0], [-10.0, 10.0], 0.0, 0);
-    let p = |x: f32, z: f32| Vec3::new(x, 1.2, z);
-    add_quad(&mut c, [p(-10.0, -10.0), p(10.0, -10.0), p(10.0, 10.0), p(-10.0, 10.0)], 0);
+    let p = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+    let slab = [p(-10.0, 1.2, -10.0), p(10.0, 1.2, -10.0), p(10.0, 1.2, 10.0), p(-10.0, 1.2, 10.0)];
+    let side = [p(-10.0, 0.5, -10.0), p(-10.0, 0.5, 10.0)];
+    let v = [slab[0], slab[1], slab[2], slab[3], side[0], side[1]];
+    c.push_cluster(&v, None, None, &[[0, 1, 2], [0, 2, 3], [0, 3, 5], [0, 5, 4]], 0, 0);
     c.finish();
     let w = world(c);
     let i = on(Vec3::Y * 0.85, Vec3::Y * 0.05, Vec3::Z * 0.3, false);

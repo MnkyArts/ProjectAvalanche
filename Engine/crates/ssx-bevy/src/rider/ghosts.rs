@@ -16,6 +16,7 @@ use bevy::render::render_resource::{
     AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, Extent3d, RenderPipelineDescriptor,
     ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat,
 };
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use ssx_assets::anim_db::AssetDb;
 use ssx_assets::ghosts::{
@@ -42,8 +43,6 @@ pub struct GhostParams {
     pub ghost_color: Vec4,
     pub ghost_base_color: Vec4,
     pub shading: Vec4,
-    pub tint: Vec4,
-    pub hologlitch: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -54,7 +53,64 @@ pub struct GhostMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub normal: Handle<Image>,
+    #[storage(3, read_only)]
+    pub frame: Handle<ShaderBuffer>,
     pub ldr: bool,
+}
+
+// PORT(choice): the values that change while a racer of type 0 fades and glitches (up to once a simulation step:
+// `Racers_UpdateFade` 0x82501BA0 hands `hologlitchCollisionBlend` to the racer's render object as an attribute, [r29+0xC]
+// vt+0x8 with the key of "hologlitchCollisionBlend" 0x838C9C30 at 0x82502214…0x8250222C, and `Racer_SetTint`
+// 0x824FD6A0 its `TintColour`) live in a 32-byte storage buffer written in place (Bevy 0.20's
+// `GpuShaderBuffer::prepare_asset` writes a buffer of the same size into the GPU buffer it has), so the material and its
+// bind group stay; as uniforms of the material each change made Bevy prepare it again (`AsBindGroup`: a new uniform
+// buffer and bind group) and specialise its entities again.
+pub struct GhostFrame {
+    buffer: Handle<ShaderBuffer>,
+    tint: Vec4,
+    hologlitch: Vec4,
+}
+
+impl GhostFrame {
+    pub fn new(tint: Vec4, buffers: &mut Assets<ShaderBuffer>) -> Self {
+        let bytes = ghost_frame_bytes(tint, Vec4::ZERO);
+        let buffer = buffers.add(ShaderBuffer::new(bytes.to_vec(), RenderAssetUsages::default()));
+        GhostFrame { buffer, tint, hologlitch: Vec4::ZERO }
+    }
+
+    pub fn handle(&self) -> Handle<ShaderBuffer> {
+        self.buffer.clone()
+    }
+
+    pub fn set_tint(&mut self, tint: Vec4, buffers: &mut Assets<ShaderBuffer>) {
+        if self.tint != tint {
+            self.write(tint, self.hologlitch, buffers);
+        }
+    }
+
+    pub fn set_hologlitch(&mut self, hologlitch: Vec4, buffers: &mut Assets<ShaderBuffer>) {
+        if self.hologlitch != hologlitch {
+            self.write(self.tint, hologlitch, buffers);
+        }
+    }
+
+    fn write(&mut self, tint: Vec4, hologlitch: Vec4, buffers: &mut Assets<ShaderBuffer>) {
+        if let Some(mut buffer) = buffers.get_mut(&self.buffer) {
+            (self.tint, self.hologlitch) = (tint, hologlitch);
+            buffer.clear();
+            buffer.extend_from_slice(&ghost_frame_bytes(tint, hologlitch));
+        }
+    }
+}
+
+fn ghost_frame_bytes(tint: Vec4, hologlitch: Vec4) -> [u8; 32] {
+    let mut out = [0; 32];
+    for (chunk, f) in
+        out.as_chunks_mut::<4>().0.iter_mut().zip(tint.to_array().into_iter().chain(hologlitch.to_array()))
+    {
+        *chunk = f.to_le_bytes();
+    }
+    out
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Reflect)]
@@ -159,7 +215,7 @@ impl Hologram {
         Ok(Self { model, info, normal, normal_source: (root.to_path_buf(), normal_rel) })
     }
 
-    pub(crate) fn params(&self, tint: u32, ldr: bool) -> GhostParams {
+    pub(crate) fn params(&self, ldr: bool) -> GhostParams {
         let mat = &self.model.parts()[0].material;
         let vec4 =
             |name: &str, d: Vec4| mat.vectors.get(name).filter(|v| v.len() == 4).map_or(d, |v| Vec4::from_slice(v));
@@ -173,8 +229,6 @@ impl Hologram {
                 float("fresnelSpread"),
                 if ldr { 1.0 } else { 0.0 },
             ),
-            tint: Vec4::from_array(tint_rgba(tint)),
-            hologlitch: Vec4::ZERO,
         }
     }
 
@@ -434,18 +488,20 @@ fn spawn(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<GhostMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     post: Option<Res<crate::render::post::PostSettings>>,
 ) {
     let Some(loaded) = pending.0.take() else { return };
     let normal = loaded.hologram.normal_handle(&mut images);
     let ldr = post.is_some();
-    let params = loaded.hologram.params(EXPLORE_GHOST_TINT, ldr);
+    let params = loaded.hologram.params(ldr);
+    let frame = GhostFrame::new(Vec4::from_array(tint_rgba(EXPLORE_GHOST_TINT)), &mut buffers).handle();
     let parts = spawn_parts(loaded.hologram.model.parts(), &mut meshes, &mut bindposes);
     let info = loaded.hologram.info;
     let bind = world_records(&info.ghost.rig, &info.ghost.bind, Vec3::ZERO);
     let mut list = Vec::new();
     for (rival, anim) in loaded.rivals {
-        let material = materials.add(GhostMaterial { params, normal: normal.clone(), ldr });
+        let material = materials.add(GhostMaterial { params, normal: normal.clone(), frame: frame.clone(), ldr });
         let root = commands
             .spawn((Name::new(format!("ghost {}", rival.short())), Transform::default(), Visibility::Hidden))
             .id();
@@ -656,9 +712,29 @@ fn hud_line(g: &Ghosts, t: Option<f32>, ride: Option<&crate::ride::Ride>) -> Str
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn channel_tables_match_the_rewind() {
         assert_eq!(ssx_formats::ghost::ROTATION_CHANNELS, ssx_physics::graph::REWIND_ROTATIONS);
         assert_eq!(ssx_formats::ghost::TRANSLATION_CHANNELS, ssx_physics::graph::REWIND_TRANSLATIONS);
+    }
+
+    fn floats(buffers: &Assets<ShaderBuffer>, frame: &GhostFrame) -> Vec<f32> {
+        let buffer = buffers.get(&frame.buffer).expect("the hologram's buffer");
+        assert_eq!(buffer.buffer_size(), 32, "the GPU buffer is written in place only at the same size");
+        let bytes: &[u8] = buffer.cast_slice().expect("initialised");
+        bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect()
+    }
+
+    #[test]
+    fn a_holograms_tint_and_glitch_are_written_into_its_frame_buffer_in_place() {
+        let mut buffers = Assets::<ShaderBuffer>::default();
+        let tint = Vec4::new(0.95, 0.72, 0.02, 1.0);
+        let mut frame = GhostFrame::new(tint, &mut buffers);
+        assert_eq!(floats(&buffers, &frame), [0.95, 0.72, 0.02, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        frame.set_hologlitch(Vec4::new(0.5, 0.25, 0.0, 0.0), &mut buffers);
+        frame.set_tint(tint.with_w(0.5), &mut buffers);
+        assert_eq!(floats(&buffers, &frame), [0.95, 0.72, 0.02, 0.5, 0.5, 0.25, 0.0, 0.0]);
     }
 }

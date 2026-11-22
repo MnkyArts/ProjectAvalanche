@@ -222,6 +222,28 @@ pub struct EventManager {
     pub end_position: [f32; 3],
     pub time_up: bool,
     pub round_over: Option<bool>,
+    pub hud_feed: HudFeedCalls,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HudFeedCalls {
+    pub feeds: u32,
+    pub resets: u32,
+    pub loop_restarts: u32,
+    pub state: EventState,
+}
+
+impl Default for HudFeedCalls {
+    fn default() -> Self {
+        Self { feeds: 1, resets: 1, loop_restarts: 0, state: EventState::Idle }
+    }
+}
+
+impl HudFeedCalls {
+    fn fed(&mut self, state: EventState) {
+        self.feeds = self.feeds.wrapping_add(1);
+        self.state = state;
+    }
 }
 
 impl EventManager {
@@ -230,7 +252,11 @@ impl EventManager {
     }
 
     pub fn reset(&mut self) {
+        let mut calls = self.hud_feed;
         *self = Self::new(std::mem::take(&mut self.setup));
+        calls.resets = calls.resets.wrapping_add(1);
+        calls.fed(EventState::Idle);
+        self.hud_feed = calls;
     }
 
     pub fn end_round(&mut self, map: bool) {
@@ -269,6 +295,8 @@ impl EventManager {
         (self.split, self.progress, self.finish_ms) = (-1, 0.0, None);
         self.split_times.clear();
         self.finish_message = None;
+        self.hud_feed.loop_restarts = self.hud_feed.loop_restarts.wrapping_add(1);
+        self.hud_feed.fed(self.state);
     }
 
     pub fn on_entered_gameplay(&mut self) {

@@ -1,12 +1,13 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering, fence};
+use std::sync::{Arc, OnceLock};
+use std::thread::Thread;
 
 use ssx_content::audio::music::LoopRegion;
 use ssx_content::audio::{Decoder, Limits};
 
 use super::decide::MusicFile;
 use crate::sfx::output::resample::Resampler;
+use crate::sfx_queue::{Receiver, Sender, TryRecvError, queue};
 
 pub const MUSIC_RATE: u32 = crate::pathfinder::SAMPLE_RATE;
 const BLOCK_FRAMES: usize = 4096;
@@ -17,9 +18,56 @@ enum Block {
     End(Result<(), String>),
 }
 
+// PORT(choice): a package song's bound of 32 blocks counted beside an unbounded queue whose receiver never waits for a
+// sender (the stream renders on the real-time mixer thread; std's bounded channel has its receiver spin without a
+// yield on a slot a sender claimed and has not written); the worker converts a block, then waits for room as the
+// bounded send did. Package music is the port's own feature; the console streams only its disc's music.
+struct Room {
+    queued: AtomicUsize,
+    waiting: AtomicBool,
+    closed: AtomicBool,
+    worker: OnceLock<Thread>,
+}
+
+impl Room {
+    fn wait(&self) -> bool {
+        loop {
+            if self.closed.load(Ordering::SeqCst) {
+                return false;
+            }
+            if self.queued.load(Ordering::SeqCst) < AHEAD {
+                return true;
+            }
+            self.waiting.store(true, Ordering::SeqCst);
+            if self.queued.load(Ordering::SeqCst) >= AHEAD && !self.closed.load(Ordering::SeqCst) {
+                std::thread::park();
+            }
+            self.waiting.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn sent(&self) {
+        self.queued.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn taken(&self) {
+        self.queued.fetch_sub(1, Ordering::SeqCst);
+        if self.waiting.load(Ordering::SeqCst) {
+            self.wake();
+        }
+    }
+
+    fn wake(&self) {
+        if let Some(worker) = self.worker.get() {
+            worker.unpark();
+        }
+    }
+}
+
 pub struct MusicStream {
     pub name: String,
     rx: Receiver<Block>,
+    room: Arc<Room>,
     buf: Vec<f32>,
     pos: usize,
     ended: Option<Result<(), String>>,
@@ -28,14 +76,27 @@ pub struct MusicStream {
 
 impl MusicStream {
     pub fn open(file: MusicFile, region: Option<LoopRegion>) -> Self {
-        let (tx, rx) = sync_channel(AHEAD);
+        let (tx, rx) = queue();
+        let room = Arc::new(Room {
+            queued: AtomicUsize::new(0),
+            waiting: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            worker: OnceLock::new(),
+        });
         let name = file.rel.clone();
         let label = name.clone();
+        let theirs = room.clone();
         let started = crate::sfx_stream::spawn("ssx_music_stream", move || {
-            let end = run(&file, region, &tx);
-            let _ = tx.send(Block::End(end));
+            let _ = theirs.worker.set(std::thread::current());
+            fence(Ordering::SeqCst);
+            let end = run(&file, region, &tx, &theirs);
+            if theirs.wait() {
+                theirs.sent();
+                let _ = tx.send(Block::End(end));
+            }
         });
-        let mut s = Self { name, rx, buf: Vec::new(), pos: 0, ended: None, starved: Arc::new(AtomicU64::new(0)) };
+        let starved = Arc::new(AtomicU64::new(0));
+        let mut s = Self { name, rx, room, buf: Vec::new(), pos: 0, ended: None, starved };
         if !started {
             s.ended = Some(Err(format!("{label}: no stream file thread to start the worker")));
         }
@@ -52,10 +113,12 @@ impl MusicStream {
                 }
                 match self.rx.try_recv() {
                     Ok(Block::Frames(b)) => {
+                        self.room.taken();
                         (self.buf, self.pos) = (b, 0);
                         continue;
                     }
                     Ok(Block::End(e)) => {
+                        self.room.taken();
                         self.ended = Some(e);
                         break;
                     }
@@ -87,7 +150,15 @@ impl MusicStream {
     }
 }
 
-fn run(file: &MusicFile, region: Option<LoopRegion>, tx: &SyncSender<Block>) -> Result<(), String> {
+impl Drop for MusicStream {
+    fn drop(&mut self) {
+        self.room.closed.store(true, Ordering::SeqCst);
+        fence(Ordering::SeqCst);
+        self.room.wake();
+    }
+}
+
+fn run(file: &MusicFile, region: Option<LoopRegion>, tx: &Sender<Block>, room: &Room) -> Result<(), String> {
     let bytes = file.read()?;
     let limits = Limits::music();
     let mut dec = Decoder::open(&file.rel, bytes, &limits).map_err(|e| e.to_string())?;
@@ -135,7 +206,7 @@ fn run(file: &MusicFile, region: Option<LoopRegion>, tx: &SyncSender<Block>) -> 
         if region.is_some() && start + n >= loop_end {
             dec.rewind().map_err(|e| e.to_string())?;
         }
-        if stereo.len() >= 2 * BLOCK_FRAMES && !hand_over(&mut stereo, &mut conv, tx) {
+        if stereo.len() >= 2 * BLOCK_FRAMES && !hand_over(&mut stereo, &mut conv, tx, room) {
             return Ok(());
         }
     }
@@ -143,12 +214,12 @@ fn run(file: &MusicFile, region: Option<LoopRegion>, tx: &SyncSender<Block>) -> 
         stereo.extend(std::iter::repeat_n(0.0, 2 * 64));
     }
     if !stereo.is_empty() {
-        hand_over(&mut stereo, &mut conv, tx);
+        hand_over(&mut stereo, &mut conv, tx, room);
     }
     Ok(())
 }
 
-fn hand_over(stereo: &mut Vec<f32>, conv: &mut Option<Resampler>, tx: &SyncSender<Block>) -> bool {
+fn hand_over(stereo: &mut Vec<f32>, conv: &mut Option<Resampler>, tx: &Sender<Block>, room: &Room) -> bool {
     let block = match conv {
         None => std::mem::take(stereo),
         Some(r) => {
@@ -164,6 +235,10 @@ fn hand_over(stereo: &mut Vec<f32>, conv: &mut Option<Resampler>, tx: &SyncSende
             out
         }
     };
+    if !room.wait() {
+        return false;
+    }
+    room.sent();
     tx.send(Block::Frames(block)).is_ok()
 }
 
@@ -224,5 +299,23 @@ mod tests {
         drain(&mut s, usize::MAX);
         let e = s.ended().cloned().unwrap().unwrap_err();
         assert!(e.contains("changed since it was measured"), "{e}");
+    }
+
+    #[test]
+    fn the_worker_waits_for_room_and_ends_with_the_stream() {
+        let ramp: Vec<f32> = (0..44_100).flat_map(|i| [i as f32 / 44_100.0; 2]).collect();
+        let s = MusicStream::open(file(&ramp, 44_100, 2, None), Some(LoopRegion { start: 0.0, end: 1.0 }));
+        let room = s.room.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while room.queued.load(Ordering::SeqCst) < AHEAD && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(room.queued.load(Ordering::SeqCst), AHEAD);
+        drop(s);
+        while Arc::strong_count(&room) > 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(Arc::strong_count(&room), 1, "the worker ended");
     }
 }

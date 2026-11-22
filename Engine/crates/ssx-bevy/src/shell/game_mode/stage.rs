@@ -419,14 +419,19 @@ impl Shell {
         let n = self.rides + 1;
         let track_dir = ssx_assets::data_roots::track_dir(&self.big_root, &l.track)
             .with_context(|| format!("{}: no track folder (the disc's data0 or a mounted package)", l.track))?;
-        let drop_index = game_level::drop_index(&self.big_root, &l.track, ge_drop)?;
         let spec = LevelSpec {
             track_dir,
             big_root: Some(self.big_root.clone()),
             subdivide: self.subdivide.unwrap_or(ssx_assets::subdiv::GAME_LEVELS as u32),
             shading: self.shading,
             objects: !self.no_objects,
-            drop: crate::render::lighting::DropSelect::Index(drop_index),
+            // PORT(choice): the launch's drop is found among the track's drops by its `ge_drop` key on the level's
+            // loading thread, where the lighting reads the drops anyway; read here first, the track's vaults took
+            // 52-60 ms of the game thread in the frame the level's load starts, now 0.2-0.6 ms (alps0101, the heli
+            // drop, Mount Eddie; development laptop, `trace_chrome`). The same drop is chosen; a track without it fails
+            // the load instead of its start, with the same message to the front end. The console's loading is not
+            // decoded.
+            drop: crate::render::lighting::DropSelect::Key(ge_drop),
             drop_explicit: true,
             camera: None,
             look_at: None,
@@ -485,21 +490,37 @@ impl Shell {
                     let root = Some(big_root.as_path());
                     let drop_key = data.lighting.as_ref().map(|l| l.drop_key);
                     let event = spec.ride.as_ref().and_then(|r| r.event_key);
+                    let track = data.name.clone();
+                    // PORT(choice): the level's music loads on a thread of its own beside its sounds, its game and its
+                    // speech block, not after them (alps0101: the music 0.16 s after the sounds' 0.15 s and the game's
+                    // 0.07 s, development laptop, `trace_chrome`). It reads the same files and draws from no generator
+                    // they draw from (the sounds' riding banks draw from the game's global one, the music's picks from
+                    // the MusicBox's own later); the console's loader threads are not decoded.
                     let music =
-                        crate::audio::music::load_level_event(root, &data.name, drop_key, event, &song_flags, false);
-                    let sfx = crate::audio::sfx::load_level_event(
-                        root,
-                        &data.name,
-                        &spec.character,
-                        data.max_boost(),
-                        event,
-                        speech_lang,
-                        false,
+                        || crate::audio::music::load_level_event(root, &track, drop_key, event, &song_flags, false);
+                    let (rest, music) = crate::load_pool::join(
+                        "level music",
+                        || -> Result<_> {
+                            let speech_block = block_in.map(|(words, required, descriptions)| {
+                                speech_block(&big_root, &data.name, &spec.character, words, required, descriptions)
+                            });
+                            let launch =
+                                crate::audio::sfx::SfxLaunch { event_key: event, block: speech_block.as_ref() };
+                            let sfx = crate::audio::sfx::load_level_event(
+                                root,
+                                &data.name,
+                                &spec.character,
+                                data.max_boost(),
+                                launch,
+                                speech_lang,
+                                false,
+                            );
+                            let game = game_level::LevelLoad::load(opts, &data)?;
+                            Ok((sfx, game, speech_block))
+                        },
+                        music,
                     );
-                    let game = game_level::LevelLoad::load(opts, &data)?;
-                    let speech_block = block_in.map(|(words, required, descriptions)| {
-                        speech_block(&big_root, &data.name, &spec.character, words, required, descriptions)
-                    });
+                    let (sfx, game, speech_block) = rest?;
                     Ok(LoadedLevel { data, music, sfx, game, speech_block })
                 })();
                 let _ = tx.send(r);

@@ -1,4 +1,4 @@
-use ssx_physics::event::{Course, EventState, EventType};
+use ssx_physics::event::{Course, EventState, EventType, HudFeedCalls};
 use ssx_physics::objectives::Name;
 use ssx_physics::rider::{RiderState, World};
 
@@ -72,6 +72,7 @@ pub struct HudFeed {
     pub trick: TrickStandings,
     pub session: Option<super::session_board::SessionHud>,
     heights: CourseHeights,
+    fed: Option<HudFeedCalls>,
 }
 
 impl HudFeed {
@@ -124,7 +125,6 @@ impl HudFeed {
                 super::fe::flow::race_start_camera(fe, &mut ui.values);
             }
         }
-        let running = x.event.state == EventState::Running;
         self.messages(ui, s, x, world);
         if let Some((k, _ms)) = e.and_then(|e| e.event.split) {
             match split_callout_kind(x.event.setup.event_type, k) {
@@ -133,9 +133,7 @@ impl HudFeed {
                 SplitCallout::None => {}
             }
         }
-        if running {
-            self.feed_hud(ui, s, x, world);
-        }
+        self.score_manager_feed(ui, s, x, world);
         self.project(ui, s, x);
         if e.is_some_and(|e| e.event.results) {
             self.race_started = false;
@@ -323,7 +321,25 @@ impl HudFeed {
             .collect()
     }
 
-    fn feed_hud(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
+    pub fn score_manager_feed(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
+        let calls = x.event.hud_feed;
+        let last = self.fed.replace(calls);
+        if last == Some(calls) {
+            return;
+        }
+        if last.map(|l| l.resets) != Some(calls.resets) {
+            self.combo.clear();
+            self.record = TrickRecord::default();
+        }
+        if last.map(|l| l.loop_restarts) != Some(calls.loop_restarts) {
+            self.record = TrickRecord::default();
+        }
+        if last.map(|l| l.feeds) != Some(calls.feeds) {
+            self.feed_hud(ui, s, x, world, calls.state);
+        }
+    }
+
+    fn feed_hud(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World, state: EventState) {
         let sc = &s.score;
         let rider = self.rider.clone();
         let name = match self.record.kind {
@@ -358,7 +374,7 @@ impl HudFeed {
         v.set_str(id::TRICK_GRAB_NAME, name);
         v.set_float(id::COMBO_CURRENT_TIMER_PERCENTAGE, sc.combo_pct);
         v.set_float(id::WINGSUIT_USAGE, s.wingsuit.use_percentage);
-        v.set_bool(id::WINGSUIT_ACTIVE, s.wingsuit.signal && x.event.state == EventState::Running);
+        v.set_bool(id::WINGSUIT_ACTIVE, s.wingsuit.signal && state == EventState::Running);
         let h = s.survival.hud();
         v.set_float(id::ARMOUR, h.armour);
         v.set_float(id::HEAD_LAMP_LEVEL, h.head_lamp_battery);
@@ -405,7 +421,13 @@ impl HudFeed {
         }
     }
 
-    pub fn paused_frame(&self, ui: &mut GameUi, s: &RiderState, x: &Session) {
+    pub fn paused_frame(&mut self, ui: &mut GameUi, s: &RiderState, x: &Session, world: &World) {
+        self.project(ui, s, x);
+        self.score_manager_feed(ui, s, x, world);
+        ui.values.set_bool(id::NIS_IS_ACTIVE, nis_is_active(s, x));
+    }
+
+    pub fn frame_modules(&self, ui: &mut GameUi, s: &RiderState, x: &Session) {
         self.project(ui, s, x);
         ui.values.set_bool(id::NIS_IS_ACTIVE, nis_is_active(s, x));
     }

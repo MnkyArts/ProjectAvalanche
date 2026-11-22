@@ -227,10 +227,10 @@ impl RewindBuffer {
 fn restore(s: &mut RiderState, snap: &RiderState) {
     let (score, jump_trigger, graph) = (s.score, s.jump.trigger, s.graph);
     let (sa, feature) = (s.grind.sa.take(), s.grind.feature);
-    let pad_r1 = s.wingsuit.pad_r1;
+    let (pad_r1, oxygen_pad) = (s.wingsuit.pad_r1, s.survival.oxygen_pad);
     let temperature_enabled = s.survival.temperature_enabled;
     s.clone_from(snap);
-    s.wingsuit.pad_r1 = pad_r1;
+    (s.wingsuit.pad_r1, s.survival.oxygen_pad) = (pad_r1, oxygen_pad);
     s.survival.temperature_enabled = temperature_enabled;
     s.score = score;
     s.score.restore_from_snapshot(&snap.score);

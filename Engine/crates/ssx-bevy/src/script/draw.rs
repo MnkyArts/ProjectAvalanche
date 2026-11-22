@@ -159,9 +159,10 @@ pub(super) fn overlay(
     mut out: ResMut<UiOverlay>,
     state: Res<super::orders::OrderState>,
     scene: Res<super::markers::MarkerScene>,
-    ui: Option<Res<UiScene>>,
+    mut ui: Option<ResMut<UiScene>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
 ) {
+    let ui = ui.as_deref_mut().and_then(UiScene::state);
     let p = &mut *pool;
     p.receive();
     if let Some(list) = p.pending.take() {

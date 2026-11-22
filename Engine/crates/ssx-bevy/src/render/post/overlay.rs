@@ -1,4 +1,5 @@
 use crate::render::reload::Recipe;
+use crate::render::uploads::{LevelImage, LevelUploads};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -75,12 +76,21 @@ fn overlay_image(big_root: &Path, name: &str) -> Result<(Image, Recipe)> {
 
 pub struct OverlayLoad {
     overlay: SurvivalOverlay,
-    maps: [(Image, Recipe); 2],
+    maps: [LevelImage; 2],
+}
+
+impl OverlayLoad {
+    pub fn queue_images(&mut self, uploads: &mut LevelUploads, images: &mut Assets<Image>) {
+        for m in &mut self.maps {
+            m.queue(uploads, images);
+        }
+    }
 }
 
 pub fn load(big_root: &Path, drop: OverlayDrop) -> Result<OverlayLoad> {
     let overlay = SurvivalOverlay::of(drop);
-    let maps = [overlay_image(big_root, overlay.maps[0])?, overlay_image(big_root, overlay.maps[1])?];
+    let built = |(image, recipe): (Image, Recipe)| LevelImage::built(image, Some(recipe));
+    let maps = [built(overlay_image(big_root, overlay.maps[0])?), built(overlay_image(big_root, overlay.maps[1])?)];
     Ok(OverlayLoad { overlay, maps })
 }
 
@@ -88,7 +98,7 @@ pub fn insert(world: &mut World, load: OverlayLoad) -> Result<String> {
     let OverlayLoad { overlay, maps: [a, b] } = load;
     let maps = {
         let mut images = world.get_resource_mut::<Assets<Image>>().context("no image assets")?;
-        [a, b].map(|(image, recipe)| crate::render::reload::add(&mut images, image, Some(recipe)))
+        [a, b].map(|m| m.into_handle(&mut images))
     };
     let mut post = world.get_resource_mut::<PostOverlay>().context("the post chain is off")?;
     post.maps = maps;

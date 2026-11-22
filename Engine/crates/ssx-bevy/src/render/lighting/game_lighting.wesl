@@ -21,6 +21,19 @@ struct GameLight {
     misc: vec4<f32>,
 }
 
+struct RimFill {
+    rim_color: vec4<f32>,
+    rim: vec4<f32>,
+    rim_dir: vec4<f32>,
+    fill_color: vec4<f32>,
+    fill_dir: vec4<f32>,
+}
+
+struct LevelLight {
+    light: GameLight,
+    rim_fill: RimFill,
+}
+
 @if(SSX_LOCAL_LIGHTS)
 fn frame_light() -> GameLight {
     let at = local_lights::words(3u).w;
@@ -50,7 +63,9 @@ fn to_eye(world_position: vec3<f32>) -> vec3<f32> {
     return normalize(view_bindings::view.world_position - world_position);
 }
 
-const SHADOW_SIZE: f32 = 1024.0;
+fn shadow_size() -> f32 {
+    return f32(textureDimensions(view_bindings::directional_shadow_textures).x);
+}
 const PCF_HALF_WIDTH: f32 = 2.0;
 
 fn shadow_bias(i: u32) -> f32 {
@@ -87,10 +102,36 @@ fn shadow_texel(layer: i32, t: vec2<i32>, thr: f32, size: i32) -> f32 {
 }
 }
 
+fn shadow_quad(layer: i32, t: vec2<i32>, thr: f32, size: i32) -> vec4<f32> {
+@if(NO_ARRAY_TEXTURES_SUPPORT) {
+    return vec4(1.0);
+} @else {
+    // PORT(choice): one gather-compare of the four texels instead of four point loads (the shadow PCF's 20 loads become
+    // 5 fetches). The same texels and the same results: the gather reads the 2×2 whose corner is at (t + 1) / map
+    // size (a power of two: exact; the sampler's footprint floor(uv · size − 0.5) = t), Bevy 0.20's directional
+    // comparison sampler compares `reference >= texel` (light.rs `init_shadow_samplers`: GreaterEqual, clamp to edge),
+    // so the reference is the float below thr (thr > texel exactly when that float >= texel; thr is positive and
+    // finite: 1 − saturate(·) + a bias > 0), and the texels outside [0, size)² are set to 1 as the point taps' border.
+    // The console fetched the 20 taps of ss_shadow (shadowbuffer.fxo PS1) with point sampling.
+    let uv = vec2<f32>(t + vec2(1)) / shadow_size();
+    let below = bitcast<f32>(bitcast<u32>(thr) - 1u);
+    let lit = textureGatherCompare(
+        view_bindings::directional_shadow_textures,
+        view_bindings::directional_shadow_textures_comparison_sampler,
+        uv,
+        layer,
+        below,
+    );
+    let in_t = (t >= vec2(0)) & (t < vec2(size));
+    let in_t1 = (t >= vec2(-1)) & (t < vec2(size - 1));
+    return select(vec4(1.0), lit, vec4(in_t.x && in_t1.y, in_t1.x && in_t1.y, in_t1.x && in_t.y, in_t.x && in_t.y));
+}
+}
+
 fn shadow_group(layer: i32, i0: vec2<i32>, o: vec2<i32>, f: vec2<f32>, thr: f32, size: i32) -> f32 {
-    let t = i0 + o;
-    let a = mix(shadow_texel(layer, t, thr, size), shadow_texel(layer, t + vec2(1, 0), thr, size), f.x);
-    let b = mix(shadow_texel(layer, t + vec2(0, 1), thr, size), shadow_texel(layer, t + vec2(1, 1), thr, size), f.x);
+    let q = shadow_quad(layer, i0 + o, thr, size);
+    let a = mix(q.w, q.z, f.x);
+    let b = mix(q.x, q.y, f.x);
     return mix(a, b, f.y);
 }
 
@@ -116,7 +157,7 @@ fn sun_shadow(world_position: vec4<f32>, surface_normal: vec3<f32>, z: f32, frag
     var cascade = 3u;
     var c = vec3(0.0);
     var c2 = vec3(0.0);
-    let edge = 0.5 - PCF_HALF_WIDTH / SHADOW_SIZE;
+    let edge = 0.5 - PCF_HALF_WIDTH / shadow_size();
     for (var i = 0u; i < 3u; i++) {
         let clip = (*light).cascades[i].clip_from_world * p;
         let ci = vec3(0.5 * clip.x, -0.5 * clip.y, 0.5 - clip.z);
@@ -136,7 +177,7 @@ fn sun_shadow(world_position: vec4<f32>, surface_normal: vec3<f32>, z: f32, frag
     }
     let thr = 1.0 - (saturate(c.z + 0.5) - bias);
     let layer = i32((*light).depth_texture_base_index + layer_cascade);
-    let pcf = shadow_pcf(layer, (c.xy + 0.5) * SHADOW_SIZE - 0.5, thr, i32(SHADOW_SIZE));
+    let pcf = shadow_pcf(layer, (c.xy + 0.5) * shadow_size() - 0.5, thr, i32(shadow_size()));
     let g = saturate(20.0 * abs(c2) - 9.0);
     let outer = select(1.0, (1.0 - g.y) * (1.0 - g.z), cascade >= 2u);
     let s = saturate(pcf + 1.0 - (1.0 - g.x) * outer);
@@ -154,7 +195,7 @@ fn map_box_stencil(m: mat4x4<f32>, p: vec3<f32>) -> bool {
     let bz = view_bindings::view.clip_from_view[3][2];
     var t0 = bz / (1.0 + a) / depth;
     var t1 = select(3.0e38, bz / a / depth, a > 1e-9);
-    let scale = CHARACTER_SIZE / SHADOW_SIZE;
+    let scale = CHARACTER_SIZE / shadow_size();
     let lo = vec3(-1.0, 1.0 - 2.0 * scale, 0.0);
     let hi = vec3(-1.0 + 2.0 * scale, 1.0, 1.0);
     let d = b - e;
@@ -185,7 +226,7 @@ fn character_shadow(p: vec3<f32>) -> f32 {
     }
     let b = (m * vec4(p, 1.0)).xyz;
     let thr = 1.0 - (saturate(1.0 - b.z) - CHARACTER_BIAS);
-    let pt = vec2(b.x + 1.0, 1.0 - b.y) * 0.5 * SHADOW_SIZE - 0.5;
+    let pt = vec2(b.x + 1.0, 1.0 - b.y) * 0.5 * shadow_size() - 0.5;
     return shadow_pcf(i32((*light).depth_texture_base_index), pt, thr, i32(CHARACTER_SIZE));
 }
 
@@ -200,7 +241,7 @@ fn shadow_query(p: vec3<f32>) -> f32 {
     let wp = vec4(p, 1.0);
     var cascade = 3u;
     var c = vec3(0.0);
-    let edge = 0.5 - PCF_HALF_WIDTH / SHADOW_SIZE;
+    let edge = 0.5 - PCF_HALF_WIDTH / shadow_size();
     for (var i = 0u; i < 3u; i++) {
         let clip = (*light).cascades[i].clip_from_world * wp;
         let ci = vec3(0.5 * clip.x, -0.5 * clip.y, 0.5 - clip.z);
@@ -220,8 +261,8 @@ fn shadow_query(p: vec3<f32>) -> f32 {
     }
     let thr = 1.0 - (saturate(c.z + 0.5) - bias);
     let layer = i32((*light).depth_texture_base_index + layer_cascade);
-    let t = vec2<i32>(floor((c.xy + 0.5) * SHADOW_SIZE + 1.0));
-    let lit = shadow_texel(layer, t, thr, i32(SHADOW_SIZE));
+    let t = vec2<i32>(floor((c.xy + 0.5) * shadow_size() + 1.0));
+    let lit = shadow_texel(layer, t, thr, i32(shadow_size()));
     let fade = saturate(0.02 * (-view_z(wp) - SHADOW_QUERY_FADE_START));
     return saturate(lit + fade);
 }
@@ -249,7 +290,7 @@ fn contact_shadow(p: vec3<f32>) -> f32 {
     }
     let b = (m * vec4(p, 1.0)).xyz;
     let z = 1.0 - b.z;
-    let pt = vec2(b.x + 1.0, 1.0 - b.y) * 0.5 * SHADOW_SIZE - 0.5;
+    let pt = vec2(b.x + 1.0, 1.0 - b.y) * 0.5 * shadow_size() - 0.5;
     let i0 = vec2<i32>(floor(pt));
     let f = pt - floor(pt);
     let layer = i32((*light).depth_texture_base_index);

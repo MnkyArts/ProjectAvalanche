@@ -10,6 +10,7 @@ mod riding;
 mod score;
 #[cfg(test)]
 mod testutil;
+pub mod workers;
 mod world;
 
 pub use anim::{anim_lua, driver, graph, query, rootmotion, tags};

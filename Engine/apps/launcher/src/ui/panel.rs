@@ -1,42 +1,53 @@
 use eframe::egui::{self, Align, CursorIcon, Id, Painter, Rect, Sense, Ui, UiBuilder, pos2};
 
-use super::layout::{CUT_HERO, Layout, PAD};
+use super::Section;
+use super::layout::{CUT_HERO, Layout, PAD, PANEL_HEAD};
+use super::nav::Device;
+use super::prompts::{self, Glyph};
 use super::shapes::{self, Cut};
 use super::text::{self, Fit, Style};
 use super::theme::{self, Face, size};
 
-pub const HEAD_H: f32 = 64.0;
 const TAB_PAD: f32 = 14.0;
+const SHOULDER_PAD: f32 = 4.0;
 
-pub fn frame(painter: &Painter, l: &Layout, title: &str) -> Rect {
+pub fn frame(painter: &Painter, l: &Layout, title: &str) {
     let rect = l.content;
     let points = shapes::chamfered(rect, Cut::diagonal(CUT_HERO));
     shapes::glow(painter, &points, 14.0, theme::CYAN.gamma_multiply(0.16));
     shapes::fill(painter, &points, theme::PANEL_DEEP);
     shapes::outline(painter, &points, l.px(1.0), theme::CYAN.gamma_multiply(0.70));
-    let base = rect.top() + HEAD_H / 2.0 + size::TITLE * theme::CAP_HEIGHT / 2.0;
+    let base = rect.top() + PANEL_HEAD / 2.0 + size::TITLE * theme::CAP_HEIGHT / 2.0;
     text::draw(painter, pos2(rect.left() + PAD, base), title, &Style::new(Face::Bold, size::TITLE, theme::TEXT));
-    let (rule, line) = (l.snap(rect.top() + HEAD_H), l.px(1.0));
+    let (rule, line) = (l.snap(rect.top() + PANEL_HEAD), l.px(1.0));
     let across = Rect::from_min_max(pos2(rect.left() + PAD, rule - line), pos2(rect.right() - PAD, rule));
     painter.rect_filled(across, 0.0, theme::LINE);
-    Rect::from_min_max(pos2(rect.left() + PAD, rule + 16.0), pos2(rect.right() - PAD, rect.bottom() - PAD))
 }
 
-pub fn tabs<T: Copy + PartialEq>(ui: &mut Ui, l: &Layout, all: &[(T, &str)], current: &mut T) {
+pub fn tabs<T: Section>(ui: &mut Ui, l: &Layout, current: &mut T, device: Device) -> bool {
     let painter = ui.painter().clone();
     let rect = l.content;
-    let rule = l.snap(rect.top() + HEAD_H);
-    let base = rect.top() + HEAD_H / 2.0 + size::CAPS * theme::CAP_HEIGHT / 2.0 + 2.0;
+    let rule = l.snap(rect.top() + PANEL_HEAD);
+    let base = rect.top() + PANEL_HEAD / 2.0 + size::CAPS * theme::CAP_HEIGHT / 2.0 + 2.0;
     let style = Style::new(Face::Title, size::CAPS, theme::TEXT_DIM).spaced(1.4);
+    let shoulders = prompts::shown(device);
+    let centre = rect.top() + PANEL_HEAD / 2.0 + 4.0;
     let mut right = rect.right() - PAD;
-    for (i, (tab, label)) in all.iter().enumerate().rev() {
+    if let Some(pad) = shoulders {
+        let w = prompts::width(&painter, pad, Glyph::NextSection);
+        prompts::draw(&painter, pad, Glyph::NextSection, right - SHOULDER_PAD - w, centre);
+        right -= w + 2.0 * SHOULDER_PAD;
+    }
+    let mut changed = false;
+    for (i, (tab, label)) in T::ALL.iter().enumerate().rev() {
         let galley = text::layout(&painter, label, &style, Fit::Free);
         let width = text::width(&galley, &style) + 2.0 * TAB_PAD;
         let cell = Rect::from_min_max(pos2(l.snap(right - width), rect.top() + 12.0), pos2(l.snap(right), rule));
         let response =
             ui.interact(cell, ui.id().with(("tab", i)), Sense::CLICK).on_hover_cursor(CursorIcon::PointingHand);
-        if response.clicked() {
+        if response.clicked() && *current != *tab {
             *current = *tab;
+            changed = true;
         }
         let colour = match (*current == *tab, response.hovered()) {
             (true, _) => theme::CYAN,
@@ -50,6 +61,11 @@ pub fn tabs<T: Copy + PartialEq>(ui: &mut Ui, l: &Layout, all: &[(T, &str)], cur
         }
         right -= width;
     }
+    if let Some(pad) = shoulders {
+        let w = prompts::width(&painter, pad, Glyph::PrevSection);
+        prompts::draw(&painter, pad, Glyph::PrevSection, right - SHOULDER_PAD - w, centre);
+    }
+    changed
 }
 
 pub fn body(ui: &mut Ui, rect: Rect, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -91,7 +107,6 @@ mod tests {
     use eframe::egui::{self, Context, Event, Id, Key, Modifiers, RawInput, Rect, Response, Ui, pos2, vec2};
 
     use super::body;
-    use crate::ui::widgets;
 
     const ROWS: usize = 40;
     const BODY: Rect = Rect { min: pos2(100.0, 100.0), max: pos2(500.0, 400.0) };
@@ -266,36 +281,5 @@ mod tests {
         for _ in 0..2 {
             assert_eq!(shown(&w.frame(Vec::new(), content)).offset(), 0.0);
         }
-    }
-
-    #[test]
-    fn a_combo_box_list_keeps_its_focused_entry_in_view() {
-        const ENTRIES: usize = 30;
-        let mut choice = 0;
-        let mut content = |ui: &mut Ui, pass: &mut Pass| {
-            let combo = egui::ComboBox::from_id_salt("list").selected_text(format!("entry {choice}"));
-            widgets::combo(ui, combo, |ui| {
-                let controls =
-                    (0..ENTRIES).map(|i| ui.selectable_value(&mut choice, i, format!("entry {i}"))).collect();
-                capture(ui, controls, pass);
-            });
-        };
-        let mut w = Window::new();
-        w.frame(Vec::new(), &mut content);
-        w.key(Key::Tab, NONE, &mut content);
-        w.key(Key::Space, NONE, &mut content);
-        let opened = w.frame(Vec::new(), &mut content);
-        assert_eq!(shown(&opened).controls.len(), ENTRIES, "Space on the focused combo box opens its list");
-        assert!(!shown(&opened).in_view(ENTRIES - 1), "the list is longer than its view");
-        let area = w.key(Key::Tab, NONE, &mut content);
-        assert!(shown(&area).focused.is_some() && shown(&area).focused_control().is_none());
-        for entry in 0..ENTRIES {
-            w.key(Key::Tab, NONE, &mut content);
-            w.frame(Vec::new(), &mut content);
-            let passes = w.frame(Vec::new(), &mut content);
-            assert_eq!(shown(&passes).focused_control(), Some(entry));
-            assert_focus_shown(&passes);
-        }
-        assert_eq!(choice, 0, "Tab chose nothing");
     }
 }

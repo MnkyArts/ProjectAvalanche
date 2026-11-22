@@ -157,9 +157,17 @@ impl Ctx<'_> {
     }
 
     pub fn ask<T>(&mut self, what: &str, f: impl FnOnce(&mut dyn World) -> Option<T>) -> Option<T> {
+        self.ask_with(|| what.to_string(), f)
+    }
+
+    pub fn ask_with<T>(
+        &mut self,
+        what: impl FnOnce() -> String,
+        f: impl FnOnce(&mut dyn World) -> Option<T>,
+    ) -> Option<T> {
         let v = f(self.world);
         if v.is_none() {
-            self.note(|| what.to_string());
+            self.note(what);
         }
         v
     }

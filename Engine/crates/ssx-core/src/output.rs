@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once, OnceLock, PoisonError, Weak};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::SystemTime;
 
@@ -103,7 +103,10 @@ impl Output {
         }
         let output = Arc::clone(self);
         match std::thread::Builder::new().name(name.into()).spawn(move || output.work(sink)) {
-            Ok(t) => Ok(Running { output: Arc::clone(self), thread: Some(t) }),
+            Ok(t) => {
+                started(self);
+                Ok(Running { output: Arc::clone(self), thread: Some(t) })
+            }
             Err(e) => {
                 self.lock().running = false;
                 Err(e)
@@ -260,9 +263,16 @@ fn std_sink(stream: Stream, bytes: &[u8]) -> io::Result<()> {
 
 static PROCESS: OnceLock<Arc<Output>> = OnceLock::new();
 
-// PORT(choice): one process-wide queue, as the streams it writes are the process's; the console writes no log.
-pub fn start() -> io::Result<Running> {
-    let running = PROCESS.get_or_init(Output::new).start("log-writer", std_sink)?;
+static STARTED: Mutex<Vec<Weak<Output>>> = Mutex::new(Vec::new());
+
+fn started(output: &Arc<Output>) {
+    {
+        let mut list = STARTED.lock().unwrap_or_else(PoisonError::into_inner);
+        list.retain(|w| w.strong_count() > 0);
+        if !list.iter().any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(output))) {
+            list.push(Arc::downgrade(output));
+        }
+    }
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
         let before = std::panic::take_hook();
@@ -272,11 +282,17 @@ pub fn start() -> io::Result<Running> {
             flush();
         }));
     });
-    Ok(running)
+}
+
+// PORT(choice): one process-wide queue, as the streams it writes are the process's; the console writes no log.
+pub fn start() -> io::Result<Running> {
+    PROCESS.get_or_init(Output::new).start("log-writer", std_sink)
 }
 
 pub fn flush() {
-    if let Some(o) = PROCESS.get() {
+    let outputs: Vec<Arc<Output>> =
+        STARTED.lock().unwrap_or_else(PoisonError::into_inner).iter().filter_map(Weak::upgrade).collect();
+    for o in outputs {
         o.flush();
     }
 }

@@ -314,15 +314,19 @@ impl TutorialManager {
                 Op::Test { success, failure } => self.test(host, read, x, success, failure, rider),
             }
         }
+        self.message_update(host.values(), x);
+        popups
+    }
+
+    pub fn message_update(&mut self, v: &mut UiValues, x: &Session) {
         let state = x.tutorial.as_ref().map_or(HudMessage::READY, |t| t.message.current);
         if state != self.message {
             self.message = state;
-            host.values().set_bool(id::HUDMESSAGE_IS_ENABLED, state == HudMessage::SHOWING);
+            v.set_bool(id::HUDMESSAGE_IS_ENABLED, state == HudMessage::SHOWING);
             if state != HudMessage::SHOWING {
-                host.values().set_bool(id::HUDMESSAGE_RIVAL_IS_ENABLED, false);
+                v.set_bool(id::HUDMESSAGE_RIVAL_IS_ENABLED, false);
             }
         }
-        popups
     }
 }
 
@@ -463,6 +467,10 @@ impl GameUi {
 
     pub fn tutorial_level_start(&mut self) {
         self.tutorial.level_start(&mut self.values);
+    }
+
+    pub fn tutorial_paused_frame(&mut self, x: &Session) {
+        self.tutorial.message_update(&mut self.values, x);
     }
 
     pub fn tutorial_step(&mut self, s: &RiderState, x: &Session, events: &[TutorialEvent], rider: &str) -> usize {
@@ -683,5 +691,24 @@ EndObjective()
         update(&mut r, &mut w, &mut m, &mut h, 0.0);
         update(&mut r, &mut w, &mut m, &mut h, 0.0);
         assert!(!h.v.bool(id::HUDMESSAGE_IS_ENABLED), "the loop ended: the component back in state 7");
+    }
+
+    #[test]
+    fn a_paused_frame_takes_the_message_off() {
+        let mut v = UiValues::new();
+        let mut m = TutorialManager::default();
+        m.level_start(&mut v);
+        let mut t = Tutorial::default();
+        t.message.request(HudMessage::SHOWING, 1.0);
+        t.update(1.0 / 30.0);
+        let mut x = Session { tutorial: Some(t), ..Default::default() };
+        m.message_update(&mut v, &x);
+        assert!(v.bool(id::HUDMESSAGE_IS_ENABLED), "the message up");
+        let t = x.tutorial.as_mut().expect("tutorial");
+        for _ in 0..35 {
+            t.update(1.0 / 30.0);
+        }
+        m.message_update(&mut v, &x);
+        assert!(!v.bool(id::HUDMESSAGE_IS_ENABLED), "its second over under the pause");
     }
 }

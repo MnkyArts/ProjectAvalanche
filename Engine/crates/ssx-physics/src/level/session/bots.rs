@@ -171,6 +171,22 @@ pub fn bot_requests(
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartDropRacers {
+    Bots,
+    ExploreGhosts,
+    None,
+}
+
+pub fn start_drop_racers(event_type: crate::event::EventType, free_ride: bool) -> StartDropRacers {
+    use crate::event::EventType;
+    match event_type {
+        EventType::RaceBots | EventType::TrickBots => StartDropRacers::Bots,
+        EventType::RaceGhosts | EventType::TrickGhosts if !free_ride => StartDropRacers::ExploreGhosts,
+        _ => StartDropRacers::None,
+    }
+}
+
 pub const EXPLORE_RACER_TYPE: u32 = 2;
 
 pub fn explore_requests(def: &crate::event::EventDef) -> Vec<BotRequest> {
@@ -447,14 +463,14 @@ impl BotRace {
         data: &BotData,
         rng: &mut dyn GameRandom,
         course: Option<crate::event::Course>,
+        free_ride: bool,
     ) -> Option<(Self, Vec<String>)> {
-        use crate::event::EventType;
-        match def.event_type? {
-            EventType::RaceBots | EventType::TrickBots => Some(Self::load(big_root, def, data, rng, course)),
-            EventType::RaceGhosts | EventType::TrickGhosts => {
+        match start_drop_racers(def.event_type?, free_ride) {
+            StartDropRacers::Bots => Some(Self::load(big_root, def, data, rng, course)),
+            StartDropRacers::ExploreGhosts => {
                 Some(Self::load_requests(big_root, explore_requests(def), Vec::new(), data, course))
             }
-            _ => None,
+            StartDropRacers::None => None,
         }
     }
 

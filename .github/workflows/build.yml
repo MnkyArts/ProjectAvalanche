@@ -277,7 +277,9 @@ jobs:
             In the menus:    Enter = START, Space = A, Backspace = B, X, Y, arrow keys = D-pad,
                              Q / E = LB / RB, W A S D = left stick (the globe), F1 skips a movie.
             On the mountain: arrow keys or W A S D = left stick (steer, tuck, brake), Space = A (jump),
-                             I / J / L / K = Y / X / B / A, Shift = RT, Ctrl = LT, E = RB,
+                             Numpad 8 / 4 / 6 / 2 = right stick, Numpad 5 = right stick click
+                             (classic controls: oxygen), I / J / L / K = Y / X / B / A, Shift = RT,
+                             Ctrl = LT, E = RB (standard controls: wingsuit and oxygen),
                              Backspace = LB (rewind), Esc = START (pause).
 
           HOST starts a multiplayer server on this computer (avalanche-server.exe, next to the launcher; its
@@ -578,7 +580,9 @@ jobs:
             In the menus:    Enter = START, Space = A, Backspace = B, X, Y, arrow keys = D-pad,
                              Q / E = LB / RB, W A S D = left stick (the globe), F1 skips a movie.
             On the mountain: arrow keys or W A S D = left stick (steer, tuck, brake), Space = A (jump),
-                             I / J / L / K = Y / X / B / A, Shift = RT, Ctrl = LT, E = RB,
+                             Numpad 8 / 4 / 6 / 2 = right stick, Numpad 5 = right stick click
+                             (classic controls: oxygen), I / J / L / K = Y / X / B / A, Shift = RT,
+                             Ctrl = LT, E = RB (standard controls: wingsuit and oxygen),
                              Backspace = LB (rewind), Esc = START (pause).
 
           HOST starts a multiplayer server on this computer (avalanche-server, next to the launcher; its licences

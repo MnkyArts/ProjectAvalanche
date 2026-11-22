@@ -135,10 +135,15 @@ impl Plugin for ReloadPlugin {
     }
 }
 
-fn follow_content(mut state: ResMut<ReloadState>, mut reload: ResMut<ContentReload>, images: Res<Assets<Image>>) {
+fn follow_content(
+    mut state: ResMut<ReloadState>,
+    mut reload: ResMut<ContentReload>,
+    images: Res<Assets<Image>>,
+    uploads: Option<Res<crate::render::uploads::LevelUploads>>,
+) {
     let content = state.content.clone();
     let generation = content.generation();
-    if generation == reload.generation || state.pending.is_some() {
+    if generation == reload.generation || state.pending.is_some() || uploads.is_some_and(|u| u.pending()) {
         return;
     }
     let ids = content.changes_since(reload.generation);

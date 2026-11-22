@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 
 use bevy_app::{App, Last, Plugin, PostUpdate, PreUpdate};
 use bevy_ecs::prelude::*;
-use bevy_time::{Real, Time};
+use bevy_time::{Real, Time, Virtual};
 use lightyear::connection::ConnectionSystems;
 use lightyear::link::{LinkSystems, RecvLinkConditioner};
 use lightyear::netcode::TokenUserData;
@@ -52,8 +52,8 @@ pub use scripts::{
 };
 pub use session::{Claimed, IssueError, Issued, PlayerSession, Sessions, TicketRefusal, TicketRequest};
 pub use time::{
-    CLOCK_RATE_TOLERANCE, JITTER_MARGIN_TICKS, JITTER_MULTIPLE, LinkTime, Received, ServerTime, UNALIGNED_GO_TICKS,
-    horizon,
+    CATCH_UP, CLOCK_RATE_TOLERANCE, JITTER_MARGIN_TICKS, JITTER_MULTIPLE, LONG_FRAME, LinkTime, Received, ServerTime,
+    UNALIGNED_GO_TICKS, horizon,
 };
 pub use validation::{
     CheckOutcomes, LimitsLoader, ValidationConfig, ValidationEvent, ValidationLog, ValidationMeasures,
@@ -135,6 +135,7 @@ impl Plugin for NetServerPlugin {
     }
 
     fn finish(&self, app: &mut App) {
+        app.world_mut().get_resource_or_init::<Time<Virtual>>().set_max_delta(time::CATCH_UP);
         let lobby = app.world_mut().resource_mut::<RoomAllocator>().allocate();
         app.insert_resource(Lobby(lobby));
         instance::start(app.world_mut(), lobby);
@@ -186,6 +187,7 @@ pub struct ServerStats {
     pub control_held_most: usize,
     pub frames_clamped: u64,
     pub frame_ms_most: u64,
+    pub frames_long: u64,
     pub traffic: Traffic,
     pub resources_told: u64,
 }

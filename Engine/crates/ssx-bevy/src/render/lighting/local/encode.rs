@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use bevy::math::{Affine3A, DVec2};
+use bevy::math::{Affine3A, DVec2, DVec3};
 use bevy::prelude::{IVec2, Quat, UVec2, Vec2, Vec3};
 use ssx_assets::light_script::LightBehaviour;
 use ssx_assets::track_lights::text::Strings;
@@ -174,6 +174,14 @@ fn constants(p: &Placed) -> ([f32; 3], [f32; 3], Vec3, f32, [f32; 2]) {
     }
 }
 
+fn vis_radius(r: f32) -> f32 {
+    Vec3::splat(r).length()
+}
+
+pub(super) fn switched_off(p: &Placed) -> bool {
+    p.factor.is_none() && p.behaviour == Some(LightBehaviour::Off)
+}
+
 fn flags(p: &Placed, kind: u32) -> u32 {
     let mode = match (p.factor, p.behaviour) {
         (Some(_), _) | (None, Some(LightBehaviour::Off)) => 3,
@@ -210,7 +218,7 @@ pub(super) fn record(w: &mut Words, p: &Placed) {
     let c = p.light.color;
     w.f([c[0], c[1], c[2], p.light.diffuse_intensity]);
     w.f([a1[0], a1[1], a1[2], p.light.specular_intensity]);
-    w.f([a2[0], a2[1], a2[2], radius]);
+    w.f([a2[0], a2[1], a2[2], vis_radius(radius)]);
     let axis = Vec3::from(p.world.matrix3.z_axis).normalize_or_zero();
     w.u([axis.x.to_bits(), axis.y.to_bits(), axis.z.to_bits(), p.entity]);
     let (strength, frequency, gap) = match (p.factor, p.behaviour) {
@@ -224,28 +232,48 @@ pub(super) fn record(w: &mut Words, p: &Placed) {
 }
 
 pub(super) fn bounds(p: &Placed) -> [f32; 4] {
-    let (_, _, centre, _, _) = constants(p);
     let m = p.world.matrix3;
     let gram = m.transpose() * m;
     let stretch =
         [gram.x_axis, gram.y_axis, gram.z_axis].map(|c| c.abs().element_sum()).into_iter().fold(0.0, f32::max);
     let stretch = stretch.sqrt();
-    let (extent, ends) = match p.light.shape {
-        LightShape::Point { outer_radius, inner_radius } => (outer_radius, inner_radius <= outer_radius),
-        LightShape::Spot { outer_length, inner_length, .. } => (outer_length, inner_length <= outer_length),
-        LightShape::Box { width, height, outer_length, inner_length, penumbra, .. } => {
-            (0.5 * Vec3::new(width, height, outer_length).length(), inner_length <= outer_length && penumbra >= 0.0)
+    let (centre, extent, ends) = match p.light.shape {
+        LightShape::Point { outer_radius, inner_radius } => (Vec3::ZERO, outer_radius, inner_radius <= outer_radius),
+        LightShape::Spot { cone_angle, penumbra_angle, outer_length, inner_length, .. } => {
+            let (centre, extent) = spot_reach(cone_angle, penumbra_angle, outer_length);
+            (centre, extent, inner_length <= outer_length)
         }
+        LightShape::Box { width, height, outer_length, inner_length, penumbra, .. } => (
+            Vec3::new(0.0, 0.0, -0.5 * outer_length),
+            0.5 * Vec3::new(width, height, outer_length).length(),
+            inner_length <= outer_length && penumbra >= 0.0,
+        ),
     };
+    let centre = p.world.transform_point3(centre);
     let radius = extent.abs() * stretch * 1.0001 + 1e-4;
-    [centre.x, centre.y, centre.z, if ends && radius.is_finite() { radius } else { f32::MAX }]
+    let bounded = ends && radius.is_finite() && centre.is_finite();
+    [centre.x, centre.y, centre.z, if bounded { radius } else { f32::MAX }]
+}
+
+fn spot_reach(cone_angle: f32, penumbra_angle: f32, l: f32) -> (Vec3, f32) {
+    let half = cone_angle * 0.5;
+    let (outer, inner) = (penumbra_angle.max(0.0) + half, penumbra_angle.min(0.0) + half);
+    let (cos_outer, cos_inner) = ((outer as f64).cos() as f32, (inner as f64).cos() as f32);
+    let cos = cos_outer - 0.001;
+    if cos_inner >= cos_outer && cos > 0.5 && l >= 0.0 {
+        let r = l / (2.0 * cos);
+        (Vec3::new(0.0, 0.0, -r), r)
+    } else {
+        (Vec3::ZERO, l)
+    }
 }
 
 const MAX_CELLS: u32 = 1024;
 
 // PORT(choice): a 2-D cell grid of light lists, 32 m cells, at most 1024 per side, sized once per level by the lights
-// as placed, with an outside list; any light that can reach a fragment is in the list the fragment reads, and the
-// shader's bounds test skips the rest, so the lists change no result. The console drew each visible light's volume
+// as placed, with an outside list; a light is in the lists of the cells its bounds (a sphere holding every point its
+// attenuation reaches) touch, so any light that can reach a fragment is in the list the fragment reads, and the
+// shader's bounds test skips the rest: the lists change no result. The console drew each visible light's volume
 // into the L-buffer (DL_LightBufferPass) and had no such lists.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Grid {
@@ -285,12 +313,16 @@ impl Grid {
 }
 
 pub(super) fn encode(placed: &[Placed], grid: &Grid, slots: u32, light: &GameLightUniform) -> (Words, usize) {
-    let records: Vec<_> = placed.iter().map(constants).collect();
+    let reach: Vec<[f32; 4]> = placed.iter().map(bounds).collect();
     let dims = grid.dims;
     let outside = (dims.x * dims.y) as usize;
     let mut cells: Vec<Vec<u32>> = vec![Vec::new(); outside + 1];
-    for (i, (_, _, c, r, _)) in records.iter().enumerate() {
-        let (a, b, beyond) = grid.cover(Vec2::new(c.x - r, c.z - r), Vec2::new(c.x + r, c.z + r));
+    for (i, &[x, _, z, r]) in reach.iter().enumerate() {
+        if switched_off(&placed[i]) {
+            continue;
+        }
+        let r = if r == f32::MAX { f32::INFINITY } else { r };
+        let (a, b, beyond) = grid.cover(Vec2::new(x - r, z - r), Vec2::new(x + r, z + r));
         for z in a.y..=b.y {
             for x in a.x..=b.x {
                 cells[(z as u32 * dims.x + x as u32) as usize].push(i as u32);
@@ -300,14 +332,16 @@ pub(super) fn encode(placed: &[Placed], grid: &Grid, slots: u32, light: &GameLig
             cells[outside].push(i as u32);
         }
     }
+    let flat: Vec<u32> = cells.concat();
     let planes = sphere_planes();
     let lights_off = HEADER + planes.len() as u32;
     let cells_off = lights_off + RECORD * placed.len() as u32;
     let list_off = cells_off + cells.len() as u32;
+    let list_bounds_off = list_off + flat.len().div_ceil(4) as u32;
     let mut w = Words::default();
     w.u([grid.lo.x.to_bits(), grid.lo.y.to_bits(), grid.cell.to_bits(), placed.len() as u32]);
     w.u([dims.x, dims.y, cells_off, list_off]);
-    w.u([lights_off, HEADER, sphere_cos().to_bits(), 0]);
+    w.u([lights_off, HEADER, list_bounds_off, 0]);
     w.u([0; 4]);
     for plane in planes {
         w.f(plane);
@@ -320,21 +354,40 @@ pub(super) fn encode(placed: &[Placed], grid: &Grid, slots: u32, light: &GameLig
         w.u([start, cell.len() as u32, 0, 0]);
         start += cell.len() as u32;
     }
-    let flat: Vec<u32> = cells.concat();
     for chunk in flat.chunks(4) {
         let mut v = [0u32; 4];
         v[..chunk.len()].copy_from_slice(chunk);
         w.u(v);
     }
+    for &i in &flat {
+        w.f(reach[i as usize]);
+    }
     let dynamic_at = w.0.len();
     w.0.resize(dynamic_at + (RECORD * slots) as usize, [0; 4]);
     w.0[3] = [dynamic_at as u32, 0, 0, w.0.len() as u32];
     w.0.extend(light_words(light));
-    for p in placed {
-        w.f(bounds(p));
-    }
+    w.f(union(&[]));
     w.0.resize(w.0.len() + slots as usize, [0; 4]);
     (w, dynamic_at)
+}
+
+pub(super) fn union(bounds: &[[f32; 4]]) -> [f32; 4] {
+    if bounds.is_empty() {
+        return [0.0, 0.0, 0.0, -1.0];
+    }
+    if bounds.iter().any(|b| b[3] == f32::MAX) {
+        return [0.0, 0.0, 0.0, f32::MAX];
+    }
+    let spheres: Vec<(DVec3, f64)> =
+        bounds.iter().map(|b| (DVec3::new(b[0].into(), b[1].into(), b[2].into()), f64::from(b[3]))).collect();
+    let (mut lo, mut hi) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
+    for &(c, r) in &spheres {
+        (lo, hi) = (lo.min(c - r), hi.max(c + r));
+    }
+    let centre = ((lo + hi) * 0.5).as_vec3();
+    let reach = spheres.iter().map(|&(c, r)| c.distance(centre.as_dvec3()) + r).fold(0.0, f64::max);
+    let radius = (reach * 1.0001 + 1e-4) as f32;
+    [centre.x, centre.y, centre.z, if radius.is_finite() { radius } else { f32::MAX }]
 }
 
 fn sphere_planes() -> Vec<[f32; 4]> {
@@ -389,20 +442,52 @@ mod tests {
         assert_eq!(dynamic_at as u32, HEADER + STACKS * SLICES + 2);
         let light_at = HEADER + STACKS * SLICES + 2 + RECORD * DYNAMIC_SLOTS;
         assert_eq!(w.0[3], [dynamic_at as u32, 0, 0, light_at]);
-        assert_eq!(w.0.len(), light_at as usize + LIGHT_WORDS + DYNAMIC_SLOTS as usize);
+        assert_eq!(w.0[2][2], dynamic_at as u32);
+        assert_eq!(w.0[light_at as usize + LIGHT_WORDS], [0, 0, 0, (-1.0f32).to_bits()]);
+        assert_eq!(w.0.len(), light_at as usize + LIGHT_WORDS + 1 + DYNAMIC_SLOTS as usize);
+    }
+
+    fn attenuation(p: &Placed, pl: Vec3) -> f32 {
+        let sat = |x: f32| if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) };
+        let game_pow = |x: f32, y: f32| if x <= 0.0 { 0.0 } else { (y * x.log2()).exp2() };
+        let (a1, a2, ..) = constants(p);
+        let d = pl.length();
+        let falloff = 1.0 - game_pow(sat((d - a1[0]) / (a1[1] - a1[0])), a1[2]);
+        match p.light.shape {
+            LightShape::Point { .. } => falloff,
+            LightShape::Spot { .. } => {
+                let c = pl.z / d;
+                let u = sat((-c - a2[1]) / (a2[0] - a2[1]));
+                falloff * u * u * (3.0 - 2.0 * u) * game_pow(c.abs(), a2[2])
+            }
+            LightShape::Box { .. } => {
+                if pl.z >= 0.0 {
+                    return 0.0;
+                }
+                let sx = sat((pl.x.abs() - (a2[0] - a2[2])) / a2[2]);
+                let sy = sat((pl.y.abs() - (a2[1] - a2[2])) / a2[2]);
+                let tz = sat((-pl.z - a1[0]) / (a1[1] - a1[0]));
+                (1.0 - sx * sx * (3.0 - 2.0 * sx)) * (1.0 - sy * sy * (3.0 - 2.0 * sy)) * (1.0 - game_pow(tz, a1[2]))
+            }
+        }
     }
 
     #[test]
     fn bounds_hold_the_attenuation() {
+        let spot = |cone_angle, penumbra_angle| LightShape::Spot {
+            cone_angle,
+            penumbra_angle,
+            outer_length: 9.0,
+            inner_length: 2.0,
+            drop_off: 3.0,
+        };
         let shapes = [
             LightShape::Point { outer_radius: 7.0, inner_radius: 1.0 },
-            LightShape::Spot {
-                cone_angle: 1.2,
-                penumbra_angle: 0.1,
-                outer_length: 9.0,
-                inner_length: 2.0,
-                drop_off: 3.0,
-            },
+            spot(1.2, 0.1),
+            spot(0.610_865_2, 0.261_799_4),
+            spot(2.0, 0.2),
+            spot(0.8, 0.0),
+            spot(0.4, -0.5),
             LightShape::Box {
                 width: 8.0,
                 height: 5.0,
@@ -433,46 +518,118 @@ mod tests {
             let (centre, radius) = (Vec3::new(b[0], b[1], b[2]), b[3]);
             let inv = world.inverse();
             let (mut reached, mut beyond) = (0, 0);
-            for _ in 0..200_000 {
+            for _ in 0..400_000 {
                 let q = Vec3::from(world.translation) + Vec3::new(next(), next(), next()) * 20.0;
-                let pl = inv.transform_point3(q);
-                let lit = match shape {
-                    LightShape::Point { outer_radius: r, .. } | LightShape::Spot { outer_length: r, .. } => {
-                        pl.length() < r
-                    }
-                    LightShape::Box { width, height, outer_length, .. } => {
-                        pl.z < 0.0 && -pl.z < outer_length && pl.x.abs() < width * 0.5 && pl.y.abs() < height * 0.5
-                    }
-                };
+                let lit = attenuation(&p, inv.transform_point3(q)) > 0.0;
                 reached += lit as u32;
                 beyond += (lit && q.distance(centre) > radius) as u32;
             }
             assert!(reached > 100, "{shape:?}: {reached}");
             assert_eq!(beyond, 0, "{shape:?}");
         }
+        let pole = bounds(&placed(Affine3A::IDENTITY, spot(0.610_865_2, 0.261_799_4)))[3];
+        assert!((pole / 9.0 - 0.593).abs() < 0.002, "{pole}");
         let point = |outer_radius, inner_radius| LightShape::Point { outer_radius, inner_radius };
         assert_eq!(bounds(&placed(Affine3A::IDENTITY, point(2.0, 3.0)))[3], f32::MAX);
         let turned = Affine3A::from_scale_rotation_translation(Vec3::splat(3.0), Quat::from_rotation_y(0.7), Vec3::ONE);
         assert!((bounds(&placed(turned, point(2.0, 2.0)))[3] - 6.0).abs() < 2e-3);
     }
 
+    #[test]
+    fn the_union_holds_each_sphere() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32
+        };
+        let inside = |p: Vec3, b: [f32; 4]| p.distance(Vec3::new(b[0], b[1], b[2])) <= b[3];
+        for (far, size) in [(0.0, 50.0), (9000.0, 400.0), (20000.0, 0.01)] {
+            let spheres: Vec<[f32; 4]> = (0..24)
+                .map(|_| [far + next() * size, -far + next() * size, far * 0.5 + next() * size, next() * size * 0.3])
+                .collect();
+            let u = union(&spheres);
+            for b in &spheres {
+                for _ in 0..20_000 {
+                    let dir = Vec3::new(next() - 0.5, next() - 0.5, next() - 0.5).normalize_or_zero();
+                    let p = Vec3::new(b[0], b[1], b[2]) + dir * b[3] * (0.999 + next() * 0.002);
+                    assert!(!inside(p, *b) || inside(p, u), "{p} in {b:?}, not in {u:?}");
+                }
+            }
+        }
+        assert_eq!(union(&[]), [0.0, 0.0, 0.0, -1.0]);
+        assert_eq!(union(&[[1.0, 2.0, 3.0, 4.0], [0.0, 0.0, 0.0, f32::MAX]])[3], f32::MAX);
+        let one = union(&[[1.0, 2.0, 3.0, 4.0]]);
+        assert_eq!(one[..3], [1.0, 2.0, 3.0]);
+        assert!(one[3] >= 4.0 && one[3] < 4.01);
+    }
+
+    #[test]
+    fn the_size_cull_takes_the_bounds_box() {
+        let scaled = Affine3A::from_scale_rotation_translation(Vec3::new(1.0, 2.5, 1.5), Quat::IDENTITY, Vec3::ONE);
+        let shapes = [
+            (LightShape::Point { outer_radius: 4.0, inner_radius: 1.0 }, 4.0 * 2.5),
+            (
+                LightShape::Spot {
+                    cone_angle: 0.8,
+                    penumbra_angle: 0.0,
+                    outer_length: 12.0,
+                    inner_length: 1.0,
+                    drop_off: 1.0,
+                },
+                12.0 * 2.5,
+            ),
+            (
+                LightShape::Box {
+                    width: 6.0,
+                    height: 2.0,
+                    penumbra: 0.5,
+                    outer_length: 3.0,
+                    inner_length: 0.0,
+                    projected_texture: None,
+                    unk_fe912176: String::new(),
+                    unk_ebeca5b9: false,
+                },
+                0.5 * Vec3::new(6.0, 2.0, 3.0).length() * 2.5,
+            ),
+        ];
+        for (shape, r) in shapes {
+            let mut w = Words::default();
+            record(&mut w, &placed(scaled, shape.clone()));
+            let got = f32::from_bits(w.0[6][3]);
+            assert!((got - r * 3f32.sqrt()).abs() <= 1e-5 * r, "{shape:?}: {got} for r {r}");
+        }
+    }
+
     fn list_at(w: &Words, p: Vec2) -> Vec<u32> {
+        list_entries(w, p).into_iter().map(|(i, _)| i).collect()
+    }
+
+    fn list_entries(w: &Words, p: Vec2) -> Vec<(u32, [u32; 4])> {
         let (h0, h1) = (w.0[0], w.0[1]);
         let (lo, cell) = (Vec2::new(f32::from_bits(h0[0]), f32::from_bits(h0[1])), f32::from_bits(h0[2]));
         let c = ((p - lo) / cell).floor().as_ivec2();
         let inside = c.cmpge(IVec2::ZERO).all() && c.cmplt(IVec2::new(h1[0] as i32, h1[1] as i32)).all();
         let entry = if inside { c.y as u32 * h1[0] + c.x as u32 } else { h1[0] * h1[1] };
         let [start, len, ..] = w.0[(h1[2] + entry) as usize];
-        (start..start + len).map(|at| w.0[(h1[3] + at / 4) as usize][(at % 4) as usize]).collect()
+        (start..start + len)
+            .map(|at| (w.0[(h1[3] + at / 4) as usize][(at % 4) as usize], w.0[(w.0[2][2] + at) as usize]))
+            .collect()
     }
 
     fn check_lists(w: &Words, placed: &[Placed], points: impl Iterator<Item = Vec2>) -> usize {
         let mut reached = 0;
         for p in points {
-            let list = list_at(w, p);
+            let entries = list_entries(w, p);
+            for &(i, b) in &entries {
+                assert_eq!(b, bounds(&placed[i as usize]).map(f32::to_bits), "light {i}'s bounds in the list at {p}");
+            }
+            let list: Vec<u32> = entries.into_iter().map(|(i, _)| i).collect();
             assert!(list.windows(2).all(|i| i[0] < i[1]), "{p}: {list:?}");
-            for (i, (_, _, c, r, _)) in placed.iter().map(constants).enumerate() {
-                if (p.x - c.x).abs() <= r && (p.y - c.z).abs() <= r {
+            for (i, [x, _, z, r]) in placed.iter().map(bounds).enumerate() {
+                let c = Vec2::new(x, z);
+                if (p.x - c.x).abs() <= r && (p.y - c.y).abs() <= r {
                     assert!(list.contains(&(i as u32)), "light {i} at {c} (r {r}) misses {p}: {list:?}");
                     reached += 1;
                 }
@@ -508,6 +665,27 @@ mod tests {
                 (0..4000).map(|_| Vec2::new(next() * 600.0 - 300.0, next() * 600.0 - 200.0)).collect();
             points.extend((0..1000).map(|_| Vec2::new(far.x, far.z) + Vec2::new(next(), next()) * 30.0 - 15.0));
             assert!(check_lists(&w, &lights, points.into_iter()) > 100);
+        }
+    }
+
+    #[test]
+    fn switched_off_lights_are_in_no_list() {
+        let mut lights = vec![point(0.0, 0.0, 6.0), point(3.0, 2.0, 6.0), point(-4.0, 1.0, 6.0)];
+        lights[1].ctrl = Some((7, [0; 3]));
+        lights[2].ctrl = Some((8, [1; 3]));
+        let grid = Grid::around(&lights);
+        let at = [Vec2::new(0.0, 0.0), Vec2::new(2.0, 1.0), Vec2::new(-3.0, 0.5)];
+        for (b1, b2, listed) in [
+            (LightBehaviour::Off, LightBehaviour::Off, vec![0]),
+            (LightBehaviour::On, LightBehaviour::Off, vec![0, 1]),
+            (LightBehaviour::Off, LightBehaviour::Flicker { strength: 0.5 }, vec![0, 2]),
+        ] {
+            (lights[1].behaviour, lights[2].behaviour) = (Some(b1), Some(b2));
+            let (w, _) = encode(&lights, &grid, DYNAMIC_SLOTS, &GameLightUniform::default());
+            for p in at {
+                assert_eq!(list_at(&w, p), listed, "{b1:?} / {b2:?} at {p}");
+            }
+            assert_eq!(w.0[0][3], 3);
         }
     }
 

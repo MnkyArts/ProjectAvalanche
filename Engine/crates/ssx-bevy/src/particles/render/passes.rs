@@ -5,9 +5,11 @@ use bevy::render::view::ViewDepthStencilTexture;
 
 use super::pipelines::{ParticlePipelines, TECHS};
 use super::{Bin, ParticleGpu};
+use crate::render::bind_cache::BindGroupCache;
 
 #[allow(clippy::too_many_arguments)]
 fn pass_bind(
+    binds: &mut BindGroupCache,
     device: &RenderDevice,
     layout: &BindGroupLayout,
     post: BindingResource,
@@ -18,7 +20,8 @@ fn pass_bind(
     scene_depth: &TextureView,
     half_depth: &TextureView,
 ) -> BindGroup {
-    device.create_bind_group(
+    binds.get(
+        device,
         "ssx_particles_pass",
         layout,
         &BindGroupEntries::sequential((
@@ -79,6 +82,7 @@ pub fn draw(
     bloom: Option<&TextureView>,
     post: BindingResource,
     exposure: &Buffer,
+    binds: &mut BindGroupCache,
 ) {
     let (Some(gpu), Some(p), Some(cache)) = (
         world.get_resource::<ParticleGpu>(),
@@ -100,20 +104,40 @@ pub fn draw(
         return;
     };
     let Some(techs) = p.techs.iter().map(|&id| get(id)).collect::<Option<Vec<_>>>() else { return };
-    let (Some(globals), Some(pass_globals), Some(draws)) =
-        (gpu.globals.binding(), gpu.pass_globals.binding(), gpu.draws.binding())
-    else {
+    let (Some(globals), Some(draws)) = (gpu.globals.binding(), gpu.draws.binding()) else {
         return;
     };
     let device = ctx.render_device().clone();
     let pass_layout = cache.get_bind_group_layout(&p.pass_layout);
     let draw_layout = cache.get_bind_group_layout(&p.draw_layout);
-    let bind = |src: &TextureView, half: &TextureView| {
+    let mut draw_binds = |sampled_depth: &TextureView| -> Vec<BindGroup> {
+        textures
+            .iter()
+            .map(|tex| {
+                binds.get(
+                    &device,
+                    "ssx_particles_draw",
+                    &draw_layout,
+                    &BindGroupEntries::sequential((
+                        globals.clone(),
+                        draws.clone(),
+                        records.as_entire_binding(),
+                        tex,
+                        &p.texture_sampler,
+                        sampled_depth,
+                    )),
+                )
+            })
+            .collect()
+    };
+    let (half_binds, full_binds) = (draw_binds(&t.depth_copy), draw_binds(&t.depth_full));
+    let mut bind = |src: &TextureView, half: &TextureView| {
         pass_bind(
+            binds,
             &device,
             &pass_layout,
             post.clone(),
-            pass_globals.clone(),
+            globals.clone(),
             src,
             &p.smooth,
             exposure,
@@ -130,26 +154,6 @@ pub fn draw(
         &bind(&t.colour_a, &t.dummy),
         Some(&t.depth),
     );
-    let draw_binds = |sampled_depth: &TextureView| -> Vec<BindGroup> {
-        textures
-            .iter()
-            .map(|tex| {
-                device.create_bind_group(
-                    "ssx_particles_draw",
-                    &draw_layout,
-                    &BindGroupEntries::sequential((
-                        globals.clone(),
-                        draws.clone(),
-                        records.as_entire_binding(),
-                        tex,
-                        &p.texture_sampler,
-                        sampled_depth,
-                    )),
-                )
-            })
-            .collect()
-    };
-    let (half_binds, full_binds) = (draw_binds(&t.depth_copy), draw_binds(&t.depth_full));
     let bin = |ctx: &mut RenderContext,
                label: &'static str,
                target: &TextureView,

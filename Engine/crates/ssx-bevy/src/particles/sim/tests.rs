@@ -4,7 +4,7 @@ use ssx_formats::lynx_schema;
 use super::actions::{kill_age, turbulence_table};
 use super::defs::{ActionDef, compile_action};
 use super::emit::{EmitEnv, emit_count};
-use super::params::default_lanes;
+use super::params::{self, default_lanes};
 use super::*;
 
 fn action(xml: &str) -> ActionDef {
@@ -49,6 +49,37 @@ fn unset_parameters_read_the_schema_rows() {
     let unknown = Params::new("no such class", &[], &[]);
     let v = View::new(&unknown, &w);
     assert_eq!((v.f("fScale"), v.built_in("fScale")), (0.0, false));
+}
+
+#[test]
+fn found_names_read_as_their_strings() {
+    let own = action(
+        r#"<particleAction className="ParticleActionEmitBox"><parameter name="iEmitRate" value="150" />
+           <parameter index="0" name="vCenter" value="{ 1.0, 2.0, 3.0 }" />
+           <parameter index="2" name="vCenter" value="{ 4.0, 5.5, 6.0 }" />
+           <parameter name="fSizeMean" value="0.25" /><parameter name="rKillAge" value="g/a/iAgeMs" />
+           <parameter name="iSubFrameTechnique" value="2" />
+           <state id="0001"><parameter name="iEmitRate" value="81" /><parameter name="vCenter" value="{ 0.5, -1.0, 2.0 }" /></state>
+           <state id="0002"><parameter name="fSizeMean" value="3.0" /></state></particleAction>"#,
+    );
+    let mut all: Vec<Params> = lynx_schema::CLASSES.iter().map(|c| Params::new(c.name, &[], &[])).collect();
+    all.push(own.params);
+    let bits = |v: Vec4| v.to_array().map(f32::to_bits);
+    for w in [Weights::NONE, Weights::from_list(&[(1, 0.375), (2, 0.25)])] {
+        for params in &all {
+            let v = View::new(params, &w);
+            for (k, n) in params::PARAM_NAMES.iter().enumerate() {
+                let key = params::param_name(n);
+                assert_eq!(key, params::param_name(params::PARAM_NAMES[k]));
+                for i in 0..4 {
+                    assert_eq!(bits(v.v(key, i)), bits(v.v(*n, i)), "{n}[{i}]");
+                }
+                assert_eq!(v.i(key), v.i(*n), "{n}");
+                assert_eq!((v.count(key), v.text(key)), (v.count(*n), v.text(*n)), "{n}");
+                assert_eq!(v.b(key), v.b(*n), "{n}");
+            }
+        }
+    }
 }
 
 #[test]

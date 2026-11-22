@@ -1,5 +1,7 @@
 pub mod avalanche;
+pub mod bind_cache;
 pub mod buffers;
+pub mod device_poll;
 pub mod fx_states;
 pub mod gbuffer;
 pub mod geotags;
@@ -12,5 +14,7 @@ pub mod scene;
 pub mod shadows;
 pub mod sky;
 pub mod snow_tracks;
+pub mod swap_chain;
 pub mod terrain;
+pub mod uploads;
 pub mod warm_up;

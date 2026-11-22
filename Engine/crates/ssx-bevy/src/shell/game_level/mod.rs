@@ -1,13 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bevy::camera::Hdr;
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::{
-    App, ButtonInput, Camera, Camera2d, ClearColorConfig, Commands, DetectChangesMut, Entity, FixedUpdate, Has,
-    IntoScheduleConfigs, KeyCode, Msaa, Mut, PostUpdate, Query, Res, ResMut, Resource, Update, With, Without, World,
-    default, info, resource_exists, warn,
+    App, ButtonInput, Commands, DetectChangesMut, Entity, FixedUpdate, Has, IntoScheduleConfigs, KeyCode, Msaa, Mut,
+    PostUpdate, Query, Res, ResMut, Resource, Update, With, Without, World, info, resource_exists, warn,
 };
 use bevy::ui::IsDefaultUiCamera;
 use ssx_formats::csvdb::Geotag;
@@ -34,11 +32,6 @@ pub use pause::pause_frame;
 pub use results::stats_from_ride;
 pub use step::nis_state;
 use step::{feed_step, prompt_step};
-
-pub fn drop_index(big_root: &Path, track: &str, ge_drop: u32) -> Result<usize> {
-    let drops = ssx_assets::track_lighting::load_track_drops(big_root, track)?;
-    drops.iter().position(|d| d.key == ge_drop).with_context(|| format!("{track} has no ge_drop {ge_drop:#010x}"))
-}
 
 pub struct LevelOptions {
     pub launch: Launch,
@@ -368,6 +361,7 @@ pub fn start(world: &mut World, load: LevelLoad) {
                     ride.session.stats.awarded[2].len()
                 );
             }
+            ride.build_scripts_ahead();
         });
     }
     let launched = ssx_ui::game::ride::game_setup(&opts.launch.setup);
@@ -420,6 +414,12 @@ pub fn start(world: &mut World, load: LevelLoad) {
     let free_ride =
         opts.launch.free_ride || world.get_resource::<Ride>().is_some_and(|r| r.session.event.setup.free_ride);
     world.resource_mut::<GameUiRes>().set_drop(opts.launch.drop, event_type, free_ride, nis);
+    if world.contains_resource::<Ride>() {
+        world.resource_scope(|world, mut ui: Mut<GameUiRes>| {
+            let ride = world.resource::<Ride>();
+            feed.score_manager_feed(&mut ui.0, &ride.state, &ride.session, ride.world());
+        });
+    }
     world.resource_mut::<GameUiRes>().fe_call(|fe, _| ssx_ui::game::fe::flow::simulation_begins(fe));
     let saved = world.resource::<GameUiRes>().0.fe.as_ref().map_or(-1, |f| f.profile.camera_type());
     info!("level: the profile's camera type (CTYP) {saved}");
@@ -427,16 +427,9 @@ pub fn start(world: &mut World, load: LevelLoad) {
     if let Some(mut ride) = world.get_resource_mut::<Ride>() {
         ride.hold = true;
     }
-    world.spawn((
-        Camera2d,
-        Camera { order: 10, clear_color: ClearColorConfig::None, ..default() },
-        Tonemapping::None,
-        DebandDither::Disabled,
-        ui::UiCamera,
-    ));
     let cams: Vec<Entity> = world.query_filtered::<Entity, With<FlyCam>>().iter(world).collect();
     match cams.first() {
-        Some(&c) => _ = world.entity_mut(c).insert(IsDefaultUiCamera),
+        Some(&c) => _ = world.entity_mut(c).insert((ui::UiCamera, IsDefaultUiCamera)),
         None => warn!("level: no 3-D camera for the HUD"),
     }
     if opts.debug_hud {

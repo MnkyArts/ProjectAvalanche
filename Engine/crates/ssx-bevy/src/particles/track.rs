@@ -10,17 +10,19 @@ use ssx_assets::track_objects::Placement;
 use ssx_formats::lynx::{Behaviour, ParticleSystem};
 use ssx_physics::controllers::{Controllers, EntityController, OfflineHost, ParticleTarget, Switch, Target};
 
+use crate::particles::Scope;
+use crate::particles::inputs::Script;
 use crate::particles::sim::{EffectDef, EffectInstance, RecordView, SetArena, Visibility};
 
 #[derive(Default)]
 pub struct DefCache {
     defs: HashMap<(String, String), Arc<EffectDef>>,
     files: HashMap<String, Arc<ParticleSystem>>,
-    behaviours: HashMap<String, Option<Behaviour>>,
+    behaviours: HashMap<String, Option<Arc<Script>>>,
 }
 
 impl DefCache {
-    pub fn node(&mut self, root: &Path, node: &ParticleNode) -> Result<(Arc<EffectDef>, Option<Behaviour>)> {
+    pub fn node(&mut self, root: &Path, node: &ParticleNode) -> Result<(Arc<EffectDef>, Option<Arc<Script>>)> {
         let vfx = node.lynx.as_ref().with_context(|| format!("ge_particlenode {:#010x} has no effect", node.key))?;
         let key = (vfx.path.clone(), vfx.definition.clone());
         let def = match self.defs.get(&key) {
@@ -46,13 +48,28 @@ impl DefCache {
                 .entry(p.clone())
                 .or_insert_with(|| {
                     let data = std::fs::read(particles::fx_file(root, p)).ok()?;
-                    Behaviour::parse(&data).ok()
+                    Behaviour::parse(&data).ok().map(|b| Arc::new(Script::new(&b)))
                 })
                 .clone(),
             None => None,
         };
         Ok((def, behaviour))
     }
+}
+
+pub const GAMEPLAY_EFFECTS: [&str; 8] = [
+    "fx_markerflare_red",
+    "fx_markerflare_blue",
+    "fx_markerflare_green",
+    "fx_markersmoke_orange",
+    "fx_markersmoke_blue",
+    "fx_markersmoke_green",
+    "fx_deathclouds",
+    "fx_deathclouds_dark",
+];
+
+pub fn is_gameplay_effect(definition: &str) -> bool {
+    GAMEPLAY_EFFECTS.iter().any(|e| e.eq_ignore_ascii_case(definition))
 }
 
 pub fn textures_of(def: &EffectDef, out: &mut Vec<String>) {
@@ -73,7 +90,7 @@ pub struct TrackSlot {
     pub node: (Vec3, Quat, Vec3),
     pub ao: f32,
     pub instance: EffectInstance,
-    pub behaviour: Option<Behaviour>,
+    pub behaviour: Option<Arc<Script>>,
     pub node_key: u32,
     pub effect: String,
     pub group: String,
@@ -104,7 +121,8 @@ fn compose_parts((js, jq, jp): (Vec3, Quat, Vec3), (ns, nq, np): (Vec3, Quat, Ve
 pub struct TrackEffects {
     pub slots: Vec<TrackSlot>,
     pub offline: Option<(Box<Controllers>, OfflineHost)>,
-    seen: HashMap<(u32, usize), u64>,
+    seen: bevy::platform::collections::HashMap<(u32, usize), u64>,
+    by_entity: bevy::platform::collections::HashMap<(u32, usize), usize>,
 }
 
 impl TrackEffects {
@@ -112,13 +130,14 @@ impl TrackEffects {
         root: &Path,
         track: &str,
         drop: Option<u32>,
+        scope: Scope,
         arena: &mut SetArena,
         defs: &mut DefCache,
         textures: &mut Vec<String>,
     ) -> Result<TrackEffects> {
         let tp = ssx_assets::track_particles::load_track_particles(root, track, drop)?;
-        let mut out =
-            TrackEffects { slots: Self::slots_of(root, &tp, arena, defs, textures)?, ..TrackEffects::default() };
+        let slots = Self::slots_of(root, &tp, scope, arena, defs, textures)?;
+        let mut out = TrackEffects { slots, ..TrackEffects::default() };
         let triggers = ssx_physics::spawn::load_trigger_volumes(root, track, drop).context("the track's entities")?;
         out.offline = Some((Box::new(Controllers::offline(&triggers)), OfflineHost::default()));
         Ok(out)
@@ -128,12 +147,13 @@ impl TrackEffects {
         &mut self,
         root: &Path,
         placed: &[(u32, u32, Placement)],
+        scope: Scope,
         arena: &mut SetArena,
         defs: &mut DefCache,
         textures: &mut Vec<String>,
     ) -> Result<usize> {
         let tp = ssx_assets::track_particles::map_particles(root, placed)?;
-        let slots = Self::slots_of(root, &tp, arena, defs, textures)?;
+        let slots = Self::slots_of(root, &tp, scope, arena, defs, textures)?;
         let n = slots.len();
         self.slots.extend(slots);
         Ok(n)
@@ -142,6 +162,7 @@ impl TrackEffects {
     fn slots_of(
         root: &Path,
         tp: &ssx_assets::track_particles::TrackParticles,
+        scope: Scope,
         arena: &mut SetArena,
         defs: &mut DefCache,
         textures: &mut Vec<String>,
@@ -151,7 +172,9 @@ impl TrackEffects {
         for inst in &tp.instances {
             let o = &tp.objects[inst.object];
             let world_ao = particle_script::object_world_ao(&schemas, o.key);
-            for node in o.lods.first().into_iter().flatten().filter(|n| n.lynx.is_some()) {
+            let kept =
+                |vfx: &ssx_assets::particles::LynxVfx| scope == Scope::All || is_gameplay_effect(&vfx.definition);
+            for node in o.lods.first().into_iter().flatten().filter(|n| n.lynx.as_ref().is_some_and(kept)) {
                 let (def, behaviour) = defs.node(root, node)?;
                 textures_of(&def, textures);
                 let vfx = node.lynx.as_ref().expect("filtered");
@@ -192,11 +215,21 @@ impl TrackEffects {
                 None => &[],
             },
         };
-        let by_entity: HashMap<(u32, usize), &EntityController> =
-            entities.iter().filter(|e| e.owner.is_none()).map(|e| ((e.instance, e.placement), e)).collect();
+        // PORT(choice): the entities' map is kept between updates (cleared, its memory kept) and hashed with Bevy's
+        // fixed hasher (foldhash); it was a new `std` map (SipHash) of every entity each update (the whole switch
+        // 0.10 ms of the main thread a ride step on Mount Eddie, 0.13 on Vorassay: a traced build with timers, round
+        // perf-x1). It holds the same entries (the last entity of a key), and only its lookups and the order-free
+        // `seen` writes read it. The console's controllers' storage is not decoded.
+        let by_entity = &mut self.by_entity;
+        by_entity.clear();
+        for (i, e) in entities.iter().enumerate() {
+            if e.owner.is_none() {
+                by_entity.insert((e.instance, e.placement), i);
+            }
+        }
         for s in &mut self.slots {
             let key = (s.scene_instance, s.placement);
-            let Some(e) = by_entity.get(&key) else { continue };
+            let Some(e) = by_entity.get(&key).map(|&i| &entities[i]) else { continue };
             if e.body.is_some() {
                 (s.scale, s.rotation, s.position) = compose_parts((s.placement_scale, e.rotation, e.position), s.node);
             }
@@ -220,8 +253,8 @@ impl TrackEffects {
                 }
             }
         }
-        for (key, e) in by_entity {
-            if let Some(op) = e.fx.particles.last() {
+        for (&key, &i) in by_entity.iter() {
+            if let Some(op) = entities[i].fx.particles.last() {
                 self.seen.insert(key, op.seq);
             }
         }

@@ -288,7 +288,7 @@ pub fn status(stats: &ServerStats, out: &mut Vec<String>) {
     out.push(format!(
         "validation: {} runs; drops' rules loaded {}, refused {}; found / measured: {}; control messages held {} (at \
          most {} at once); samples before `Ready` {} (dropped {}, at most {} for a run, an earlier run's {}); frames \
-         over 250 ms {} (the longest {} ms)",
+         over {} ms {}, longer than the catch-up's {} s {}; the longest frame {} ms",
         stats.rides_validated,
         stats.rules_loaded,
         stats.rules_failed,
@@ -299,6 +299,9 @@ pub fn status(stats: &ServerStats, out: &mut Vec<String>) {
         stats.samples_before_ready_dropped,
         stats.samples_before_ready_most,
         stats.samples_before_ready_other_run,
+        ssx_net::server::LONG_FRAME.as_millis(),
+        stats.frames_long,
+        ssx_net::server::CATCH_UP.as_secs(),
         stats.frames_clamped,
         stats.frame_ms_most
     ));

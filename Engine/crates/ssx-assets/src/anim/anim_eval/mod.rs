@@ -19,6 +19,7 @@ pub struct GameState {
     pub audio_tags: Vec<AudioTagEvent>,
     pub drivers: Vec<DriverEvent>,
     pub queries: Vec<String>,
+    pub pins: Vec<PinEvent>,
     pub updated_nodes: Vec<u64>,
     pub transition_tags: Vec<crate::anim_graph::GameTag>,
 }
@@ -26,6 +27,12 @@ pub struct GameState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DriverEvent {
     pub tag: crate::anim_graph::DriverTag,
+    pub event: crate::tags::TagEvent,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PinEvent {
+    pub tag: crate::anim_graph::PinTag,
     pub event: crate::tags::TagEvent,
 }
 
@@ -70,6 +77,7 @@ impl GameState {
             audio_tags: Vec::new(),
             drivers: Vec::new(),
             queries: Vec::new(),
+            pins: Vec::new(),
             updated_nodes: Vec::new(),
             transition_tags: Vec::new(),
         }

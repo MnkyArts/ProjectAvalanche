@@ -1,9 +1,10 @@
 use eframe::egui::{Color32, Painter, pos2};
 
-use super::icons;
 use super::layout::Layout;
+use super::nav::Device;
 use super::text::{self, Style};
 use super::theme::{self, Face, size};
+use super::{icons, prompts};
 
 pub fn version() -> String {
     let version = env!("CARGO_PKG_VERSION");
@@ -19,7 +20,7 @@ pub struct Status {
     pub label: String,
 }
 
-pub fn draw(painter: &Painter, l: &Layout, status: &Status) {
+pub fn draw(painter: &Painter, l: &Layout, status: &Status, device: Device, shown: &[prompts::Prompt]) {
     let base = l.footer.center().y + size::SMALL * theme::CAP_HEIGHT / 2.0;
     let left = l.footer.left();
     let name = Style::new(Face::Title, size::SMALL, theme::TEXT_SOFT).spaced(0.6);
@@ -31,5 +32,9 @@ pub fn draw(painter: &Painter, l: &Layout, status: &Status) {
     let label_rect = text::draw_right(painter, pos2(l.footer.right(), base), &status.label, &label);
     let dot = pos2(label_rect.left() - 12.0, base - size::SMALL * theme::CAP_HEIGHT / 2.0);
     icons::dot(painter, dot, 4.0, status.colour);
-    text::draw_right(painter, pos2(dot.x - 24.0, base), &version(), &rest);
+    let version = text::draw_right(painter, pos2(dot.x - 24.0, base), &version(), &rest);
+    if let Some(pad) = prompts::shown(device) {
+        let width = prompts::row_width(painter, pad, shown);
+        prompts::row(painter, pad, shown, version.left() - 28.0 - width, l.footer.center().y);
+    }
 }

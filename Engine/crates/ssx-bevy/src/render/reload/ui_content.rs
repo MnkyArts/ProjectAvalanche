@@ -3,9 +3,9 @@ use ssx_content::Kind;
 
 use super::ContentReload;
 use crate::shell::game_mode::GameUiRes;
-use crate::ui::UiScene;
+use crate::ui::{UiScene, UiSceneState};
 
-pub(crate) fn apply_fonts(scene: &mut UiScene, game: Option<&mut ssx_ui::game::GameUi>) -> usize {
+pub(crate) fn apply_fonts(scene: &mut UiSceneState, game: Option<&mut ssx_ui::game::GameUi>) -> usize {
     let region = game.as_ref().map_or("na", |g| g.loc.language.font_region());
     scene.lib.apply_package_fonts(region);
     let n = scene.player.relayout_texts(&scene.lib);
@@ -24,13 +24,13 @@ pub(crate) fn apply_fonts(scene: &mut UiScene, game: Option<&mut ssx_ui::game::G
 pub(super) fn ui_content(
     reload: Res<ContentReload>,
     mut seen: Local<u64>,
-    scene: Option<ResMut<UiScene>>,
+    mut scene: Option<ResMut<UiScene>>,
     game: Option<ResMut<GameUiRes>>,
 ) {
     if std::mem::replace(&mut *seen, reload.generation) == reload.generation {
         return;
     }
-    let Some(mut scene) = scene else { return };
+    let Some(scene) = scene.as_deref_mut().and_then(UiScene::state) else { return };
     let changed = |k: Kind| reload.ids.as_ref().is_none_or(|ids| ids.iter().any(|id| id.kind() == k));
     if changed(Kind::Ui) {
         let n = scene.lib.forget_movies(|path| {
@@ -41,13 +41,12 @@ pub(super) fn ui_content(
     }
     let mut game = game;
     if changed(Kind::Font) {
-        let n = apply_fonts(&mut scene, game.as_deref_mut().map(|g| &mut g.0));
+        let n = apply_fonts(scene, game.as_deref_mut().map(|g| &mut g.0));
         info!("mod-dev: the packages' fonts converted again, {n} text fields laid out anew");
     }
     if changed(Kind::String)
         && let Some(mut game) = game
     {
-        let scene = &mut *scene;
         match game.reload_strings(scene.lib.files()) {
             Ok(n) => info!("mod-dev: the string table read again ({n} package strings)"),
             Err(e) => warn!("mod-dev: the string table not read again: {e:#}"),

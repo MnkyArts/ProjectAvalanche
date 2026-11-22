@@ -536,3 +536,73 @@ fn the_ghost_clock_runs_on_past_the_finish_and_holds_while_waiting() {
     m.reset();
     assert_eq!((m.ghost_clock.seconds, m.ghost_clock.running), (0.0, false));
 }
+
+#[test]
+fn the_hud_feed_runs_where_the_score_manager_calls_it() {
+    let course = Course { start_y: 0.0, end_y: -900.0 };
+    let setup = EventSetup { event_type: Some(EventType::SurviveToDeath), course: Some(course), ..Default::default() };
+    let mut m = EventManager::new(setup);
+    let mut timer = DeathTimer::default();
+    let calls = |m: &EventManager| (m.hud_feed.feeds, m.hud_feed.resets, m.hud_feed.loop_restarts, m.hud_feed.state);
+    assert_eq!(calls(&m), (1, 1, 0, EventState::Idle), "the Init's reset");
+    m.update(&mut timer, &inputs(0.0, false, false));
+    assert_eq!(calls(&m), (1, 1, 0, EventState::Idle), "state 0 feeds nothing");
+    m.on_trigger_race_start(&mut timer);
+    assert_eq!(calls(&m), (2, 2, 0, EventState::Idle), "the race start's reset");
+    m.update(&mut timer, &inputs(-10.0, false, false));
+    assert_eq!(calls(&m), (3, 2, 0, EventState::Running));
+    m.waiting = true;
+    m.update_paused(&mut timer, &inputs(-10.0, false, false));
+    assert_eq!(m.hud_feed.feeds, 3, "+0x1DC holds state 1's feed");
+    m.waiting = false;
+    m.update(&mut timer, &inputs(-900.0, true, false));
+    assert_eq!(calls(&m), (4, 2, 0, EventState::Finished), "the finish's update reads state 3");
+    m.waiting = true;
+    m.update_paused(&mut timer, &inputs(-900.0, false, true));
+    assert_eq!(calls(&m), (5, 2, 0, EventState::Finished), "state 3 feeds in a pause");
+    m.waiting = false;
+    let mut i = inputs(-900.0, false, true);
+    i.nis_outro_active = true;
+    while m.state != EventState::LoopOutro {
+        m.update(&mut timer, &i);
+    }
+    i.nis_outro_active = false;
+    let fed = m.hud_feed.feeds;
+    assert!(m.update(&mut timer, &i).looped && m.state == EventState::LoopRestart);
+    assert_eq!(calls(&m), (fed + 1, 2, 0, EventState::LoopOutro), "fed in state 4, then the loop");
+    m.update(&mut timer, &i);
+    assert_eq!(m.hud_feed.feeds, fed + 1, "state 5 feeds nothing");
+    m.on_trigger_race_start(&mut timer);
+    assert_eq!(calls(&m), (fed + 2, 2, 1, EventState::LoopRestart), "the loop restart reads state 5");
+    m.reset();
+    assert_eq!(calls(&m), (fed + 3, 3, 1, EventState::Idle), "a restart's reset");
+}
+
+#[test]
+fn the_hud_is_fed_the_finish_time_the_results_post() {
+    let mut m = race(vec![61_000]);
+    let mut timer = DeathTimer::default();
+    m.on_trigger_race_start(&mut timer);
+    for i in 0..900 {
+        m.update(&mut timer, &inputs(-(i as f32), false, false));
+    }
+    let (feeds, before) = (m.hud_feed.feeds, m.clock.ms());
+    assert!(m.update(&mut timer, &inputs(-900.0, true, false)).crossed);
+    let t = m.clock.ms();
+    assert!(t > before && !m.clock.running, "the crossing's step counts, then the clock stops: {before} → {t}");
+    assert_eq!((m.hud_feed.feeds, m.hud_feed.state), (feeds + 1, EventState::Finished), "the crossing's update feeds");
+    assert_eq!(m.finish_ms, Some(t));
+    let mut fed = Vec::new();
+    loop {
+        let f = m.hud_feed.feeds;
+        let u = m.update(&mut timer, &inputs(-905.0, false, true));
+        if m.hud_feed.feeds != f {
+            fed.push(m.clock.ms());
+        }
+        if u.results {
+            break;
+        }
+    }
+    assert!(fed.len() > 60 && fed.iter().all(|&ms| ms == t), "{} feeds after the line", fed.len());
+    assert_eq!(m.result.as_ref().map(|r| (r.time_ms, r.value)), Some((t, t)));
+}

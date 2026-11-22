@@ -6,6 +6,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use bevy::app::ScheduleRunnerPlugin;
+use bevy::ecs::schedule::SingleThreadedExecutor;
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
@@ -21,7 +22,7 @@ use tokio::sync::Notify;
 use crate::bridge::{Shared, join_queue};
 use crate::config::Config;
 use crate::http::{self, HttpState};
-use crate::logging::{self, LogFile};
+use crate::logging;
 use crate::systems::{
     Bridge, ConsoleLines, Lifecycle, ServerFacts, TickTimes, console_commands, decide_joins, lifecycle, log_chat,
     log_disconnect, log_kick, log_leave, publish, report_suppressed, tick_ended, tick_started,
@@ -173,11 +174,18 @@ fn run_with(options: ServerOptions, on_started: impl FnOnce(&Started)) -> Result
     }
     let (joins_tx, joins_rx) = join_queue();
 
+    let (_log_writers, log_file) = if options.logging {
+        let path = options.log_to_file.then(|| options.data_dir.join(crate::logging::LOG_FOLDER).join("server.log"));
+        let (writers, file) = logging::start(path.as_deref());
+        (Some(writers), file)
+    } else {
+        (None, None)
+    };
     let mut app = App::new();
     app.set_error_handler(errors::handler);
     if options.logging {
-        if options.log_to_file {
-            app.insert_resource(LogFile(options.data_dir.join(crate::logging::LOG_FOLDER).join("server.log")));
+        if let Some(file) = log_file {
+            app.insert_resource(file);
         }
         app.add_plugins(LogPlugin {
             filter: LOG_FILTER.into(),
@@ -227,6 +235,7 @@ fn run_with(options: ServerOptions, on_started: impl FnOnce(&Started)) -> Result
         app.insert_resource(ConsoleLines(std::sync::Mutex::new(lines)));
     }
     app.add_systems(First, tick_started).add_systems(Last, tick_ended);
+    app.add_systems(Last, crate::stalls::report);
     app.add_observer(log_kick).add_observer(log_leave).add_observer(log_disconnect);
     app.add_systems(
         Update,
@@ -260,6 +269,7 @@ fn run_with(options: ServerOptions, on_started: impl FnOnce(&Started)) -> Result
         .map_err(StartError::Other)?;
     app.finish();
     app.cleanup();
+    one_thread(&mut app);
 
     let udp = SocketAddr::new(config.bind, local.port());
     let conditioner = options.conditions.map(|c| c.conditioner()).transpose().map_err(StartError::Other)?;
@@ -379,6 +389,20 @@ fn run_with(options: ServerOptions, on_started: impl FnOnce(&Started)) -> Result
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(StartError::Other(format!("the HTTP thread: {e}"))),
         Err(_) => Err(StartError::Other("the HTTP thread panicked".into())),
+    }
+}
+
+// PORT(choice): one thread for every schedule. At 0 riders a frame is about a millisecond of short systems, and Bevy's
+// multi-threaded executor (the default with its `multi_threaded` feature) handed them to its compute threads and
+// waited on each: 80-175 thread switches a frame, more than half of the idle CPU on the pool's threads; the official
+// servers (4 vCPUs, four servers) took 15-30 % of a core each idle and logged frames of 250-528 ms. Measured (round
+// srv2, the four servers on one laptop core, 300 s): CPU 4.5 -> 1.6 % of a core each, switches 5 240 -> 133 a second,
+// a frame's work p50 1.0-5.9 -> 0.4-1.3 ms, p99 6.3-11.4 -> 1.8-2.9 ms; on two cores beside a busy process 4.5 ->
+// 1.4 %, p50 13-14 -> 2-3 ms. The server's systems are short and mostly ordered one after another; the network's I/O,
+// the scripts and the HTTP server have threads of their own. The original has no dedicated server.
+fn one_thread(app: &mut App) {
+    for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+        schedule.set_executor(SingleThreadedExecutor::new());
     }
 }
 

@@ -22,7 +22,7 @@ use crate::rider::material::{
 pub struct LoadedPart {
     mesh: Mesh,
     pub bounds: (Vec3, Vec3),
-    images: crate::render::reload::BuiltImages,
+    images: crate::render::uploads::PartImages,
     material: MaterialSpec,
     pub problems: Vec<String>,
 }
@@ -48,10 +48,15 @@ pub fn part_from_mesh(big_root: &Path, mesh: ObjectMesh, label: &str, material: 
     let (images, mut specs) =
         prepare_materials(big_root, &[MaterialInput { def: material, tangent_sign }], None, &mut problems)?;
     let material = specs.pop().context("no material prepared")?;
+    let images = crate::render::uploads::PartImages::Built(images);
     Ok(LoadedPart { mesh, bounds: (Vec3::from_array(lo), Vec3::from_array(hi)), images, material, problems })
 }
 
 impl LoadedPart {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        self.images.queue(uploads, images);
+    }
+
     pub fn with_skin(mut self, joints: Vec<[u16; 4]>, weights: Vec<[f32; 4]>) -> Result<Self> {
         self.mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(joints));
         self.mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights);
@@ -67,7 +72,7 @@ impl LoadedPart {
         objects: &mut Assets<ObjectMaterial>,
         foreground: &mut Assets<ForegroundMaterial>,
     ) -> (Handle<Mesh>, MaterialHandle) {
-        let handles = add_images(images, self.images);
+        let handles = self.images.into_handles(images);
         (meshes.add(self.mesh), self.material.add(&handles, light, objects, foreground))
     }
 
@@ -80,10 +85,9 @@ impl LoadedPart {
         meshes: &mut Assets<Mesh>,
         images: &mut Assets<Image>,
         light: &GameLightAssets,
-        rider: &CharacterLightUniform,
         characters: &mut Assets<CharacterMaterial>,
     ) -> (Handle<Mesh>, Handle<CharacterMaterial>) {
-        let handles = add_images(images, self.images);
+        let handles = self.images.into_handles(images);
         let spec = &self.material;
         let image_or =
             |i: Option<usize>, fallback: &Handle<Image>| i.map_or_else(|| fallback.clone(), |i| handles[i].clone());
@@ -95,11 +99,12 @@ impl LoadedPart {
             base: spec.standard_material(&handles),
             extension: CharacterExtension {
                 light: light.uniform,
-                rider: *rider,
+                rider: CharacterLightUniform::default(),
                 params,
                 normal: image_or(spec.normal, &light.flat_normal),
                 specular: image_or(spec.specular, &light.white),
                 ambient: image_or(spec.ambient, &light.white),
+                level_light: crate::render::lighting::game::LEVEL_LIGHT,
                 shadow_alpha: spec.shadow_alpha,
                 local_lights: crate::render::lighting::local::LOCAL_LIGHT_BUFFER,
                 local_light_textures: crate::render::lighting::local::LOCAL_LIGHT_TEXTURES,
@@ -109,8 +114,4 @@ impl LoadedPart {
         };
         (meshes.add(self.mesh), characters.add(material))
     }
-}
-
-fn add_images(images: &mut Assets<Image>, built: crate::render::reload::BuiltImages) -> Vec<Handle<Image>> {
-    built.into_iter().map(|(image, recipe)| crate::render::reload::add(images, image, Some(recipe))).collect()
 }

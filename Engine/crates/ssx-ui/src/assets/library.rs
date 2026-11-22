@@ -9,6 +9,7 @@ use ssx_formats::gfx::text::{EditText, Font, StaticText};
 use ssx_formats::gfx::types::Rgba;
 use ssx_formats::gfx::{Movie, Tag, TagRecord};
 
+use super::ahead::{self, Ahead, MoviesAhead};
 use crate::fs::{FE_ROOT, FileSource, PackageOrigin, normalise};
 use crate::geom::RectF;
 use crate::image::{self, ImageData};
@@ -152,7 +153,9 @@ pub struct MovieDef {
 pub type MovieBuilder = Arc<dyn Fn(&mut Library) -> Result<MovieId> + Send + Sync>;
 
 pub struct Library {
-    fs: Box<dyn FileSource>,
+    fs: Arc<dyn FileSource>,
+    ahead: Option<Ahead>,
+    movies_ahead: Option<MoviesAhead>,
     movies: Vec<MovieDef>,
     by_path: HashMap<String, MovieId>,
     builders: HashMap<String, MovieBuilder>,
@@ -201,7 +204,9 @@ pub(crate) fn first_glyphs(fonts: &[Arc<Font>]) -> HashMap<u16, (usize, usize)> 
 impl Library {
     pub fn new(fs: Box<dyn FileSource>) -> Self {
         Library {
-            fs,
+            fs: Arc::from(fs),
+            ahead: None,
+            movies_ahead: None,
             movies: Vec::new(),
             by_path: HashMap::new(),
             builders: HashMap::new(),
@@ -228,6 +233,7 @@ impl Library {
     }
 
     pub fn forget_movies(&mut self, changed: impl Fn(&str) -> bool) -> usize {
+        self.ahead = None;
         let keys: Vec<String> = self.by_path.keys().filter(|k| changed(&format!("{FE_ROOT}{k}"))).cloned().collect();
         for k in &keys {
             self.by_path.remove(k);
@@ -431,7 +437,11 @@ impl Library {
         if let Some(&id) = self.image_by_path.get(path) {
             return Some(id);
         }
-        match image::load(self.fs.as_ref(), path) {
+        let loaded = match self.take_movie_image_ahead(path) {
+            Some(img) => Ok(img),
+            None => image::load(self.fs.as_ref(), path),
+        };
+        match loaded {
             Ok(img) => {
                 let id = self.images.len();
                 self.images.push(Arc::new(img));
@@ -446,7 +456,10 @@ impl Library {
     }
 
     fn load_image_movie(&mut self, key: &str, file: &str) -> Result<MovieId> {
-        let img = image::load(self.fs.as_ref(), file).with_context(|| format!("loading {file} as an image"))?;
+        let img = match self.take_movie_image_ahead(file) {
+            Some(img) => img,
+            None => image::load(self.fs.as_ref(), file).with_context(|| format!("loading {file} as an image"))?,
+        };
         self.image_movie(key, file, img)
     }
 
@@ -549,20 +562,119 @@ impl Library {
             return Ok(id);
         }
         let file = format!("{FE_ROOT}{key}");
+        if let Some(img) = self.take_ahead(&file) {
+            return self.image_movie(&key, &file, img);
+        }
         if self.fs.is_content_image(&file) {
             return self.load_image_movie(&key, &file);
         }
+        if let Some(parsed) = self.take_movie_ahead(&file) {
+            let origin = self.fs.package_origin(&file);
+            return self.add_movie(&key, &file, parsed, origin);
+        }
         let data = self.fs.read(&file).with_context(|| format!("movie {file} not found"))?;
-        if !matches!(data.get(..3), Some(b"CFX" | b"GFX" | b"FWS" | b"CWS")) {
+        if !ahead::is_movie(&data) {
             return self.load_image_movie(&key, &file);
         }
         let origin = self.fs.package_origin(&file);
         self.parse_movie(&key, &file, &data, origin)
     }
 
+    pub fn parse_ahead(&mut self, rels: impl IntoIterator<Item = String>) {
+        let keys: Vec<String> = rels
+            .into_iter()
+            .map(|r| movie_key(&r))
+            .filter(|k| !self.by_path.contains_key(k) && !self.builders.contains_key(k))
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        // PORT(choice): the movies a view will load are parsed (with the movies they import and their external images
+        // decoded) beforehand on a thread, and the load takes the parsed movie and the decoded images instead of
+        // reading, parsing and decoding them on the main thread. The shell asks when a level's load starts for the
+        // HUD's view `views/hud.gfx`, and in the frame the level's loaded data arrives (before its spawn), once the
+        // view is in the library, for the views
+        // of the HUD's containers as the framework's ViewMap names them (`GameUi::hud_view_files`: seven
+        // `views/hud/*container.swf` on the disc); the movies the library holds are not parsed again. The view
+        // parsed in the level's spawn frame took 24-57 ms of it; a container the HUD's navigation loads in the
+        // ride's first second (dynamicleaderboard, boostnotification, hudmeters, 0.07-0.21 s in) took 33-40 ms of its
+        // frame with its files out of the system's file cache, 26-35 ms of it reading the container's file, and 2-5 ms
+        // with them in it (alps0101; development laptop, `trace_chrome`). The movie and the images are the ones the
+        // load reads (the same file source and decision; a change of the mounted packages, the title update or the
+        // content registry discards them), and the library adds them in the load's order, in the update the load comes
+        // in; a movie not parsed yet is loaded as before. The console's resource loads are not decoded.
+        let held = self.by_path.keys().chain(self.builders.keys()).cloned().collect();
+        match MoviesAhead::start(self.fs.clone(), keys, held) {
+            Ok(a) => self.movies_ahead = Some(a),
+            Err(e) => {
+                self.movies_ahead = None;
+                self.log.push(format!("movies ahead: no thread ({e}); each movie is parsed at its load"));
+            }
+        }
+    }
+
+    fn take_movie_ahead(&mut self, file: &str) -> Option<Movie> {
+        let ahead = self.movies_ahead.as_ref()?;
+        if !ahead.is_current(self.fs.as_ref()) {
+            self.movies_ahead = None;
+            return None;
+        }
+        ahead.take_movie(file)
+    }
+
+    fn take_movie_image_ahead(&mut self, path: &str) -> Option<ImageData> {
+        let ahead = self.movies_ahead.as_ref()?;
+        if !ahead.is_current(self.fs.as_ref()) {
+            self.movies_ahead = None;
+            return None;
+        }
+        ahead.take_image(path)
+    }
+
+    pub fn decode_ahead(&mut self, paths: impl IntoIterator<Item = String>) {
+        let mut seen = std::collections::HashSet::new();
+        let files: Vec<String> = paths
+            .into_iter()
+            .map(|p| movie_key(&p))
+            .filter(|k| !self.by_path.contains_key(k) && !self.builders.contains_key(k) && seen.insert(k.clone()))
+            .take(ahead::MAX_FILES)
+            .map(|k| format!("{FE_ROOT}{k}"))
+            .collect();
+        // PORT(choice): images a movie will load are decoded beforehand on a thread, and the load takes the decoded
+        // image instead of reading and decoding the file on the main thread. The game asks for the notifications' icons
+        // at its start: the 177 badges' and the geotag's (`assets/notificationIcons/*.dds`, 64 x 64, 0.75 MB of files,
+        // 2.92 MB decoded; 84 ms on the thread with the files out of the cache), each loaded by `hud.vm`'s
+        // `mcInGameNotification` in the frame its notification shows. A file not in the system's file cache made that
+        // frame wait on the disk: the load 6.1-9.3 ms (0.7-1.3 ms of it on the CPU, no page fault), the frame's main
+        // thread up to 62 ms, on the development laptop (Mount Eddie's badges, GitHub #95). The image is the one the
+        // load decodes (the same file source and decision; a change of the mounted packages, the title update or the
+        // content registry discards the decoded images) and shows in the same frame; an image not decoded yet is loaded
+        // as before. The console's image creator (0x825A4050) opened the file at the load, on its own file system.
+        match Ahead::start(self.fs.clone(), files) {
+            Ok(a) => self.ahead = Some(a),
+            Err(e) => {
+                self.ahead = None;
+                self.log.push(format!("images ahead: no thread ({e}); each image is read at its load"));
+            }
+        }
+    }
+
+    fn take_ahead(&mut self, file: &str) -> Option<ImageData> {
+        let ahead = self.ahead.as_ref()?;
+        if !ahead.is_current(self.fs.as_ref()) {
+            self.ahead = None;
+            return None;
+        }
+        ahead.take(file)
+    }
+
     fn parse_movie(&mut self, key: &str, file: &str, data: &[u8], origin: Option<PackageOrigin>) -> Result<MovieId> {
-        let key = key.to_string();
         let parsed = Movie::parse(data).with_context(|| format!("parsing {file}"))?;
+        self.add_movie(key, file, parsed, origin)
+    }
+
+    fn add_movie(&mut self, key: &str, file: &str, parsed: Movie, origin: Option<PackageOrigin>) -> Result<MovieId> {
+        let key = key.to_string();
         let id = self.movies.len();
         let dir = file.rsplit_once('/').map_or(String::new(), |(d, _)| format!("{d}/"));
         let mut m = MovieDef {

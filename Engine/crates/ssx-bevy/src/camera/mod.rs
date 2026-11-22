@@ -1,5 +1,6 @@
 pub mod chase;
 pub mod graph;
+pub mod schedules;
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -187,6 +188,7 @@ pub struct FlyCameraPlugin;
 
 impl Plugin for FlyCameraPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(schedules::CameraSchedulesPlugin);
         app.add_systems(
             crate::shell::level::LevelStartup,
             (|commands: Commands, start: Res<CameraStart>, post: Option<Res<PostSettings>>| {
@@ -218,6 +220,13 @@ fn spawn_camera(mut commands: Commands, pose: Pose, bounds: Bounds, game_post: b
         Projection::custom(projection),
         transform,
         FlyCam { yaw, pitch, speed: (extent / 20.0).clamp(SPEED_RANGE.0, SPEED_RANGE.1) },
+        // PORT(choice): direct draws with CPU culling (`NoIndirectDrawing`), not Bevy 0.20's GPU-driven path (indirect
+        // multi-draws, the meshes' data and culling prepared on the GPU). Its draws do merge (Mount Eddie's opaque
+        // phase 7–22 multi-draw batch sets against 139–571 direct draws), but Bevy writes every batch set's bin buffers
+        // and the preprocessing's bind groups again on every frame for every view (the main view, the sun's four
+        // cascades). Re-measured 2026-11-17 on Mount Eddie (1080p, `--benchmark`, all cores): direct 13.9 ms a frame,
+        // render thread 12.3; GPU-driven 22.6 and 21.3. How the console issued its draws is not the port's to copy:
+        // how the game runs is the port's choice, only its picture and play are the original's.
         NoIndirectDrawing,
         ClusterConfig::None,
     ));

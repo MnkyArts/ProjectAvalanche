@@ -22,10 +22,7 @@ impl Launcher {
     pub fn mods_report(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 4.0;
         let Some(s) = &self.mods.snapshot else {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Working out what the game will mount…");
-            });
+            widgets::busy(ui, "Working out what the game will mount…");
             return;
         };
         let Some(r) = &s.report else {

@@ -16,7 +16,7 @@ struct ForegroundParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var red_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var green_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var fg_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(106) var<uniform> light: gl::GameLight;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var<storage, read> light: gl::GameLight;
 @group(constants::MATERIAL_BIND_GROUP) @binding(107) var occlusion_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(108) var normal_texture: texture_2d<f32>;
 

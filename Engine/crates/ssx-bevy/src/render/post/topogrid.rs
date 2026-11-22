@@ -1,4 +1,5 @@
 use crate::render::reload::Recipe;
+use crate::render::uploads::{LevelImage, LevelUploads};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -6,7 +7,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::image::ImageSampler;
 use bevy::prelude::{
-    App, Assets, Commands, Entity, Handle, Has, Image, Mat4, Query, Res, Resource, Update, Vec3, Vec4, With, World,
+    Add, App, Assets, Commands, Entity, Handle, Has, Image, Mat4, On, Query, Res, Resource, Update, Vec3, Vec4, With,
+    World,
 };
 use bevy::render::RenderApp;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -65,7 +67,9 @@ fn blank() -> Image {
 }
 
 pub(super) fn build(app: &mut App) {
-    app.add_plugins(ExtractResourcePlugin::<PostTopogrid>::default()).add_systems(Update, follow_gbuffer);
+    app.add_plugins(ExtractResourcePlugin::<PostTopogrid>::default())
+        .add_systems(Update, follow_gbuffer)
+        .add_observer(depth_prepass);
     crate::shell::level::scoped::<TopogridLevel>(app);
     reset(app.world_mut());
 }
@@ -89,14 +93,27 @@ fn grid_image(big_root: &Path) -> Result<(Image, Recipe)> {
 pub struct TopogridLoad {
     switched: Vec<String>,
     gbuffer: bool,
-    grid: Option<(Image, Recipe)>,
+    grid: Option<LevelImage>,
     secs: f32,
+}
+
+impl TopogridLoad {
+    pub fn queue_images(&mut self, uploads: &mut LevelUploads, images: &mut Assets<Image>) {
+        if let Some(g) = self.grid.as_mut() {
+            g.queue(uploads, images);
+        }
+    }
 }
 
 pub fn load(big_root: &Path, scene: &PostFxScene, goggles: Option<&PostFxState>) -> Result<TopogridLoad> {
     let start = std::time::Instant::now();
     let gbuffer = goggles.is_some_and(runs) || can_run(scene);
-    let grid = if gbuffer { Some(grid_image(big_root)?) } else { None };
+    let grid = if gbuffer {
+        let (image, recipe) = grid_image(big_root)?;
+        Some(LevelImage::built(image, Some(recipe)))
+    } else {
+        None
+    };
     let switched = scene
         .presets
         .iter()
@@ -108,10 +125,10 @@ pub fn load(big_root: &Path, scene: &PostFxScene, goggles: Option<&PostFxState>)
 
 pub fn insert(world: &mut World, load: TopogridLoad) -> Result<String> {
     let TopogridLoad { switched, gbuffer, grid, secs } = load;
-    if let Some((image, recipe)) = grid {
+    if let Some(grid) = grid {
         let handle = {
             let mut images = world.get_resource_mut::<Assets<Image>>().context("no image assets")?;
-            crate::render::reload::add(&mut images, image, Some(recipe))
+            grid.into_handle(&mut images)
         };
         world.get_resource_mut::<PostTopogrid>().context("the post chain is off")?.grid = handle;
     }
@@ -124,12 +141,29 @@ pub fn insert(world: &mut World, load: TopogridLoad) -> Result<String> {
     Ok(line)
 }
 
-// PORT(choice): the level camera draws Bevy 0.20's depth and normal prepass (`DepthPrepass` + `NormalPrepass`: each
-// game material's prepass fragment shader writes its gbuffer normal, world space ×0.5 + 0.5, into an Rgb10a2Unorm
-// target; the depth goes to a Depth32Float copy) only while the level can run TOPOGRID (the equipped goggles' preset
-// or a startable preset with `on` > 0.001), the pass's only reader; a frame with it costs the prepass's draws, without
-// it the level draws as before. The port's own Bevy-material meshes (script markers, placeholders) take Bevy's prepass
-// shaders. The console's deferred renderer drew its gbuffer pass (8-bit RT, view-space normal) every frame.
+// PORT(choice): the level camera always draws Bevy 0.20's depth prepass (`DepthPrepass`) before its main pass, so the
+// main pass shades only each pixel's nearest opaque surface (Mount Eddie at 1600 × 900: 18 % fewer fragments shaded,
+// the opaque pass 2.8 ms of GPU instead of 3.5, the prepass 0.13). The prepass writes only depth the main pass writes,
+// at the same value (`render::gbuffer::depth_prepass_writes`: the terrain and the disc's objects, their main pass's
+// kills in it; every other game family writes none), and Bevy's main pass keeps `GreaterEqual` with depth writes, so
+// each pixel keeps the surface it had. "The same value" by construction: both passes' vertex shaders compute the clip
+// position by the same functions and declare it `@invariant` (render/lighting/game_position.wesl; naga emits the
+// SPIR-V decoration `Invariant`, HLSL `precise`), which WGSL makes equal across entry points; the image gate found 0 px
+// on Mesa (Intel), NVIDIA and AMD are not run yet.
+// The trade: it costs the render thread its recording (Bevy's `early_prepass` node, 0.25 ms a frame on Mount Eddie at
+// 1920 × 1080, traced, and one command buffer more) for 0.4–2.0 ms of GPU in the benchmark's rides; the characters,
+// whose prepass does not match their main pass, are taken out of it (`rider::material`
+// `characters_out_of_depth_prepass`). The console's deferred renderer drew a gbuffer pass of its own every frame.
+fn depth_prepass(add: On<Add<GamePostCamera>>, mut commands: Commands) {
+    commands.entity(add.entity).insert(DepthPrepass);
+}
+
+// PORT(choice): the level camera draws Bevy 0.20's normal prepass (`NormalPrepass`: each game material's prepass
+// fragment shader writes its gbuffer normal, world space ×0.5 + 0.5, into an Rgb10a2Unorm target; the depth prepass
+// goes to a Depth32Float copy) only while the level can run TOPOGRID (the equipped goggles' preset or a startable
+// preset with `on` > 0.001), the pass's only reader; a frame with it costs the normal's writes. The port's own
+// Bevy-material meshes (script markers, placeholders) take Bevy's prepass shaders. The console's deferred renderer
+// drew its gbuffer pass (8-bit RT, view-space normal) every frame.
 fn follow_gbuffer(
     level: Option<Res<TopogridLevel>>,
     cameras: Query<(Entity, Has<NormalPrepass>), With<GamePostCamera>>,
@@ -138,9 +172,9 @@ fn follow_gbuffer(
     let wanted = level.is_some_and(|l| l.gbuffer);
     for (camera, has) in &cameras {
         if wanted && !has {
-            commands.entity(camera).insert((DepthPrepass, NormalPrepass));
+            commands.entity(camera).insert(NormalPrepass);
         } else if !wanted && has {
-            commands.entity(camera).remove::<(DepthPrepass, NormalPrepass)>();
+            commands.entity(camera).remove::<NormalPrepass>();
         }
     }
 }

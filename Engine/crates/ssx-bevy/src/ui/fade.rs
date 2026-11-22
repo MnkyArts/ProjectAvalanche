@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use bevy::core_pipeline::{Core2d, Core2dSystems};
+use bevy::core_pipeline::upscaling::upscaling;
+use bevy::core_pipeline::{Core2d, Core2dSystems, Core3d};
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_resource::binding_types::{texture_2d, uniform_buffer_sized};
@@ -68,7 +69,8 @@ pub(super) fn build(app: &mut App) {
         .insert_resource(FadeShader(shader))
         .add_systems(RenderStartup, init)
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareResources))
-        .add_systems(Core2d, fade_pass.in_set(Core2dSystems::PostProcess).after(super::UiPassSystems));
+        .add_systems(Core2d, fade_pass.in_set(Core2dSystems::PostProcess).after(super::UiPassSystems))
+        .add_systems(Core3d, fade_pass.after(super::UiPassSystems).before(upscaling));
 }
 
 fn init(mut commands: Commands, shader: Res<FadeShader>, cache: Res<PipelineCache>) {

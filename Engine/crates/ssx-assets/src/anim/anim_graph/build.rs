@@ -219,13 +219,7 @@ impl<'a> Builder<'a> {
                 None => Ctrl::Other("SequenceContainerAsset (no actor)".into()),
             },
             "ActorControllerAsset" => self.sequence(a),
-            "LoopingControllerAsset" => Ctrl::Looping {
-                subject: sub(self, "SubjectControllerAsset"),
-                loop_control: a.bool("IsLoopControl").unwrap_or(false),
-                start: f(a, "StartTime"),
-                loop_start: f(a, "LoopStartTime"),
-                loop_end: f(a, "LoopEndTime"),
-            },
+            "LoopingControllerAsset" => LoopFields::of_asset(a).ctrl(sub(self, "SubjectControllerAsset")),
             "SignalBlendArrayControllerAsset" => {
                 let arr = a.guid("BlendArray").and_then(|g| self.db.get(g));
                 let mut items = Vec::new();
@@ -610,6 +604,7 @@ impl<'a> Builder<'a> {
         let game_tags = self.game_tags(actor);
         let drivers = self.driver_tags(actor);
         let queries = self.query_tags(actor);
+        let pins = self.pin_tags(actor);
         Ctrl::Sequence {
             anims,
             length: f(actor, "Length"),
@@ -619,7 +614,34 @@ impl<'a> Builder<'a> {
             game_tags,
             drivers,
             queries,
+            pins,
         }
+    }
+
+    fn pin_tags(&self, a: &Asset) -> Vec<crate::anim_graph::PinTag> {
+        let db = self.db;
+        let mut out = Vec::new();
+        let Some(set) = a.guid("TagCollectionSet").and_then(|g| db.get(g)) else { return out };
+        for c in set.guids("TagCollectionKeys").into_iter().filter_map(|g| db.get(g)) {
+            for t in c.guids("TagKeys").into_iter().filter_map(|g| db.get(g)) {
+                if !t.is("PinTrajectoryTag") {
+                    continue;
+                }
+                let num = |field: &str| t.f32(field).or_else(|| t.int(field).map(|v| v as f32)).unwrap_or(0.0);
+                let name = |field: &str| t.guid(field).and_then(|g| db.get(g)).map(|x| x.name().to_string());
+                out.push(crate::anim_graph::PinTag {
+                    window: crate::tags::TagWindow::new(
+                        num("Time"),
+                        num("Duration"),
+                        t.bool("AlwaysActive").unwrap_or(false),
+                    ),
+                    position: name("PositionAsset"),
+                    orientation: name("OrientationAsset"),
+                    ticks_until_activation: num("TicksUntilActivation"),
+                });
+            }
+        }
+        out
     }
 
     fn query_tags(&self, a: &Asset) -> Vec<crate::anim_graph::QueryTag> {

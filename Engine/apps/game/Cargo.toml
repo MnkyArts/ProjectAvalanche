@@ -15,5 +15,12 @@ bevy.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 
+[features]
+# PORT(choice): `trace_chrome` (development builds only; never in a release, whose CI builds the default features):
+# Bevy's spans of every system, schedule and render-graph node written as a Chrome trace (`TRACE_CHROME=<file>`; open
+# it in Perfetto); Tracy (`bevy/trace_tracy`) needs `tracing-tracy` in the lockfile, fetched once online. A tool of
+# the port's development: the console had none.
+trace_chrome = ["bevy/trace_chrome"]
+
 [lints]
 workspace = true

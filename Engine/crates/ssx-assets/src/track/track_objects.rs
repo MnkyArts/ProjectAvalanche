@@ -292,6 +292,25 @@ pub fn load_track_midground(big_root: &Path, track: &str) -> Result<Option<Track
     })
 }
 
+const CLASS_PROXY: u32 = fnv1("ge_proxy");
+const FIELD_TRACK_PROXY: u32 = 0xC1DF_0293;
+const FIELD_PROXY_GEOMETRY: u32 = 0xC66D_B272;
+
+pub fn load_track_proxy(big_root: &Path, track: &str) -> Result<Option<String>> {
+    with_track_db(big_root, track, |db| {
+        let key = fnv1(&format!("{track}_track"));
+        let fields = db.fields(CLASS_TRACK, key).with_context(|| format!("ge_track {track}_track"))?;
+        let proxy = fields
+            .iter()
+            .find(|f| f.key == FIELD_TRACK_PROXY)
+            .and_then(|f| refs(&f.data).first().copied())
+            .filter(|r| r.class == CLASS_PROXY && r.collection != 0);
+        let Some(proxy) = proxy else { return Ok(None) };
+        let fields = db.fields(CLASS_PROXY, proxy.collection).with_context(|| format!("ge_proxy of {track}"))?;
+        Ok(fields.iter().find(|f| f.key == FIELD_PROXY_GEOMETRY).and_then(|f| single_text(&f.data)))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

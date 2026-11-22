@@ -183,6 +183,7 @@ pub fn load_from(big_root: &Path, source: &ObjectsSource) -> Result<LoadedObject
     stats.textures = images.len();
     stats.load_secs = start.elapsed().as_secs_f32();
     let source = (big_root.to_path_buf(), source.clone());
+    let images = crate::render::uploads::PartImages::Built(images);
     Ok(LoadedObjects { stats, meshes, images, materials, parts, lods, placements, source })
 }
 

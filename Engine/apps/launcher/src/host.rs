@@ -158,7 +158,7 @@ pub fn config_text(h: &HostSettings, map: Option<&HostedMap>) -> Result<String, 
         }
         (Some(m), _) => {
             return Err(format!(
-                "the map {} in the mode {} is not installed (the Mods page installs packages)",
+                "the map {} in the mode {} is not installed (Content, Mods installs packages)",
                 m.id, m.mode
             ));
         }
@@ -546,7 +546,7 @@ impl HostMaps {
     pub fn hosted(&self, choice: &HostMap) -> Result<HostedMap, String> {
         let shown = |s: &str| ssx_core::text::shown(s).to_string();
         let map = self.maps.iter().find(|x| x.id == choice.id).ok_or_else(|| {
-            format!("the map {} is not installed (the Mods page installs packages)", shown(&choice.id))
+            format!("the map {} is not installed (Content, Mods installs packages)", shown(&choice.id))
         })?;
         if map.modes.contains(&choice.mode) {
             return Ok(HostedMap { map: map.clone(), gamemode: None, builtin: Some(choice.mode.clone()) });

@@ -1,5 +1,7 @@
 mod audio;
 mod camera;
+mod frame_task;
+mod load_pool;
 #[cfg(feature = "net")]
 mod net;
 mod particles;
@@ -13,10 +15,12 @@ pub mod ui;
 
 pub use audio::{music, sfx, sfx_input};
 pub use camera::chase::replay as camera_replay;
+pub use camera::schedules::CameraSchedulesPlugin;
+pub use render::swap_chain::SwapChainPlugin;
 pub use render::terrain::look as terrain_look;
 pub use render::{hooks, lighting};
 pub use rider::anim as rider_anim;
-pub use shell::{game_mode, level, screenshot};
+pub use shell::{benchmark, game_mode, level, screenshot};
 #[cfg(feature = "net")]
 pub use ssx_ui::game::fe::ava::browser;
 
@@ -56,6 +60,30 @@ pub struct RenderArgs {
     /// the display refresh rate.
     #[arg(long)]
     pub no_vsync: bool,
+
+    /// The terrain's view distance in metres, 200 … 8000 (the original's 600 by default): the cut-off, the streaming,
+    /// the far detail past 600 m and the proxy's push-back follow it. The launcher passes its setting.
+    #[arg(long, value_name = "METRES", default_value_t = ssx_assets::port_options::ViewDistance::ORIGINAL)]
+    pub view_distance: ssx_assets::port_options::ViewDistance,
+
+    /// The sun's shadows: `original` (the default: the game's three 1024² cascades over 400 m), `medium` (the same
+    /// maps over 250 m) or `low` (512² maps over 200 m). The launcher passes its setting.
+    #[arg(long, value_name = "LEVEL", default_value_t = ssx_assets::port_options::ShadowQuality::Original)]
+    pub shadow_quality: ssx_assets::port_options::ShadowQuality,
+
+    /// Draw the scene without its bloom (the game draws it). The launcher passes its setting.
+    #[arg(long)]
+    pub no_bloom: bool,
+
+    /// Draw the scene without its FXAA (the game draws it). The launcher passes its setting.
+    #[arg(long)]
+    pub no_fxaa: bool,
+}
+
+impl RenderArgs {
+    pub fn post_levels(&self) -> render::post::PostLevels {
+        render::post::PostLevels::of(!self.no_bloom, !self.no_fxaa)
+    }
 }
 
 pub fn find_default_track() -> Result<PathBuf> {

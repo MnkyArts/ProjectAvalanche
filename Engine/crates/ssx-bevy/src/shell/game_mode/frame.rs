@@ -166,6 +166,7 @@ pub(super) struct Frame<'w, 's> {
     live: Option<ResMut<'w, crate::shell::live::LiveSession>>,
     render_scale: Option<Res<'w, super::display::RenderScale>>,
     render_stopped: Option<Res<'w, crate::shell::device_loss::RenderStopped>>,
+    benchmark_end: Option<Res<'w, crate::shell::benchmark::record::SceneEnd>>,
     render_stop_end: Option<ResMut<'w, crate::shell::device_loss::ShellEndsOnRenderStop>>,
 }
 
@@ -181,6 +182,9 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
     if let Some(stopped) = f.render_stopped.as_ref().filter(|r| r.is_added()) {
         let why = if stopped.device_lost { "the graphics device was lost" } else { "the renderer stopped on an error" };
         s.ask_exit(AppExit::error(), why);
+    }
+    if let Some(end) = f.benchmark_end.as_ref().filter(|e| e.is_added()) {
+        s.ask_exit(if end.ok { AppExit::Success } else { AppExit::error() }, "the benchmark scene's end");
     }
     s.exit_frame(&ui, f.display.as_deref_mut(), &mut f.exit_wait, &mut f.exit);
     if s.exit_written()
@@ -206,9 +210,11 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
             _ => ui.fe.as_ref().and_then(|fe| fe.globe_frame(aspect)),
         };
     }
-    if let Some(window) = f.windows.iter().next() {
+    if let Some(window) = f.windows.iter().next()
+        && let Some(scene) = f.scene.state()
+    {
         let now = f.real.elapsed_secs_f64();
-        super::display::display_class_frame(&mut s.display_pending, s.started, &mut ui, &mut f.scene, window, now);
+        super::display::display_class_frame(&mut s.display_pending, s.started, &mut ui, scene, window, now);
     }
     let drawn = f.ready.0 && f.ui_frame.viewport.x > 0;
     s.ready_frames = if drawn { s.ready_frames + 1 } else { 0 };
@@ -328,8 +334,12 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
             s.keep_ghost(g);
         }
     }
+    let was_loading = s.loading.is_some();
     s.stage_step(&mut ui, f.level.as_deref(), f.ride.as_deref(), f.live.as_deref_mut());
-    let sc = &mut *f.scene;
+    let Some(sc) = f.scene.state() else { return };
+    if !was_loading && s.loading.is_some() {
+        sc.lib.parse_ahead([super::world::HUD_VIEW.to_string()]);
+    }
     let t0 = Instant::now();
     if let Some(vm) = sc.vm.as_mut() {
         ui.update(vm, &mut sc.lib, &mut sc.player, dt);
@@ -525,7 +535,7 @@ pub(super) fn shell_step(mut shell: ResMut<Shell>, mut ui: ResMut<GameUiRes>, mu
     }
 }
 
-fn input_report(sc: &mut ui::UiScene) -> String {
+fn input_report(sc: &mut ui::UiSceneState) -> String {
     const VIEW: &str = "_level0.instance1.mc10.mView";
     let Some(vm) = sc.vm.as_mut() else { return String::new() };
     let mut cx = vm.ctx(&mut sc.lib, &mut sc.player);
@@ -562,7 +572,7 @@ fn input_report(sc: &mut ui::UiScene) -> String {
     out.join("; ")
 }
 
-fn report_popup(sc: &mut ui::UiScene) {
+fn report_popup(sc: &mut ui::UiSceneState) {
     const VIEW: &str = "_level0.instance1.mc10.mView.ssx_tutorial.tutorialpausemenu.mView.mcTutorialPopup";
     let Some(vm) = sc.vm.as_mut() else { return };
     let mut traces: Vec<String> =

@@ -249,6 +249,14 @@ pub struct QueryTag {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct PinTag {
+    pub window: crate::tags::TagWindow,
+    pub position: Option<String>,
+    pub orientation: Option<String>,
+    pub ticks_until_activation: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct BranchWindow {
     pub kind: String,
     pub filter: u32,
@@ -291,6 +299,31 @@ pub struct MaskArray {
     pub max_dec: f32,
     pub max_inc: f32,
     pub items: Vec<(Mask, f32)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoopFields {
+    pub loop_control: bool,
+    pub start: f32,
+    pub loop_start: f32,
+    pub loop_end: f32,
+}
+
+impl LoopFields {
+    pub fn of_asset(a: &Asset) -> Self {
+        let f = |name: &str| a.f32(name).unwrap_or(0.0);
+        Self {
+            loop_control: a.bool("IsLoopControl").unwrap_or(false),
+            start: f("StartTime"),
+            loop_start: f("LoopStartTime"),
+            loop_end: f("LoopEndTime"),
+        }
+    }
+
+    pub fn ctrl(self, subject: Option<CtrlId>) -> Ctrl {
+        let Self { loop_control, start, loop_start, loop_end } = self;
+        Ctrl::Looping { subject, loop_control, start, loop_start, loop_end }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,6 +373,7 @@ pub enum Ctrl {
         game_tags: Vec<GameTag>,
         drivers: Vec<DriverTag>,
         queries: Vec<QueryTag>,
+        pins: Vec<PinTag>,
     },
     Looping {
         subject: Option<CtrlId>,

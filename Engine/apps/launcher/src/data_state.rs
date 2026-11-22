@@ -62,6 +62,21 @@ pub fn notice(state: &State) -> Option<(Color32, String)> {
     Some((colour, text))
 }
 
+pub fn folder_line(state: &State) -> String {
+    let words = match state {
+        State::IndexDamaged(why) => State::IndexDamaged(ssx_core::text::shown_max(why, DETAIL_CHARS).to_string()),
+        State::MarkerDamaged(why) => State::MarkerDamaged(ssx_core::text::shown_max(why, DETAIL_CHARS).to_string()),
+        State::FilesDamaged(why) => State::FilesDamaged(ssx_core::text::shown_max(why, DETAIL_CHARS).to_string()),
+        other => other.clone(),
+    }
+    .to_string();
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => words,
+    }
+}
+
 pub fn hero_unplayable(state: &State) -> (&'static str, &'static str, &'static str) {
     match state {
         State::NoMovies => (
@@ -100,7 +115,7 @@ pub fn menu_play(state: &State) -> &'static str {
     }
 }
 
-pub const HERO_JOIN_REPAIR: &str = "Multiplayer needs a repair of the game data first: Settings, Game data.";
+pub const HERO_JOIN_REPAIR: &str = "Multiplayer needs a repair of the game data first: Content, Game data.";
 
 #[cfg(test)]
 mod tests {
@@ -141,5 +156,17 @@ mod tests {
         let (_, text) = notice(&State::IndexDamaged(why)).unwrap();
         assert!(!text.contains('\u{1b}') && !text.contains('\n'), "{text:?}");
         assert!(text.len() < 700, "{}", text.len());
+        let line = folder_line(&State::FilesDamaged(format!("{}\u{1b}[2J", "y".repeat(400))));
+        assert!(line.starts_with("Files of it are missing or damaged (") && !line.contains('\u{1b}'), "{line:?}");
+        assert!(line.len() < 300, "{}", line.len());
+    }
+
+    #[test]
+    fn the_folder_line_says_the_state() {
+        assert_eq!(
+            folder_line(&State::Complete { marked: true, files: 12_928 }),
+            "Complete (12928 files in its content index)"
+        );
+        assert_eq!(folder_line(&State::NoIndex), "Set up by an earlier version: no content index");
     }
 }

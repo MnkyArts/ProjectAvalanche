@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ssx_formats::attrib::fnv1;
 
@@ -284,6 +284,149 @@ impl<S: Clone + Default> Layer<S> {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LayerPreset {
+    #[default]
+    None,
+    Named(String),
+    State(Box<PostFxState>),
+}
+
+pub const LAYER_COUNT: usize = 10;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Request {
+    preset: u32,
+    layer: usize,
+    weight: f32,
+    handle: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PostFxService {
+    layer_of: BTreeMap<String, u32>,
+    pub layers: [Layer<LayerPreset>; LAYER_COUNT],
+    requests: Vec<Request>,
+    next_handle: u32,
+    pub refused: BTreeSet<String>,
+}
+
+impl Default for PostFxService {
+    fn default() -> Self {
+        Self::new(BTreeMap::new())
+    }
+}
+
+impl PostFxService {
+    pub fn new(layer_of: BTreeMap<String, u32>) -> Self {
+        let mut s = PostFxService {
+            layer_of,
+            layers: std::array::from_fn(|_| Layer::default()),
+            requests: Vec::new(),
+            next_handle: 0,
+            refused: BTreeSet::new(),
+        };
+        s.layers[0].start(fnv1(DEFAULT_PRESET.as_bytes()), LayerPreset::Named(DEFAULT_PRESET.into()), 0.0, 1.0);
+        s
+    }
+
+    // PORT(choice): a preset without a layer is refused (the name kept in `refused`); the console looks up the
+    // collection's `e8b4b707` (0x8313E240), falls back to an empty attribute (0x82EAA0D8) and writes through the layer
+    // the search then did not find (0x82FCCCE4); every preset on the disc names one of the ten layers.
+    fn place(&mut self, name: &str) -> Option<(usize, u32)> {
+        let layer = self.layer_of.get(name).copied().filter(|&p| (p as usize) < LAYER_COUNT);
+        if layer.is_none() {
+            self.refused.insert(name.to_string());
+        }
+        layer.map(|p| (p as usize, fnv1(name.as_bytes())))
+    }
+
+    pub fn request(&mut self, name: &str, blend_in: f32, weight: f32) -> Option<u32> {
+        let (layer, key) = self.place(name)?;
+        Some(self.request_on(layer, key, LayerPreset::Named(name.to_string()), blend_in, weight))
+    }
+
+    pub fn request_state(&mut self, key: u32, state: PostFxState, priority: u32, blend_in: f32, weight: f32) -> u32 {
+        let layer = (priority as usize).min(LAYER_COUNT - 1);
+        self.request_on(layer, key, LayerPreset::State(Box::new(state)), blend_in, weight)
+    }
+
+    fn request_on(&mut self, layer: usize, key: u32, preset: LayerPreset, blend_in: f32, weight: f32) -> u32 {
+        if self.next_handle == 0 {
+            self.next_handle = 1;
+        }
+        let handle = self.next_handle;
+        self.next_handle = self.next_handle.wrapping_add(1);
+        match self.requests.iter().rev().find(|r| r.layer == layer).copied() {
+            None => self.layers[layer].start(key, preset, blend_in, weight),
+            Some(top) if top.preset == key || top.weight == weight => {}
+            Some(top) => {
+                self.layers[layer].stop(top.preset, blend_in);
+                self.layers[layer].start(key, preset, blend_in, weight);
+            }
+        }
+        self.requests.push(Request { preset: key, layer, weight, handle });
+        handle
+    }
+
+    pub fn release(&mut self, handle: u32, blend_out: f32) {
+        let Some(i) = self.requests.iter().position(|r| r.handle == handle) else { return };
+        let r = self.requests[i];
+        let newest = self.requests.iter().rposition(|x| x.layer == r.layer) == Some(i);
+        self.requests.remove(i);
+        if !newest {
+            return;
+        }
+        match self.requests.iter().rev().find(|x| x.layer == r.layer).copied() {
+            Some(below) if below.preset == r.preset => self.layers[r.layer].set_weight(r.preset, below.weight),
+            Some(below) => {
+                self.layers[r.layer].stop(r.preset, blend_out);
+                self.layers[r.layer].stop(below.preset, blend_out);
+            }
+            None => self.layers[r.layer].stop(r.preset, blend_out),
+        }
+    }
+
+    pub fn start(&mut self, name: &str, blend_in: f32, weight: f32) {
+        if let Some((layer, key)) = self.place(name) {
+            self.layers[layer].start(key, LayerPreset::Named(name.to_string()), blend_in, weight);
+        }
+    }
+
+    pub fn stop(&mut self, name: &str, blend_out: f32) {
+        if let Some((layer, key)) = self.place(name) {
+            self.layers[layer].stop(key, blend_out);
+        }
+    }
+
+    pub fn set_weight(&mut self, name: &str, weight: f32) {
+        if let Some((layer, key)) = self.place(name) {
+            self.layers[layer].set_weight(key, weight);
+        }
+    }
+
+    pub fn reload(&mut self, key: u32, priority: u32, state: PostFxState) {
+        let layer = (priority as usize).min(LAYER_COUNT - 1);
+        self.layers[layer].reload(key, LayerPreset::State(Box::new(state)));
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        self.layers.iter_mut().for_each(|l| l.update(dt));
+    }
+
+    pub fn weight_of(&self, name: &str) -> Option<f32> {
+        let p = *self.layer_of.get(name)? as usize;
+        let l = self.layers.get(p)?;
+        (l.key == fnv1(name.as_bytes())).then(|| l.weight())
+    }
+
+    pub fn requests(&self) -> usize {
+        self.requests.len()
+    }
+}
+
+pub const DEFAULT_PRESET: &str = "default";
+
 #[derive(Clone, Debug, Default)]
 pub struct PostFxScene {
     pub base: PostFxState,
@@ -301,23 +444,26 @@ impl PostFxScene {
         scene
     }
 
-    pub fn frame(&mut self, running: &[(String, f32)], goggles: &[(&PostFxState, f32)]) -> &PostFxValues {
-        let mut by_layer: BTreeMap<u32, Vec<(&PostFxState, f32)>> = BTreeMap::new();
-        by_layer.insert(GOGGLES_PRIORITY, goggles.to_vec());
-        let mut tracks: BTreeMap<u32, (&PostFxState, f32)> = BTreeMap::new();
-        for (name, w) in running {
-            if let Some((Some(priority), st)) = self.presets.get(name) {
-                tracks.insert(*priority, (st, *w));
-            }
+    pub fn layer_table(&self) -> BTreeMap<String, u32> {
+        self.presets.iter().filter_map(|(n, (p, _))| p.map(|p| (n.clone(), p))).collect()
+    }
+
+    fn state_of<'a>(&'a self, p: &'a LayerPreset) -> Option<&'a PostFxState> {
+        match p {
+            LayerPreset::None => None,
+            LayerPreset::Named(n) if n == DEFAULT_PRESET => Some(&self.base),
+            LayerPreset::Named(n) => self.presets.get(n).map(|(_, s)| s),
+            LayerPreset::State(s) => Some(s),
         }
-        for (priority, entry) in tracks {
-            by_layer.entry(priority).or_default().push(entry);
-        }
+    }
+
+    pub fn frame(&mut self, service: &PostFxService) -> &PostFxValues {
         let mut acc = PostFxState::default();
-        acc.blend(&self.base, 1.0);
-        for (st, w) in by_layer.into_values().flatten() {
-            if w > 0.0 {
-                acc.blend(st, w);
+        for layer in &service.layers {
+            for (p, w) in layer.blends() {
+                if let Some(st) = self.state_of(p) {
+                    acc.blend(st, w);
+                }
             }
         }
         self.held.hold(&acc);
@@ -463,9 +609,81 @@ mod tests {
         scene.presets.insert("a2".into(), (Some(6), state(&[("overlay_2_intensity", &[1.0])])));
         scene.presets.insert("b1".into(), (Some(7), state(&[("overlay_1_intensity", &[1.0])])));
         scene.presets.insert("c1".into(), (Some(7), PostFxState::default()));
-        let v = scene.frame(&[("b1".into(), 0.5), ("a2".into(), 0.25)], &[]);
+        let mut fx = PostFxService::new(scene.layer_table());
+        fx.start("b1", 0.0, 0.5);
+        fx.start("a2", 0.0, 0.25);
+        let v = scene.frame(&fx);
         assert_eq!((v.float(i1), v.float(key("overlay_2_intensity"))), (0.5, 0.25));
-        let v = scene.frame(&[("b1".into(), 0.5), ("c1".into(), 1.0)], &[]);
+        fx.start("c1", 0.0, 1.0);
+        let v = scene.frame(&fx);
         assert_eq!(v.float(i1), 0.0);
+        assert_eq!(fx.weight_of("b1"), None);
+    }
+
+    fn service() -> PostFxService {
+        let table = [("flash", 9), ("white", 9), ("day", 3), ("track_a", 1), ("track_b", 1)];
+        PostFxService::new(table.into_iter().map(|(n, p)| (n.to_string(), p)).collect())
+    }
+
+    #[test]
+    fn a_requested_flash_fades_out_after_its_release() {
+        let mut fx = service();
+        let h = fx.request("flash", 0.0, 1.0).unwrap();
+        assert_eq!(fx.weight_of("flash"), Some(1.0));
+        fx.release(h, 0.5);
+        assert_eq!((fx.weight_of("flash"), fx.requests()), (Some(1.0), 0));
+        fx.update(0.25);
+        assert_eq!(fx.weight_of("flash"), Some(0.5));
+        fx.update(0.25);
+        assert_eq!(fx.weight_of("flash"), None, "the stopped layer is cleared");
+        let h = fx.request("day", 1.0, 1.0).unwrap();
+        fx.update(0.5);
+        assert_eq!(fx.weight_of("day"), Some(0.5));
+        fx.update(0.5);
+        fx.release(h, 1.0);
+        fx.update(0.75);
+        assert_eq!(fx.weight_of("day"), Some(0.25));
+    }
+
+    #[test]
+    fn the_request_stack_follows_the_service() {
+        let mut fx = service();
+        let a = fx.request("track_a", 0.0, 1.0).unwrap();
+        let b = fx.request("track_b", 0.0, 1.0).unwrap();
+        assert_eq!((fx.weight_of("track_a"), fx.weight_of("track_b"), fx.requests()), (Some(1.0), None, 2));
+        let c = fx.request("track_b", 0.0, 0.5).unwrap();
+        assert_eq!((fx.weight_of("track_a"), fx.weight_of("track_b")), (Some(1.0), None));
+        fx.release(c, 0.0);
+        assert_eq!(fx.weight_of("track_a"), Some(1.0));
+        fx.release(b, 0.0);
+        assert_eq!(fx.weight_of("track_a"), None);
+        let d = fx.request("track_b", 0.0, 0.5).unwrap();
+        assert_eq!((fx.weight_of("track_a"), fx.weight_of("track_b")), (None, Some(0.5)));
+        fx.release(a, 0.0);
+        assert_eq!((fx.weight_of("track_b"), fx.requests()), (Some(0.5), 1));
+        let e = fx.request("track_b", 0.0, 0.25).unwrap();
+        assert_eq!(fx.weight_of("track_b"), Some(0.5));
+        fx.release(e, 0.3);
+        assert_eq!(fx.weight_of("track_b"), Some(0.5));
+        fx.release(d, 0.0);
+        assert_eq!((fx.weight_of("track_b"), fx.requests()), (None, 0));
+        assert!(a > 0 && fx.request("nothing", 0.0, 1.0).is_none());
+        assert!(fx.refused.contains("nothing"));
+    }
+
+    #[test]
+    fn direct_calls_share_the_layers() {
+        let mut fx = service();
+        fx.start("white", 2.0, 1.0);
+        let h = fx.request("flash", 0.0, 1.0).unwrap();
+        assert_eq!((fx.weight_of("white"), fx.weight_of("flash")), (None, Some(1.0)));
+        fx.set_weight("flash", 0.25);
+        assert_eq!(fx.weight_of("flash"), Some(0.25));
+        fx.stop("white", 0.0);
+        assert_eq!(fx.weight_of("flash"), Some(0.25), "a stop of the preset the layer does not show");
+        fx.release(h, 0.0);
+        assert_eq!(fx.weight_of("flash"), None);
+        assert_eq!(fx.layers[0].weight(), 1.0);
+        assert_eq!(fx.layers[0].current, LayerPreset::Named(DEFAULT_PRESET.into()));
     }
 }

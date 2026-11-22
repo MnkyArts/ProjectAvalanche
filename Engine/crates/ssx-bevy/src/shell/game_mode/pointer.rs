@@ -58,8 +58,8 @@ fn on_viewport(point: Vec2, window: Vec2, viewport: URect) -> Vec2 {
 }
 
 impl PointerInput<'_, '_> {
-    fn stage_point(&self, logical: Vec2, scale: f32) -> Option<(f32, f32)> {
-        let scene = self.scene.as_deref()?;
+    fn stage_point(&mut self, logical: Vec2, scale: f32) -> Option<(f32, f32)> {
+        let scene = self.scene.as_deref_mut()?.state()?;
         let viewport = self.cameras.iter().find_map(|c| c.physical_viewport_rect())?;
         let root = scene.player.levels.values().next().and_then(|r| scene.player.get(*r))?;
         let stage = scene.lib.movie(root.movie).stage;
@@ -67,8 +67,8 @@ impl PointerInput<'_, '_> {
         window_to_stage(on_viewport(logical * scale, window, viewport), viewport, stage, scene.scale_mode)
     }
 
-    fn script_point(&self, physical: Vec2) -> Option<(f32, f32)> {
-        let scene = self.scene.as_deref()?;
+    fn script_point(&mut self, physical: Vec2) -> Option<(f32, f32)> {
+        let scene = self.scene.as_deref_mut()?.state()?;
         let viewport = self.cameras.iter().find_map(|c| c.physical_viewport_rect())?;
         let root = scene.player.levels.values().next().and_then(|r| scene.player.get(*r))?;
         let stage = scene.lib.movie(root.movie).stage;
@@ -161,7 +161,8 @@ fn pointer_frame(p: &mut PointerInput, ui: &mut GameUiRes, scale: f32, active: b
     if active && notches != 0 {
         ui.pointer_wheel(notches);
     }
-    let kind = match p.scene.as_deref_mut().and_then(|s| s.vm.as_mut().map(|vm| (vm, &mut s.lib, &mut s.player))) {
+    let scene = p.scene.as_deref_mut().and_then(UiScene::state);
+    let kind = match scene.and_then(|s| s.vm.as_mut().map(|vm| (vm, &mut s.lib, &mut s.player))) {
         Some((vm, lib, player)) => vm.pointer_cursor(lib, player),
         None => Cursor::Arrow,
     };

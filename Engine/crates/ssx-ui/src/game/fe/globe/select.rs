@@ -19,10 +19,7 @@ pub fn freeride(fe: &mut FrontEnd, env: &mut FeEnv) {
     }
     let drop = fe.globe.drop;
     let Some(e) = fe.career.event(drop) else { return };
-    if e.cost != 0
-        || e.event_type == 4
-        || matches!(e.drop_type, ssx_assets::career::DropType::Custom | ssx_assets::career::DropType::Type2)
-    {
+    if !offers_free_ride(e, fe.profile.purchased.contains(&drop)) {
         fe.note(format!("A_GameFreeride: drop {drop:#010x} is not a free drop; refused"));
         return;
     }
@@ -30,6 +27,16 @@ pub fn freeride(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.note(format!("A_GameFreeride: drop {drop:#010x} as a free ride"));
     select_drop_screen(fe, env);
     fe.globe.advance_free = false;
+}
+
+fn offers_free_ride(e: &ssx_assets::career::Event, purchased: bool) -> bool {
+    use ssx_assets::career::DropType;
+    let drop_cost = if purchased { 0 } else { e.cost };
+    // PORT(choice): `A_GameFreeride` re-checks the button's condition (the view's X handler 0x2690 dispatches
+    // `freeride` only under `mAllowFreeride`) and refuses the online-only custom / type-2 records, so a mod's view
+    // cannot start a free ride the disc's view never offers; the console's handler (TU2 0x825BA214…0x825BA26C)
+    // checks only the provider's byte +0xC, the flow's +0x10738 and +0x14 <= 0 and trusts the view.
+    drop_cost <= 0 && e.event_type != 4 && !matches!(e.drop_type, DropType::Custom | DropType::Type2)
 }
 
 pub(super) fn select_drop_screen(fe: &mut FrontEnd, env: &mut FeEnv) {
@@ -201,4 +208,69 @@ pub fn back_from_equipment(fe: &mut FrontEnd, env: &mut FeEnv) {
     fe.free_ride_drop = None;
     fe.note("equipment: save end (0x825FAFC8) → previous");
     env.nav_events.push("previous".into());
+}
+
+#[cfg(test)]
+mod tests {
+    use ssx_assets::career::{DropType, Event};
+
+    use super::offers_free_ride;
+
+    fn event(event_type: i64, drop_type: DropType, cost: i64) -> Event {
+        Event {
+            key: 0,
+            name: String::new(),
+            drop: 0,
+            event_type,
+            drop_type,
+            mode: String::new(),
+            slot: String::new(),
+            peak_short: String::new(),
+            hud_title: String::new(),
+            hud_body: String::new(),
+            goal_body: String::new(),
+            results_title: String::new(),
+            results_body: String::new(),
+            unlock_text: String::new(),
+            deadly_descent: false,
+            warning: 0,
+            time_of_day: 0,
+            cost,
+            difficulty: 0,
+            reward: 0,
+            places: None,
+            targets: Vec::new(),
+            required: Vec::new(),
+            unk_b683b553: Vec::new(),
+            rivals: Vec::new(),
+            forced: Vec::new(),
+            ghost_drop: false,
+            unk_89d02fa4: false,
+            unk_12bccfb5: 0,
+            unk_0b03fc19: None,
+            unk_98e9ebcc: Vec::new(),
+            custom_status: 0,
+            unk_links: [0; 3],
+            peak_ref: 0,
+            helicopter: 0,
+            map_point: [0.0; 2],
+        }
+    }
+
+    #[test]
+    fn a_bought_drop_offers_its_free_ride() {
+        let race = event(6, DropType::Explore, 15_000);
+        assert!(!offers_free_ride(&race, false), "priced and not bought");
+        assert!(offers_free_ride(&race, true), "bought");
+        assert!(offers_free_ride(&event(2, DropType::Explore, 0), false), "free");
+    }
+
+    #[test]
+    fn no_free_ride_for_survive_to_death_or_the_online_records() {
+        for purchased in [false, true] {
+            assert!(!offers_free_ride(&event(4, DropType::Explore, 0), purchased));
+            assert!(!offers_free_ride(&event(6, DropType::Custom, 0), purchased));
+            assert!(!offers_free_ride(&event(6, DropType::Type2, 0), purchased));
+        }
+    }
 }

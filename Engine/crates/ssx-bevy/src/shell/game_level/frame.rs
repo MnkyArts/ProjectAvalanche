@@ -31,7 +31,7 @@ pub fn level_frame(
     ride: Option<ResMut<Ride>>,
     mut ui: ResMut<GameUiRes>,
     ready: Res<UiPipelinesReady>,
-    meshes: Query<(), With<Mesh3d>>,
+    (meshes, uploads): (Query<(), With<Mesh3d>>, Option<ResMut<crate::render::uploads::LevelUploads>>),
     (mut audio, music): (Option<ResMut<FrontEndAudio>>, Option<Res<Music>>),
     (ui_frame, mut world_check): (Res<ui::UiFrame>, ResMut<game_mode::WorldCheck>),
 ) {
@@ -40,10 +40,14 @@ pub fn level_frame(
     let ui = &mut ui.0;
     let dt = time.delta_secs_f64();
     if !l.up {
-        l.ready_frames = if ready.0 && !meshes.is_empty() { l.ready_frames + 1 } else { 0 };
+        let uploaded = uploads.as_ref().is_none_or(|u| !u.pending());
+        l.ready_frames = if ready.0 && !meshes.is_empty() && uploaded { l.ready_frames + 1 } else { 0 };
         if l.ready_frames >= DRAWN_FRAMES && !ui.views_loading() {
             l.up = true;
             ride.hold = false;
+            if let Some(mut uploads) = uploads {
+                info!("{}", crate::render::uploads::finish(&mut uploads));
+            }
             ui.values.set_bool(ssx_ui::game::values::id::READY, true);
             ui.fe_call(ssx_ui::game::fe::pads::hud_ready);
             ui.fe_call(ssx_ui::game::fe::flow::hud_ready);
@@ -155,6 +159,7 @@ pub fn level_frame(
             info!("level: the restart leaves the kept run's ghost save waiting: it takes the next halt's recording");
         }
         l.feed = l.feed0.clone();
+        l.feed.score_manager_feed(ui, &ride.state, &ride.session, ride.world());
         l.sim_hold = None;
         l.ghosts = l.ghosts0.clone();
         l.result = None;

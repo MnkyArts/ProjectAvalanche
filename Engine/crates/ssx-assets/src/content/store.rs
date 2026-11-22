@@ -383,6 +383,12 @@ impl GameContent {
         (mounted && super::objects::is_record_kind(kind)).then(|| self.records.clone()).flatten()
     }
 
+    pub fn name_records_ahead(&self) {
+        if let Some(records) = self.records_for(Kind::Object) {
+            let _kept_for_the_readers = records.names();
+        }
+    }
+
     pub(super) fn cached_load(
         &self,
         id: &ContentId,

@@ -4,9 +4,10 @@ use bevy::time::TimeUpdateStrategy;
 use ssx_physics::rider::RiderState;
 use ssx_physics::{KMH_PER_M_PER_TICK, SIM_HZ};
 
+use super::controls::LiveInput;
 use super::{Clock, Pose, Ride};
+use crate::camera::FlyCam;
 use crate::camera::chase::ChaseCamera;
-use crate::camera::{CameraMode, FlyCam};
 use crate::rider::skin::RiderRig;
 use crate::rider::visual::{self as rider_visual, RiderBody, RiderRoot};
 use crate::shell::screenshot::{FIXED_FRAME, FixedShotClock, PipelinesReady};
@@ -56,8 +57,9 @@ pub(super) fn fixed_step(
     shadow: Option<Res<crate::particles::shadow_query::PlayerShadowQuery>>,
     mut paused_frames: ResMut<PausedFrames>,
     chase: Option<Res<ChaseCamera>>,
-    (pads, mode): (Query<&Gamepad>, Option<Res<CameraMode>>),
+    input: LiveInput,
 ) {
+    let read = std::mem::take(&mut ride.step_read);
     if matches!(ride.clock, Clock::Fixed) && ride.hold && ride.paused {
         paused_frames.0 += 1;
         let r = &mut *ride;
@@ -69,7 +71,9 @@ pub(super) fn fixed_step(
     if matches!(ride.clock, Clock::Fixed) && !ride.hold {
         if ride.scripted() {
             ride.scripted_controls();
-            ride.through_keys(&pads, mode.as_deref().is_none_or(|m| *m == CameraMode::Chase));
+            ride.through_keys(input.pads.iter().map(|(_, p)| p), input.chase());
+        } else if !read {
+            ride.read_step_controls(&input);
         }
         ride.state.survival.shade_query = ride.shade_query(shadow.as_deref());
         let before = shade_trace_before(&ride, shadow.as_deref());
@@ -146,7 +150,7 @@ pub(super) fn frame_step(
         ResMut<Time<Virtual>>,
         ResMut<TimeUpdateStrategy>,
     ),
-    (pads, mode): (Query<&Gamepad>, Option<Res<CameraMode>>),
+    input: LiveInput,
 ) {
     let ready = ready.is_some_and(|r| r.0) && !ride.hold;
     let (step_now, last, frame) = match &mut ride.clock {
@@ -175,7 +179,9 @@ pub(super) fn frame_step(
     if step_now {
         if ride.scripted() {
             ride.scripted_controls();
-            ride.through_keys(&pads, mode.as_deref().is_none_or(|m| *m == CameraMode::Chase));
+            ride.through_keys(input.pads.iter().map(|(_, p)| p), input.chase());
+        } else {
+            ride.read_step_controls(&input);
         }
         ride.state.survival.shade_query = ride.shade_query(shadow.as_deref());
         let before = shade_trace_before(&ride, shadow.as_deref());

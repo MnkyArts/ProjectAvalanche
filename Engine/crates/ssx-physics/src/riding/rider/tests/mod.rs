@@ -9,6 +9,8 @@ mod carving_decode;
 mod level_start;
 mod prewind;
 mod reverse_camera;
+mod velocity_filter;
+mod workers;
 
 fn ride(w: &World, s: &mut RiderState, input: &Input, steps: usize, mut each: impl FnMut(&RiderState)) {
     for _ in 0..steps {

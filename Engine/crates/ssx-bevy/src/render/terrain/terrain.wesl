@@ -78,9 +78,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let cube = textureSampleGrad(reflect_cube, cube_sampler, r_view, dpdx(r_view), dpdy(r_view)).rgb;
     let f0 = terrain.reflect.y;
     let fresnel = f0 + (1.0 - f0) * (1.0 - abs(dot(normal, v)));
+@if(SSX_TERRAIN_SIMPLE)
+    let env = vec3(0.0);
+@else
     let env = pow(max(fresnel * cube, vec3(1e-6)), vec3(terrain.reflect.x)) * (1.0 - cvg) * fade_snow;
     var glint = 0.0;
-    if group != 2u {
+    if group != 2u && group != 3u {
         let tile = light.sparkle.x;
         let sp = textureSampleGrad(sparkle_normal, sparkle_sampler, s.p.xz * tile, s.dx.xz * tile, s.dy.xz * tile);
         glint = cvg * gl::snow_glint(light, sp.xyz * 2.0 - 1.0, normal, v, diffuse_light);

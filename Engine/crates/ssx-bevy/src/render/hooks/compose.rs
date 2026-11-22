@@ -288,6 +288,7 @@ pub fn check_variant(
         let mut flags = module_flags(&own, sources);
         flags.remove("SSX_HOOK_SURFACE");
         flags.remove("SSX_HOOK_VERTEX");
+        flags.remove("SSX_INVARIANT_POSITION");
         let mut module = sets::module_model(&own, *kind, flags);
         if let Scope::Mesh { always, optional } = scope {
             module.dims.retain(|d| !d.iter().any(|f| sets::MESH_DEFS.contains(&f.as_str())));

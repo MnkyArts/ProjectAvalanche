@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
+use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use ssx_assets::particles::ParticleNode;
 
 use super::load::{load_heli_effects, load_new_textures, load_rider_effects};
-use super::{ParticleFrame, ParticleWorld, SUN_DISTANCE, Spray, rider, shadow_query};
-use crate::particles::sim::{Context, Draw, EffectInstance, RecordView};
+use super::snapshot::Records;
+use super::{ParticleFrame, ParticleLight, ParticleState, ParticleWorld, SUN_DISTANCE, Spray, rider, shadow_query};
+use crate::particles::render::FrameDraws;
+use crate::particles::sim::{Context, Draw, DrawBuffers, EffectInstance, RecordView, Visibility};
 use crate::particles::spray::{EffectRecord, SprayInputs};
+use crate::render::lighting::game::GameLightUniform;
 use crate::render::post::GamePostCamera;
 use crate::ride::Ride;
 use crate::rider::anim::JointRecord;
@@ -43,7 +47,6 @@ fn driver_records(
     precipitation: f32,
 ) -> Vec<EffectRecord> {
     let inputs = *inputs;
-    let precipitation = crate::particles::inputs::precipitation_override().unwrap_or(precipitation);
     let present = spray.table.map(|row| row.map(|e| e.is_some()));
     for (s, k, on) in spray.driver.update(&inputs, &present) {
         let Some(e) = spray.table[s][k] else { continue };
@@ -55,7 +58,7 @@ fn driver_records(
         .iter()
         .map(|e| {
             let (scale, rotation, position) = rider::compose(board, &e.node);
-            let blend = crate::particles::inputs::default_blend(e.behaviour.as_ref(), &inputs, precipitation);
+            let blend = crate::particles::inputs::default_blend(e.behaviour.as_deref(), &inputs, precipitation);
             EffectRecord { scale, rotation, position, ao: inputs.ao, blend }
         })
         .collect();
@@ -107,7 +110,7 @@ fn spray_views(spray: &Spray, records: Vec<EffectRecord>) -> Vec<RecordView> {
 }
 
 fn live_spray_records(
-    w: &mut ParticleWorld,
+    w: &mut ParticleState,
     bots: Option<&crate::ride::bots::Bots>,
     root: Option<&crate::render::lighting::BigRoot>,
     clock: f32,
@@ -118,7 +121,7 @@ fn live_spray_records(
         return Vec::new();
     }
     let before = w.texture_names.len();
-    let ParticleWorld { live_sprays, arena, defs, texture_names, .. } = w;
+    let ParticleState { live_sprays, arena, defs, texture_names, .. } = w;
     let build = |set: &ssx_assets::particles::SnowSpraySet, arena: &mut crate::particles::sim::SetArena| {
         super::load::spray_of(set, &root.0, arena, defs, texture_names, true)
     };
@@ -142,7 +145,11 @@ fn live_spray_records(
     out
 }
 
-fn manager_dt(w: &mut ParticleWorld, ride: Option<&Ride>, real_dt: f32) -> Option<f32> {
+// PORT(choice): with a ride the manager update runs once per frame after the frame's steps, over their summed length,
+// and its snapshot is stamped with the newest step; the console runs it after every step (0x823D18B8), a snapshot each.
+// The records read what the port steps and draws in the frame (the avalanche's chunks, the racers, the helicopter), so
+// a frame of two or more steps (below 30 fps, or after a stall) draws between the update before them and its own.
+fn manager_dt(w: &mut ParticleState, ride: Option<&Ride>, real_dt: f32) -> Option<f32> {
     match ride {
         Some(ride) => {
             if ride.steps == w.last_step {
@@ -167,30 +174,55 @@ fn manager_dt(w: &mut ParticleWorld, ride: Option<&Ride>, real_dt: f32) -> Optio
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn update(
-    ride: Option<Res<Ride>>,
-    time: Res<Time>,
-    world: Option<ResMut<ParticleWorld>>,
-    mut frame_out: ResMut<ParticleFrame>,
-    rig: Option<Res<RiderRig>>,
-    big_root: Option<Res<crate::render::lighting::BigRoot>>,
-    cameras: Query<(&GlobalTransform, &Projection), With<GamePostCamera>>,
-    lighting: Option<Res<crate::render::lighting::GameLighting>>,
-    avalanche: Option<Res<crate::render::avalanche::AvalancheScene>>,
-    shadow: Option<Res<shadow_query::PlayerShadowQuery>>,
-    bot_boards: Option<Res<crate::ride::bots::Bots>>,
+pub(super) struct Done {
+    draws: FrameDraws,
+    light: GameLightUniform,
+}
+
+#[derive(Clone, Copy)]
+struct View {
+    clip_from_world: Mat4,
+    view_from_world: Mat4,
+    position: Vec3,
+    forward: Vec3,
+    tan_half_fov: f32,
+}
+
+impl View {
+    fn visibility(&self, rec: &RecordView, inst: &EffectInstance) -> Visibility {
+        let (radius, _) = inst.cull_params();
+        crate::particles::track::visibility(
+            rec.position,
+            rec.scale,
+            radius,
+            &self.clip_from_world,
+            self.position,
+            self.tan_half_fov,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Sources<'a> {
+    ride: Option<&'a Ride>,
+    rig: Option<&'a RiderRig>,
+    bots: Option<&'a crate::ride::bots::Bots>,
+    heli: Option<&'a crate::ride::helicopter::HeliVisual>,
+    avalanche: Option<&'a crate::render::avalanche::AvalancheScene>,
+    big_root: Option<&'a crate::render::lighting::BigRoot>,
+    camera: Vec3,
+}
+
+fn manager_update(
+    w: &mut ParticleState,
+    src: Sources,
     geotag_bursts: Option<ResMut<crate::render::geotags::GeotagBursts>>,
-    heli: Option<Res<crate::ride::helicopter::HeliVisual>>,
+    dt: f32,
 ) {
-    let Some(mut w) = world else { return };
-    let w = &mut *w;
-    let Ok((camera, projection)) = cameras.single() else { return };
-    let ride = ride.as_deref();
-    let Some(dt) = manager_dt(w, ride, time.delta_secs()) else { return };
+    let Sources { ride, rig, bots: bot_boards, heli, avalanche, big_root, camera: cam_pos } = src;
     w.clock += dt;
     let clock = w.clock;
-    if let (Some(mut queued), Some(root)) = (geotag_bursts, big_root.as_ref()) {
+    if let (Some(mut queued), Some(root)) = (geotag_bursts, big_root) {
         let pending = std::mem::take(&mut queued.pending);
         if !pending.is_empty() {
             let before = w.texture_names.len();
@@ -200,28 +232,17 @@ pub(super) fn update(
             load_new_textures(w, &root.0, before);
         }
     }
-    let clip_from_view = projection.get_clip_from_view();
-    let tan_half_fov = (1.0 / clip_from_view.x_axis.x).min(1.0 / clip_from_view.y_axis.y);
-    let clip_from_world = clip_from_view * camera.to_matrix().inverse();
-    let cam_pos = camera.translation();
-    let vis = |rec: &RecordView, inst: &EffectInstance| {
-        let (radius, _) = inst.cull_params();
-        crate::particles::track::visibility(rec.position, rec.scale, radius, &clip_from_world, cam_pos, tan_half_fov)
-    };
     if let Some(c) = ride.and_then(|r| r.session.controllers.as_ref()) {
         w.weather.follow(&c.weather);
     }
     w.weather.update(dt);
     let mut weather = w.weather.weather();
-    if let Some(p) = crate::particles::inputs::precipitation_override() {
+    if let Some(p) = w.switches.precipitation {
         weather.precipitation = p;
     }
-    let rider_rig = ride.zip(rig.as_deref());
+    let rider_rig = ride.zip(rig);
     let joints = rider_rig.map(|(ride, rig)| newest_joints(rig, ride));
-    if let (Some((ride, rig)), Some(root), Some(l), false) = (rider_rig, &big_root, &lighting, w.rider_tried) {
-        load_rider_effects(w, &root.0, l.disc_track(), rig, ride);
-    }
-    let board = rig.as_deref().and_then(|r| r.anim.posed().1.find("Board"));
+    let board = rig.and_then(|r| r.anim.posed().1.find("Board"));
     let mut spray_inputs = None;
     let mut spray_recs: Vec<RecordView> = Vec::new();
     if let (Some(ride), Some(spray), Some(board)) =
@@ -246,7 +267,7 @@ pub(super) fn update(
         spray_inputs = Some(inputs);
     }
     let mut bot_recs: Vec<Vec<RecordView>> = Vec::new();
-    if let (Some(race), Some(drawn)) = (ride.and_then(|r| r.session.bots.as_ref()), bot_boards.as_deref()) {
+    if let (Some(race), Some(drawn)) = (ride.and_then(|r| r.session.bots.as_ref()), bot_boards) {
         for (k, spray) in w.bot_sprays.iter_mut().enumerate() {
             let (Some(b), Some(Some(board))) = (race.bots.get(k), drawn.boards.get(k)) else {
                 bot_recs.push(Vec::new());
@@ -277,18 +298,17 @@ pub(super) fn update(
             );
         }
     }
-    let live_recs = live_spray_records(w, bot_boards.as_deref(), big_root.as_deref(), clock, weather.precipitation);
+    let live_recs = live_spray_records(w, bot_boards, big_root, clock, weather.precipitation);
     let mut rider_recs: Vec<Option<RecordView>> = Vec::new();
     if let (Some(ride), Some(rider), Some(inputs), Some(joints)) =
         (ride, w.rider.as_mut(), spray_inputs.as_ref(), joints.as_ref())
     {
         let mut fx_inputs = *inputs;
-        if let Some(f) = std::env::var("SSX_RIDER_TRICKY").ok().filter(|f| f == "awesome" || f == "super") {
-            (fx_inputs.is_awesome, fx_inputs.is_super_awesome) = (true, f == "super");
+        if let Some(sup) = w.switches.tricky {
+            (fx_inputs.is_awesome, fx_inputs.is_super_awesome) = (true, sup);
         }
         let inputs = &fx_inputs;
-        let log = crate::render::post::env_is("SSX_PARTICLES_LOG", "on")
-            || crate::render::post::env_is("SSX_PARTICLES_LOG", "rider");
+        let log = w.switches.log_is("on") || w.switches.log_is("rider");
         let ops = ride.session.controllers.as_ref().map_or(&[][..], |c| c.fx.particles.as_slice());
         let switched = rider.switch(clock, ops, inputs);
         if !switched.is_empty() && log {
@@ -300,14 +320,10 @@ pub(super) fn update(
                 switched.join(", ")
             );
         }
-        let precipitation = crate::particles::inputs::precipitation_override().unwrap_or(weather.precipitation);
-        rider_recs = rider.records(joints, inputs, precipitation);
-    }
-    if let (Some(h), Some(root), false) = (heli.as_deref(), &big_root, w.heli_tried) {
-        load_heli_effects(w, &root.0, h);
+        rider_recs = rider.records(joints, inputs, weather.precipitation);
     }
     let mut heli_recs: Vec<Option<RecordView>> = Vec::new();
-    if let (Some(ride), Some(h), Some(fx)) = (ride, heli.as_deref(), w.heli.as_mut()) {
+    if let (Some(ride), Some(h), Some(fx)) = (ride, heli, w.heli.as_mut()) {
         let entity = crate::ride::helicopter::drop_heli(ride);
         let inputs = SprayInputs {
             ao: entity.map_or(1.0, |e| e.world_ao),
@@ -315,7 +331,7 @@ pub(super) fn update(
             ..SprayInputs::default()
         };
         let switched = fx.switch(clock, entity.map_or(&[][..], |e| e.particles.as_slice()), &inputs);
-        if !switched.is_empty() && crate::render::post::env_is("SSX_PARTICLES_LOG", "heli") {
+        if !switched.is_empty() && w.switches.log_is("heli") {
             info!("particles: step {} ({:.2} s), helicopter: {}", ride.steps, ride.seconds(), switched.join(", "));
         }
         heli_recs = fx.records(&h.newest, &inputs, weather.precipitation);
@@ -325,7 +341,7 @@ pub(super) fn update(
     let track_recs: Vec<RecordView> = (0..w.track.slots.len())
         .map(|i| {
             let blend = crate::particles::inputs::default_blend(
-                w.track.slots[i].behaviour.as_ref(),
+                w.track.slots[i].behaviour.as_deref(),
                 &track_inputs,
                 weather.precipitation,
             );
@@ -333,7 +349,7 @@ pub(super) fn update(
         })
         .collect();
     let owner_ao = track_inputs.ao.max(0.0);
-    let trail_recs: Vec<RecordView> = match &avalanche {
+    let trail_recs: Vec<RecordView> = match avalanche {
         Some(scene) => w
             .trails
             .iter_mut()
@@ -378,61 +394,245 @@ pub(super) fn update(
         let blend = crate::particles::inputs::default_blend(None, &track_inputs, weather.precipitation);
         RecordView { scale, rotation, position, start: 0.0, stop: -1.0, instant_off: false, ao: 1.0, blend }
     });
+    // PORT(choice): without a ride (fly camera) there is no focus character; the camera stands in (viewer-only); the
+    // game always rides a character.
+    let point = ride.map_or(cam_pos, |r| r.state.traj);
+    let records = Records {
+        trails: trail_recs,
+        spray: spray_recs,
+        bots: bot_recs,
+        live: live_recs,
+        rider: rider_recs,
+        heli: heli_recs,
+        track: track_recs,
+        sun: sun_rec,
+        geotags: geotag_recs,
+        tombstones: tombstone_recs,
+    };
+    w.snapshots.push(&records, clock, point, weather, ride.map_or(0, |r| r.steps));
+}
+
+fn frame_locators(w: &ParticleState, records: &mut Records, src: Sources) {
+    if let Some(drawn) = src.bots {
+        for ((spray, recs), board) in w.bot_sprays.iter().zip(&mut records.bots).zip(&drawn.boards) {
+            if let Some(board) = board {
+                relocate(spray, recs, board);
+            }
+        }
+        for (s, recs) in w.live_sprays.pool.iter().zip(&mut records.live) {
+            if let Some((_, board, _)) = s.rider.and_then(|id| drawn.live.sprays().find(|r| r.0 == id)) {
+                relocate(&s.spray, recs, &board);
+            }
+        }
+    }
+    if let (Some(sun), Some(rec)) = (&w.sun, records.sun.as_mut()) {
+        let locator = JointRecord { s: Vec3::ONE, q: Quat::IDENTITY, p: src.camera + sun.dir * SUN_DISTANCE };
+        (rec.scale, rec.rotation, rec.position) = rider::compose(&locator, &sun.node);
+    }
+}
+
+fn relocate(spray: &Spray, recs: &mut [RecordView], board: &JointRecord) {
+    let mut located: Vec<EffectRecord> = spray
+        .effects
+        .iter()
+        .map(|e| {
+            let (scale, rotation, position) = rider::compose(board, &e.node);
+            EffectRecord { scale, rotation, position, ao: 0.0, blend: Vec::new() }
+        })
+        .collect();
+    for (s, row) in spray.table.iter().enumerate() {
+        for (k, e) in row.iter().enumerate() {
+            if let Some(e) = e
+                && spray.driver.is_on(s, k)
+                && let Some(r) = located.get_mut(*e)
+            {
+                spray.driver.apply(k, r);
+            }
+        }
+    }
+    for (rec, l) in recs.iter_mut().zip(located) {
+        (rec.scale, rec.rotation, rec.position) = (l.scale, l.rotation, l.position);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn update(
+    ride: Option<Res<Ride>>,
+    time: Res<Time>,
+    world: Option<ResMut<ParticleWorld>>,
+    rig: Option<Res<RiderRig>>,
+    big_root: Option<Res<crate::render::lighting::BigRoot>>,
+    cameras: Query<(&GlobalTransform, &Projection), With<GamePostCamera>>,
+    lighting: Option<Res<crate::render::lighting::GameLighting>>,
+    avalanche: Option<Res<crate::render::avalanche::AvalancheScene>>,
+    shadow: Option<Res<shadow_query::PlayerShadowQuery>>,
+    bot_boards: Option<Res<crate::ride::bots::Bots>>,
+    geotag_bursts: Option<ResMut<crate::render::geotags::GeotagBursts>>,
+    heli: Option<Res<crate::ride::helicopter::HeliVisual>>,
+) {
+    let Some(mut world) = world else { return };
+    let world = &mut world.0;
+    let Some(w) = world.settle() else { return };
+    let Ok((camera, projection)) = cameras.single() else { return };
+    let ride = ride.as_deref();
+    // PORT(choice): the rider's effects and their textures load in the first frame with the rider, under the loading
+    // screen; in the ride's first update they were part of a 64 ms particles update on the game thread when the
+    // loading screen went (alps0101, development laptop, `trace_chrome`). They read the rig's names and the loadout
+    // alone, and nothing else enters the effects' arena before them; the console's loading is not decoded.
+    if let (Some(ride), Some(rig), Some(root), Some(l), false) =
+        (ride, rig.as_deref(), &big_root, &lighting, w.rider_tried)
+    {
+        load_rider_effects(w, &root.0, l.disc_track(), rig, ride);
+    }
+    // PORT(choice): the helicopter's effects and their textures load in the first frame with the helicopter, after the
+    // rider's, under the loading screen; in the ride's first update they took 57 ms of the game thread when the
+    // loading screen went (`exp_siberia_boris_drop_4_trick`, a 111 ms first ride frame, development laptop,
+    // `trace_chrome`). They read the helicopter's rig and particle nodes alone; the draws keep their order (the
+    // effects' fixed order, then the depth sort, not the arena's sets); the console's loading is not decoded.
+    if let (Some(h), Some(root), false) = (heli.as_deref(), &big_root, w.heli_tried) {
+        load_heli_effects(w, &root.0, h);
+    }
+    let clip_from_view = projection.get_clip_from_view();
+    let view_from_world = camera.to_matrix().inverse();
+    let view = View {
+        clip_from_world: clip_from_view * view_from_world,
+        view_from_world,
+        position: camera.translation(),
+        forward: camera.forward().as_vec3(),
+        tan_half_fov: (1.0 / clip_from_view.x_axis.x).min(1.0 / clip_from_view.y_axis.y),
+    };
+    let src = Sources {
+        ride,
+        rig: rig.as_deref(),
+        bots: bot_boards.as_deref(),
+        heli: heli.as_deref(),
+        avalanche: avalanche.as_deref(),
+        big_root: big_root.as_deref(),
+        camera: view.position,
+    };
+    let updated = match manager_dt(w, ride, time.delta_secs()) {
+        Some(dt) => {
+            manager_update(w, src, geotag_bursts, dt);
+            true
+        }
+        None => false,
+    };
+    // PORT(choice): above the console's 60 Hz (`LoopRender` 0x8236DF08, presented every vertical blank) the step runs
+    // every drawn frame as well, so the trails and the local-space effects stay on the joints drawn in each frame; the
+    // emission counts follow the update rate as the game's count makes them (`Lynx_EmitBase_GetEmitCount` 0x82BAA688:
+    // `fx_trickyflare_ribbon`'s rate 100 emits 100 a second at 30 Hz, 90 at 60 Hz, 144 at 144 Hz) and every frame pays
+    // the step (0.56 ms a call on a compute thread on Mount Eddie, round perf-x1). The console never drew above 60.
+    if ride.is_none() && !updated {
+        return;
+    }
+    let Some(mut frame) = w.snapshots.frame(ride.map(Ride::render_steps)) else { return };
+    frame_locators(w, &mut frame.records, src);
+    let controllers = match ride {
+        Some(r) => r.session.controllers.as_ref(),
+        None => w.track.offline.as_ref().map(|(c, _)| &**c),
+    };
+    let global_light = w.light.as_mut().map_or_else(Default::default, |l| {
+        l.pick(frame.point, &view.clip_from_world, view.position, view.tan_half_fov, controllers)
+    });
+    let light = lighting.map_or_else(GameLightUniform::viewer_default, |l| GameLightUniform::from_preset(&l));
+    let player_shadow = crate::particles::inputs::player_shadow(shadow.as_deref());
+    let (records, clock, weather) = (frame.records, frame.clock, frame.weather);
+    // PORT(choice): the records' Lynx step (the instances' apply and update, the draws, their sort and the parameter
+    // registry: everything that reads no other system's data) runs as a task of Bevy's compute pool beside the frame's
+    // other systems, and `finish` joins it in `Last`, before the frame's extract: the same work in the same order on
+    // the same state, so the same draws. Run in the system it held PostUpdate's later systems and command syncs
+    // (visibility, the shadows' culling) behind it; the console's render object stepped its particles in its render
+    // pass (0x82964E6C).
+    world.spawn(move |w| {
+        let draws = step(w, &records, &view, clock, player_shadow, weather, &global_light);
+        Done { draws, light }
+    });
+}
+
+// PORT(choice): it runs on the main thread (`NonSendMarker`): a compute thread blocked on the step could be the one
+// the step waits for; the console had no task pool.
+pub(super) fn finish(
+    _main_thread: NonSendMarker,
+    world: Option<ResMut<ParticleWorld>>,
+    mut frame_out: ResMut<ParticleFrame>,
+) {
+    let Some(mut world) = world else { return };
+    if !world.0.pending() {
+        return;
+    }
+    let world = &mut world.0;
+    let Some(textures) = world.settle().map(|w| w.textures.clone()) else { return };
+    let Some(done) = world.take_done() else { return };
+    *frame_out =
+        ParticleFrame { draws: Arc::new(done.draws), textures, light: done.light, serial: frame_out.serial + 1 };
+}
+
+fn step(
+    w: &mut ParticleState,
+    rec: &Records,
+    view: &View,
+    clock: f32,
+    player_shadow: f32,
+    weather: crate::particles::sim::Weather,
+    global_light: &ParticleLight,
+) -> FrameDraws {
+    let _span = bevy::log::info_span!("particles step").entered();
+    let cam_pos = view.position;
     let lynx_dt = (clock - w.last_render_time).clamp(-0.1, 0.1);
     let frame_dt = clock - w.last_render_time;
     let arena = &mut w.arena;
-    for (t, rec) in w.trails.iter_mut().zip(&trail_recs) {
-        let v = vis(rec, &t.instance);
+    for (t, rec) in w.trails.iter_mut().zip(&rec.trails) {
+        let v = view.visibility(rec, &t.instance);
         t.instance.apply_record(rec, clock, frame_dt, v, arena);
     }
     if let Some(spray) = w.spray.as_mut() {
-        for (e, rec) in spray.effects.iter_mut().zip(&spray_recs) {
-            let v = vis(rec, &e.instance);
+        for (e, rec) in spray.effects.iter_mut().zip(&rec.spray) {
+            let v = view.visibility(rec, &e.instance);
             e.instance.apply_record(rec, clock, frame_dt, v, arena);
         }
     }
-    for (spray, recs) in w.bot_sprays.iter_mut().zip(&bot_recs) {
+    for (spray, recs) in w.bot_sprays.iter_mut().zip(&rec.bots) {
         for (e, rec) in spray.effects.iter_mut().zip(recs) {
-            let v = vis(rec, &e.instance);
+            let v = view.visibility(rec, &e.instance);
             e.instance.apply_record(rec, clock, frame_dt, v, arena);
         }
     }
-    for (s, recs) in w.live_sprays.pool.iter_mut().zip(&live_recs) {
+    for (s, recs) in w.live_sprays.pool.iter_mut().zip(&rec.live) {
         for (e, rec) in s.spray.effects.iter_mut().zip(recs) {
-            let v = vis(rec, &e.instance);
+            let v = view.visibility(rec, &e.instance);
             e.instance.apply_record(rec, clock, frame_dt, v, arena);
         }
     }
     if let Some(rider) = w.rider.as_mut() {
-        for (e, rec) in rider.slots.iter_mut().zip(&rider_recs) {
+        for (e, rec) in rider.slots.iter_mut().zip(&rec.rider) {
             if let Some(rec) = rec {
-                let v = vis(rec, &e.instance);
+                let v = view.visibility(rec, &e.instance);
                 e.instance.apply_record(rec, clock, frame_dt, v, arena);
             }
         }
     }
     if let Some(heli) = w.heli.as_mut() {
-        for (e, rec) in heli.slots.iter_mut().zip(&heli_recs) {
+        for (e, rec) in heli.slots.iter_mut().zip(&rec.heli) {
             if let Some(rec) = rec {
-                let v = vis(rec, &e.instance);
+                let v = view.visibility(rec, &e.instance);
                 e.instance.apply_record(rec, clock, frame_dt, v, arena);
             }
         }
     }
-    for (s, rec) in w.track.slots.iter_mut().zip(&track_recs) {
-        let v = vis(rec, &s.instance);
+    for (s, rec) in w.track.slots.iter_mut().zip(&rec.track) {
+        let v = view.visibility(rec, &s.instance);
         s.instance.apply_record(rec, clock, frame_dt, v, arena);
     }
-    if let (Some(sun), Some(rec)) = (w.sun.as_mut(), &sun_rec) {
-        let v = vis(rec, &sun.instance);
+    if let (Some(sun), Some(rec)) = (w.sun.as_mut(), &rec.sun) {
+        let v = view.visibility(rec, &sun.instance);
         sun.instance.apply_record(rec, clock, frame_dt, v, arena);
     }
-    for (s, rec) in w.geotags.slots.iter_mut().zip(&geotag_recs) {
-        let v = vis(rec, &s.instance);
+    for (s, rec) in w.geotags.slots.iter_mut().zip(&rec.geotags) {
+        let v = view.visibility(rec, &s.instance);
         s.instance.apply_record(rec, clock, frame_dt, v, arena);
     }
-    for (inst, rec) in w.tombstones.slots.iter_mut().zip(&tombstone_recs) {
-        let v = vis(rec, inst);
+    for (inst, rec) in w.tombstones.slots.iter_mut().zip(&rec.tombstones) {
+        let v = view.visibility(rec, inst);
         inst.apply_record(rec, clock, frame_dt, v, arena);
     }
     w.last_render_time = clock;
@@ -446,7 +646,7 @@ pub(super) fn update(
         frame: w.frame,
         dt_smoothed: w.dt_smoothed,
         camera: cam_pos,
-        player_shadow: crate::particles::inputs::player_shadow(shadow.as_deref()),
+        player_shadow,
         weather,
     };
     let mut instances: Vec<&mut EffectInstance> = Vec::new();
@@ -469,23 +669,24 @@ pub(super) fn update(
     instances.extend(w.trails.iter_mut().map(|t| &mut t.instance));
     instances.extend(w.sun.as_mut().map(|s| &mut s.instance));
     instances.extend(w.geotags.slots.iter_mut().map(|s| &mut s.instance));
-    if !tombstone_recs.is_empty() {
+    if !rec.tombstones.is_empty() {
         instances.extend(w.tombstones.slots.iter_mut());
     }
     for inst in instances.iter_mut() {
         inst.update(&ctx, &mut w.rng, arena);
     }
-    let mut draws = Vec::new();
-    let hide = std::env::var("SSX_FX_HIDE").unwrap_or_default();
+    let mut bufs = DrawBuffers::default();
+    let hide = &w.switches.hide;
     for (i, inst) in instances.iter().enumerate() {
-        if !hide.is_empty() && hide.split(',').any(|n| n.trim() == inst.def.name) {
+        if hide.iter().any(|n| *n == inst.def.name) {
             continue;
         }
-        inst.draws(i, &ctx, camera.forward().as_vec3(), arena, &mut draws);
+        inst.draws(i, &ctx, view.forward, arena, &mut bufs);
     }
     drop(instances);
-    sort_draws(&mut draws, &camera.to_matrix().inverse());
-    if crate::render::post::env_is("SSX_PARTICLES_LOG", "on") && w.frame % 15 == 0 {
+    sort_draws(&mut bufs.draws, &view.view_from_world);
+    let draws = &bufs.draws;
+    if w.switches.log_is("on") && w.frame.is_multiple_of(15) {
         let mut per: std::collections::BTreeMap<&str, (usize, usize, std::collections::BTreeSet<usize>)> =
             Default::default();
         for s in &w.track.slots {
@@ -530,15 +731,15 @@ pub(super) fn update(
             w.heli.as_ref().map_or_else(String::new, |h| format!(" | helicopter: {}", h.summary(&w.arena))),
             if bots.is_empty() { String::new() } else { format!(" | bots: {}", bots.join(", ")) }
         );
-        for d in &draws {
+        for d in draws {
             debug!(
                 "  draw {} {}/{} half {} tonemap {} n {} aabb {:.1?}..{:.1?} age {} t {}",
                 d.effect,
-                d.shader,
-                d.technique,
+                d.render.shader,
+                d.render.technique,
                 d.half,
                 d.tonemap,
-                d.vertices.len(),
+                d.records.len(),
                 d.aabb.0,
                 d.aabb.1,
                 d.age_max,
@@ -546,41 +747,7 @@ pub(super) fn update(
             );
         }
     }
-    for d in &mut draws {
-        let mut changed = w.registry_snapshot.is_none();
-        for (n, v) in std::mem::take(&mut d.extras) {
-            let bits = |x: &Vec4| x.to_array().map(f32::to_bits);
-            if w.registry.get(&n).is_none_or(|old| bits(old) != bits(&v)) {
-                w.registry.insert(n, v);
-                changed = true;
-            }
-        }
-        if changed {
-            w.registry_snapshot = Some(Arc::new(w.registry.iter().map(|(n, v)| (n.clone(), *v)).collect()));
-        }
-        d.registry = w.registry_snapshot.clone();
-    }
-    // PORT(choice): without a ride (fly camera) there is no focus character; the camera stands in (viewer-only); the
-    // game always rides a character.
-    let point = ride.map_or(cam_pos, |r| r.state.traj);
-    let controllers = match ride {
-        Some(r) => r.session.controllers.as_ref(),
-        None => w.track.offline.as_ref().map(|(c, _)| &**c),
-    };
-    let global_light = w
-        .light
-        .as_mut()
-        .map_or_else(Default::default, |l| l.pick(point, &clip_from_world, cam_pos, tan_half_fov, controllers));
-    let light = lighting.map_or_else(crate::render::lighting::game::GameLightUniform::viewer_default, |l| {
-        crate::render::lighting::game::GameLightUniform::from_preset(&l)
-    });
-    *frame_out = ParticleFrame {
-        draws: Arc::new(draws),
-        textures: w.textures.clone(),
-        light,
-        global_light,
-        serial: frame_out.serial + 1,
-    };
+    crate::particles::render::frame_draws(&bufs, &mut w.registry, global_light, &w.textures, &mut w.unported)
 }
 
 fn sort_draws(draws: &mut Vec<Draw>, view_from_world: &Mat4) {

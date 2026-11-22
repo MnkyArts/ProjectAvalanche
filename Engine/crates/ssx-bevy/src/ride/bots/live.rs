@@ -33,6 +33,7 @@ struct LiveVisual {
     look: LiveLook,
     visual: BotVisual,
     trajectory: Option<JointRecord>,
+    root: Option<bevy::prelude::Vec3>,
     spray: Option<(JointRecord, ssx_assets::ghosts::GhostPose)>,
 }
 
@@ -54,7 +55,6 @@ impl Drop for LoaderCount {
 pub(super) struct LiveFrame {
     pub facts: FrameFacts,
     pub dt_ticks: f32,
-    pub racers: usize,
     pub inputs: RacerAlphaInputs,
 }
 
@@ -111,15 +111,32 @@ impl LiveVisuals {
             .collect()
     }
 
+    // PORT(choice): a live racer's fade update measures the distance from its view as the last rendered frame posed it
+    // (the view follows this client's network tick, set every frame); the original has no live racers, its racers'
+    // updates read their replays' positions at the step.
+    pub(super) fn fade_step(
+        &mut self,
+        traj: bevy::prelude::Vec3,
+        racers: usize,
+        rng: &mut dyn ssx_assets::career::random::GameRandom,
+    ) {
+        for r in &mut self.drawn {
+            if r.visual.racer_type == 2
+                && let Some(root) = r.root
+            {
+                r.visual.fade_update(root.distance_squared(traj), racers, rng);
+            }
+        }
+    }
+
     pub(super) fn update(
         &mut self,
         race: &ssx_physics::session::bots::BotRace,
         ride: &crate::ride::Ride,
         frame: LiveFrame,
-        rng: &mut dyn ssx_assets::career::random::GameRandom,
         draw: &mut RacerDraw,
     ) {
-        let LiveFrame { facts, dt_ticks, racers, inputs } = frame;
+        let LiveFrame { facts, dt_ticks, inputs } = frame;
         // PORT(choice): a live racer's `IRaceInterface` +0x28 (`Racers_UpdateFade`'s Explore test, 0x825021E4…
         // 0x82502210) is the race clock in ms, the value the score manager writes into each unfinished racer it holds
         // (0x824CC520…0x824CC534), whichever score slot the port gives the live racer (re-chosen each second, or none);
@@ -129,12 +146,13 @@ impl LiveVisuals {
             let view = race.live.iter().find(|l| l.id == r.id).and_then(|l| l.pose.view(self.now));
             let Some(view) = view else {
                 draw.hide(&r.visual);
-                (r.trajectory, r.spray) = (None, None);
+                (r.trajectory, r.spray, r.root) = (None, None, None);
                 continue;
             };
+            r.root = Some(view.root);
             let v = &mut r.visual;
             if v.racer_type == 2 {
-                draw.holo(v, dt_ticks / 60.0, view.root.distance_squared(ride.state.traj), racers, rng);
+                draw.holo(v);
             }
             let fade = if v.racer_type == 2 { v.fade.alpha } else { 1.0 };
             v.alpha = racer_alpha(v.racer_type, fade, race.ready_gate, inputs, false, clock_ms);
@@ -247,7 +265,7 @@ pub(super) fn spawn_live(
                     if look.hologram { "hologram" } else { "character" },
                     t0.elapsed().as_secs_f64() * 1000.0
                 );
-                live.drawn.push(LiveVisual { id, look, visual, trajectory: None, spray: None });
+                live.drawn.push(LiveVisual { id, look, visual, trajectory: None, root: None, spray: None });
             }
             Err(e) => {
                 warn!("live rider {id} ({}): not drawn: {e:#}", look.name);

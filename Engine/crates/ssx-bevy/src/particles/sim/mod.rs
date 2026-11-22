@@ -11,8 +11,11 @@ mod params;
 
 use actions::{ActionPrivate, accelerate, drag, kill_age, periodic_box, speed_limit, turbulence, weather};
 pub use defs::{EffectDef, Kind};
-pub use draw::Draw;
+#[cfg(test)]
+pub use draw::RenderConsts;
+pub use draw::{Draw, DrawBuffers, REGISTRY_NAMES, Registry, VertexRecord, registry_slot};
 use emit::{EmitEnv, emit_box, emit_count, emit_sphere, emit_spheroid};
+use params::name;
 pub use params::{Params, View, Weights};
 
 #[derive(Clone, Debug)]
@@ -184,7 +187,7 @@ impl EffectInstance {
             .iter()
             .enumerate()
             .map(|(gi, g)| {
-                if View::new(&g.params, &w).i("iInstancing") != 0 {
+                if View::new(&g.params, &w).i(name!("iInstancing")) != 0 {
                     match arena.shared.get(&(key, gi)) {
                         Some(&s) => s,
                         None => {
@@ -219,7 +222,7 @@ impl EffectInstance {
     pub fn cull_params(&self) -> (f32, i32) {
         let base = Weights::default();
         let v = View::new(&self.def.params, &base);
-        (v.f("fRadius"), v.i("iCullBehavior"))
+        (v.f(name!("fRadius")), v.i(name!("iCullBehavior")))
     }
 
     pub fn make_dormant(&mut self, arena: &mut SetArena) {
@@ -298,11 +301,11 @@ impl EffectInstance {
         let gate = self.state == 0 || self.state == 1;
         let def = self.def.clone();
         let w = self.weights;
-        let effect_space = View::new(&def.params, &w).i("iSpace");
+        let effect_space = View::new(&def.params, &w).i(name!("iSpace"));
         for (gi, gd) in def.groups.iter().enumerate() {
             let gp = View::new(&gd.params, &w);
-            let instancing = gp.i("iInstancing");
-            let space = match (instancing, gp.i("iSpace")) {
+            let instancing = gp.i(name!("iInstancing"));
+            let space = match (instancing, gp.i(name!("iSpace"))) {
                 (1, _) | (_, 0) => 0,
                 (2, _) | (_, 1) => 1,
                 _ => effect_space,
@@ -312,17 +315,18 @@ impl EffectInstance {
             let SetArena { sets, privates, .. } = &mut *arena;
             let set = &mut sets[self.sets[gi]];
             let first = instancing == 0 || set.last_frame != Some(ctx.frame);
-            let cap = gp.i("iNumParticlesMax").max(0) as usize;
+            let cap = gp.i(name!("iNumParticlesMax")).max(0) as usize;
             set.particles.truncate(cap);
             set.first_new = set.particles.len();
-            let env = EmitEnv { ctx, inst_start: self.start_ms, gate, dist, lod: gp.f("fLevelOfDetail"), free: 0 };
+            let env =
+                EmitEnv { ctx, inst_start: self.start_ms, gate, dist, lod: gp.f(name!("fLevelOfDetail")), free: 0 };
             for (ai, (ad, st)) in gd.actions.iter().zip(&mut self.actions[gi]).enumerate() {
                 let (per_local, per_world) = ad.kind.instancing_flags();
                 if !(first || (instancing == 1 && per_local) || (instancing == 2 && per_world)) {
                     continue;
                 }
                 let p = View::new(&ad.params, &w);
-                if !p.b("bActive") {
+                if !p.b(name!("bActive")) {
                     continue;
                 }
                 let ps = &mut set.particles;
@@ -339,7 +343,7 @@ impl EffectInstance {
                         }
                     }
                     Kind::Evolve => {
-                        let zero = p.i("iZeroVelocity") != 0;
+                        let zero = p.i(name!("iZeroVelocity")) != 0;
                         for q in ps.iter_mut() {
                             q.pos += q.vel * ctx.dt;
                             q.ori += q.ang_vel * ctx.dt;

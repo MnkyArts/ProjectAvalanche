@@ -15,7 +15,7 @@ pub mod script_tags;
 
 pub use added::*;
 pub use gestures::*;
-use script_tags::{LeftFlow, LeftSet, NodeScript, NodeTags, Script, ScriptQueue};
+use script_tags::{LeftFlow, LeftSet, NodeScript, NodeTags, Script, ScriptCalls, ScriptQueue};
 
 pub const RSTICK_ACTIVE: f32 = 0.3;
 pub const TWEAK_STICK_DEAD_ZONE: f32 = 0.1;
@@ -456,6 +456,7 @@ pub struct TrickState {
     pub node_tags: NodeTags,
     pub ride_tags: Option<NodeTags>,
     pub jump_tags: Option<NodeTags>,
+    pub riding_tags: Option<NodeTags>,
     pub left_sets: Vec<LeftSet>,
     pub scripts: ScriptQueue,
 }
@@ -503,6 +504,7 @@ impl Default for TrickState {
             node_tags: NodeTags::new(Node::AirStates.script()),
             ride_tags: None,
             jump_tags: None,
+            riding_tags: None,
             left_sets: Vec::new(),
             scripts: ScriptQueue::default(),
         }

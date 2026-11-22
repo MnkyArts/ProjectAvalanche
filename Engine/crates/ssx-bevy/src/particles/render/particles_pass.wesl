@@ -1,13 +1,9 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import package::render::post::post_common::{PostUniform, Exposure, hable};
-
-struct PassGlobals {
-    view_from_clip: mat4x4<f32>,
-    sizes: vec4<f32>,
-}
+import package::particles::render::particle_globals::Globals;
 
 @group(0) @binding(0) var<uniform> post: PostUniform;
-@group(0) @binding(1) var<uniform> pg: PassGlobals;
+@group(0) @binding(1) var<uniform> pg: Globals;
 @group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var src_sampler: sampler;
 @group(0) @binding(4) var<storage, read> exposure: Exposure;

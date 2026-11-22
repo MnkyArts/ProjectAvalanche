@@ -1,9 +1,3 @@
-pub fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
-    use serde::Deserialize;
-    serde::de::IgnoredAny::deserialize(d)?;
-    Ok(true)
-}
-
 pub fn old_member_note(present: bool) -> Option<String> {
     present.then(|| {
         format!(

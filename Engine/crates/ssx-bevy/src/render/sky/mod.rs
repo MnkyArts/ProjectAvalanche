@@ -177,7 +177,7 @@ fn texel(rgba: [u8; 4]) -> Image {
 
 pub struct SkyLoad {
     uniform: SkyUniform,
-    images: [(Image, Option<Recipe>); 3],
+    images: [crate::render::uploads::LevelImage; 3],
     midground: Option<midground::MidgroundLoad>,
     package: Option<package::PackageLoad>,
     pub status: String,
@@ -226,14 +226,29 @@ pub fn load(lighting: &GameLighting, root: &Path) -> Result<SkyLoad> {
         Some(p) => format!("{}\n{status}", p.status),
         None => status,
     };
-    Ok(SkyLoad { uniform, images: [density_img, normal_img, light_img], midground, package, status })
+    let images = [density_img, normal_img, light_img].map(|(i, r)| crate::render::uploads::LevelImage::built(i, r));
+    Ok(SkyLoad { uniform, images, midground, package, status })
+}
+
+impl SkyLoad {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for i in &mut self.images {
+            i.queue(uploads, images);
+        }
+        if let Some(m) = self.midground.as_mut() {
+            m.queue_images(uploads, images);
+        }
+        if let Some(p) = self.package.as_mut() {
+            p.queue_images(uploads, images);
+        }
+    }
 }
 
 pub fn insert(world: &mut World, load: SkyLoad) -> Result<()> {
     let [density, normal, light] = load.images;
     let mut images = world.get_resource_mut::<Assets<Image>>().context("no image assets")?;
-    let mut add = |(image, recipe): (Image, Option<Recipe>)| crate::render::reload::add(&mut images, image, recipe);
-    let (cloud_density, cloud_normal, light_texture) = (add(density), add(normal), add(light));
+    let (cloud_density, cloud_normal, light_texture) =
+        (density.into_handle(&mut images), normal.into_handle(&mut images), light.into_handle(&mut images));
     let settings = SkySettings {
         uniform: load.uniform,
         cloud_density,

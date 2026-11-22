@@ -6,7 +6,8 @@ use bevy::prelude::*;
 use ssx_assets::content::audio::{AudioScope, MusicDecision};
 use ssx_assets::musicbox::{LicensedMusic, MUSIC_SUBMIX_LEVEL, MusicBox, SongSwitches};
 use ssx_assets::sfx::frontend::{
-    BeatStatus, FlowInputs, FlowState, FrontEndMusic, GlobeWind, PostSlot, StateMsg, UiContext, UiSounds, post_index,
+    BeatStatus, FlowInputs, FlowState, FrontEndMusic, GlobeWind, HudPause, PostSlot, StateMsg, UiContext, UiSounds,
+    post_index,
 };
 use ssx_assets::sfx::movie::MovieAudio;
 use ssx_assets::sfx::music_pause::MusicPause;
@@ -112,6 +113,7 @@ struct FeSide {
     ui: UiSounds,
     posts: PostSlot,
     beat: Option<BeatStatus>,
+    hud_pause: HudPause,
     globe_wind: GlobeWind,
     music_pause: MusicPause,
 }
@@ -201,6 +203,7 @@ pub fn start(world: &mut World, data: Option<FrontEndAudioData>) {
         ui: UiSounds::default(),
         posts: PostSlot::default(),
         beat: None,
+        hud_pause: HudPause::default(),
         globe_wind: GlobeWind::default(),
         music_pause: MusicPause::default(),
     };
@@ -585,6 +588,9 @@ impl FrontEndAudio {
             }
             e.set_game_state(msg.state);
             e.game_result = msg.result;
+            if let Some(l) = side.hud_pause.state_message(e, msg.state) {
+                back_log!(back, info, "fe audio {l}");
+            }
             if let Some(l) = side.globe_wind.state_message(e, msg.wind)
                 && verbose
             {

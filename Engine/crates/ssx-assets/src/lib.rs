@@ -34,8 +34,8 @@ pub use anim::{
 };
 #[cfg(feature = "pipeline")]
 pub use audio::{
-    sfx, sfx_aems, sfx_avalanche, sfx_bus, sfx_dsp, sfx_dsp_remix, sfx_game, sfx_mixer, sfx_override, sfx_stream,
-    sfx_tuna,
+    sfx, sfx_aems, sfx_avalanche, sfx_bus, sfx_dsp, sfx_dsp_remix, sfx_game, sfx_mixer, sfx_override, sfx_queue,
+    sfx_stream, sfx_tuna,
 };
 #[cfg(feature = "pipeline")]
 pub use disc::folder;
@@ -46,7 +46,7 @@ pub use effects::{
     track_particles,
 };
 #[cfg(feature = "pipeline")]
-pub use landscape::{subdiv, terrain, terrain_material, terrain_vertex};
+pub use landscape::{lod, subdiv, terrain, terrain_material, terrain_vertex};
 #[cfg(feature = "pipeline")]
 pub use soundtrack::{
     music, music_script, musicbox, pathfinder, pathfinder_events, remix, remix_runtime, score, track_override,

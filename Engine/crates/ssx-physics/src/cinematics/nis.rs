@@ -109,9 +109,9 @@ impl IntroAssets {
             Scene::Ready { ticks } => ticks,
             Scene::Jump { ticks } => self.nis.jump_start + ticks,
         };
-        match self.scene(s).loop_end {
-            Some(end) if end > 0.0 => ticks.rem_euclid(end),
-            _ => ticks,
+        match &self.scene(s).looping {
+            Some(l) => l.time(ticks),
+            None => ticks,
         }
     }
 }
@@ -278,6 +278,8 @@ pub struct IntroState {
     ghost_bound: bool,
     hold: RoundHold,
     fresh: bool,
+    node_base: f32,
+    camera_wind: Option<f32>,
 }
 
 impl PartialEq for IntroState {
@@ -353,6 +355,8 @@ impl IntroState {
             ghost_bound,
             hold: RoundHold::Off,
             fresh: true,
+            node_base: 0.0,
+            camera_wind: world.survival.camera_nis_wind,
         })
         .map(|mut x| {
             x.update_ghost();
@@ -473,6 +477,7 @@ impl IntroState {
 
     fn enter_jump(&mut self, ticks: f32) {
         self.scene = Scene::Jump { ticks };
+        self.node_base = 0.0;
         self.go_pick();
         let jump = &self.assets.nis.jump;
         if let Some(t) = jump.node_tags.tuning_offset {
@@ -504,6 +509,7 @@ impl IntroState {
                 (Scene::Ready { ticks }, Some(len)) if len - ticks <= dt => {
                     self.update_fades((len - ticks).max(0.0));
                     let rest = dt - (len - ticks).max(0.0);
+                    self.node_base += len;
                     self.ready_rechoose(rest);
                     self.update_fades(rest);
                 }
@@ -624,6 +630,7 @@ impl IntroState {
 
     fn enter_cabin(&mut self, index: usize) {
         self.cabin = Some(CabinClock { index, ticks: 0.0 });
+        self.node_base = 0.0;
         let next = &self.assets.nis.cabin[index];
         if let Some(t) = next.tuning_offset {
             self.tuning = Vec3::from_array(t);
@@ -637,6 +644,7 @@ impl IntroState {
     fn enter_ready(&mut self, ticks: f32) {
         self.cabin = None;
         self.scene = Scene::Ready { ticks };
+        self.node_base = 0.0;
         let ready = &self.assets.nis.ready;
         if let Some(t) = ready.node_tags.tuning_offset {
             self.tuning = Vec3::from_array(t);

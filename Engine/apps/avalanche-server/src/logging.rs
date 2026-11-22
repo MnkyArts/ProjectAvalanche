@@ -15,6 +15,7 @@ use bevy::log::tracing_subscriber::Layer;
 use bevy::log::tracing_subscriber::fmt::MakeWriter;
 use bevy::log::tracing_subscriber::layer::{Context, Filter};
 use bevy::log::{BoxedFmtLayer, BoxedLayer, tracing_subscriber};
+use ssx_core::output::{Keep, Output, Running, Stream};
 
 pub const LOG_FOLDER: &str = "logs";
 
@@ -30,7 +31,49 @@ pub const LINE_BURST: f64 = 100.0;
 pub static SUPPRESSED_LINES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Resource, Clone)]
-pub struct LogFile(pub PathBuf);
+pub struct LogFile(pub Arc<FileLog>);
+
+pub struct FileLog {
+    output: Arc<Output>,
+    file: Arc<RotatingFile>,
+}
+
+pub struct LogWriters {
+    _stdout: Option<Running>,
+    _file: Option<Running>,
+}
+
+pub fn start(file: Option<&Path>) -> (LogWriters, Option<LogFile>) {
+    let stdout = match ssx_core::output::start() {
+        Ok(running) => Some(running),
+        Err(e) => {
+            eprintln!("log: the output's writer thread did not start ({e}): its lines are written where said");
+            None
+        }
+    };
+    match file.map(start_file) {
+        Some(Ok((running, log))) => (LogWriters { _stdout: stdout, _file: running }, Some(log)),
+        Some(Err(e)) => {
+            eprintln!("{e}; logging to stdout only");
+            (LogWriters { _stdout: stdout, _file: None }, None)
+        }
+        None => (LogWriters { _stdout: stdout, _file: None }, None),
+    }
+}
+
+fn start_file(path: &Path) -> Result<(Option<Running>, LogFile), String> {
+    let file =
+        Arc::new(RotatingFile::open(path).map_err(|e| format!("the log file {} does not open: {e}", path.display()))?);
+    let log = Arc::new(FileLog { output: Output::new(), file: Arc::clone(&file) });
+    let running = match log.output.start("server-log", move |_, bytes| file.write_line(bytes).map(|_| ())) {
+        Ok(running) => Some(running),
+        Err(e) => {
+            eprintln!("log: the log file's writer thread did not start ({e}): its lines are written where said");
+            None
+        }
+    };
+    Ok((running, LogFile(log)))
+}
 
 struct RateLimit {
     buckets: Mutex<HashMap<Identifier, (f64, Instant)>>,
@@ -105,11 +148,33 @@ impl RotatingFile {
     }
 }
 
-struct FileWriter(Arc<RotatingFile>);
+#[derive(Clone)]
+struct FileLines(Arc<FileLog>);
 
-impl Write for FileWriter {
+struct FileLine {
+    log: Arc<FileLog>,
+    keep: Keep,
+    line: Vec<u8>,
+}
+
+impl<'a> MakeWriter<'a> for FileLines {
+    type Writer = FileLine;
+
+    fn make_writer(&'a self) -> FileLine {
+        FileLine { log: Arc::clone(&self.0), keep: Keep::Always, line: Vec::new() }
+    }
+
+    fn make_writer_for(&'a self, meta: &Metadata<'_>) -> FileLine {
+        let droppable = *meta.level() > bevy::log::tracing::Level::WARN && meta.target() != crate::systems::CHAT_LOG;
+        let keep = if droppable { Keep::Droppable } else { Keep::Always };
+        FileLine { log: Arc::clone(&self.0), keep, line: Vec::new() }
+    }
+}
+
+impl Write for FileLine {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write_line(buf)
+        self.line.extend_from_slice(buf);
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -117,30 +182,24 @@ impl Write for FileWriter {
     }
 }
 
-#[derive(Clone)]
-struct MakeFileWriter(Arc<RotatingFile>);
-
-impl<'a> MakeWriter<'a> for MakeFileWriter {
-    type Writer = FileWriter;
-
-    fn make_writer(&'a self) -> FileWriter {
-        FileWriter(Arc::clone(&self.0))
+impl Drop for FileLine {
+    fn drop(&mut self) {
+        if self.line.is_empty() {
+            return;
+        }
+        let line = std::mem::take(&mut self.line);
+        if let Err(line) = self.log.output.line(Stream::Err, self.keep, line) {
+            let _ = self.log.file.write_line(&line);
+        }
     }
 }
 
 pub fn file_layer(app: &mut App) -> Option<BoxedLayer> {
-    let path = app.world().get_resource::<LogFile>()?.0.clone();
-    let file = match RotatingFile::open(&path) {
-        Ok(file) => file,
-        Err(e) => {
-            eprintln!("the log file {} does not open: {e}; logging to stdout only", path.display());
-            return None;
-        }
-    };
+    let log = Arc::clone(&app.world().get_resource::<LogFile>()?.0);
     let layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .fmt_fields(ssx_core::text::log::EscapedFields)
-        .with_writer(MakeFileWriter(Arc::new(file)))
+        .with_writer(FileLines(log))
         .with_filter(RateLimit::new(true));
     Some(Box::new(layer))
 }
@@ -152,7 +211,10 @@ pub fn stdout_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
         tracing_subscriber::fmt::layer()
             .with_ansi(ansi)
             .fmt_fields(ssx_core::text::log::EscapedFields)
-            .with_writer(std::io::stdout)
+            .with_writer(ssx_core::text::log::QueuedStdout)
             .with_filter(RateLimit::new(false)),
     ))
 }
+
+#[cfg(test)]
+mod tests;

@@ -19,6 +19,7 @@ pub mod resources;
 mod rounds;
 pub mod rules;
 pub mod scripts;
+pub mod stalls;
 mod systems;
 
 pub use app::{AppExtension, ServerOptions, ServerThread, StartError, Started, run, spawn};

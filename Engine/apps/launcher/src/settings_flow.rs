@@ -7,6 +7,7 @@ use ssx_assets::settings_file::UpdateError;
 
 use crate::app::Launcher;
 use crate::command::Invocation;
+use crate::jobs::Program;
 use crate::settings::Settings;
 use crate::ui::{theme, widgets};
 
@@ -160,7 +161,7 @@ impl SettingsSave {
 
 impl Launcher {
     pub fn settings_frame(&mut self, ctx: &egui::Context) {
-        let game_closed = self.started_game && self.viewer.as_ref().is_some_and(|v| v.status().is_some());
+        let game_closed = self.started.is_game() && self.viewer.as_ref().is_some_and(|v| v.status().is_some());
         if !self.displays.synced && game_closed && !self.settings_save.unsaved(&self.settings, &self.saved) {
             self.displays.synced = true;
             if let Err(e) = self.settings.reload(&mut self.saved) {
@@ -177,9 +178,9 @@ impl Launcher {
             ctx.request_repaint_after(after);
         }
         if !self.settings_save.unsaved(&self.settings, &self.saved)
-            && let Some((inv, game)) = self.start_after_save.take()
+            && let Some((inv, program)) = self.start_after_save.take()
         {
-            self.start(ctx, &inv, game);
+            self.start(ctx, &inv, program);
         }
     }
 
@@ -187,12 +188,12 @@ impl Launcher {
         self.settings_save.urgent = true;
     }
 
-    pub fn start_after_saving(&mut self, ctx: &egui::Context, inv: &Invocation, game: bool) -> bool {
+    pub fn start_after_saving(&mut self, ctx: &egui::Context, inv: &Invocation, program: Program) -> bool {
         if !self.settings_save.unsaved(&self.settings, &self.saved) {
             return false;
         }
         self.save_settings_now();
-        self.start_after_save = Some((inv.clone(), game));
+        self.start_after_save = Some((inv.clone(), program));
         ctx.request_repaint();
         true
     }

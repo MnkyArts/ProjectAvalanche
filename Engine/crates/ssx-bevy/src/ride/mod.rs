@@ -1,6 +1,7 @@
 use bevy::prelude::{
-    App, FixedUpdate, IntoScheduleConfigs, KeyCode, PostUpdate, PreUpdate, Quat, Resource, SystemSet, Update, Vec2,
-    Vec3, World, info, not, resource_exists, warn,
+    App, Assets, FixedUpdate, Image, IntoScheduleConfigs, KeyCode, PostUpdate, PreUpdate, Quat, Resource,
+    RunFixedMainLoop, RunFixedMainLoopSystems, SystemSet, Update, Vec2, Vec3, World, debug, info, not, resource_exists,
+    warn,
 };
 use ssx_assets::postfx_overlay::OverlayDrop;
 use ssx_physics::SIM_HZ;
@@ -13,7 +14,7 @@ use crate::rider::skin::LoadedRider;
 use crate::rider::visual::{self as rider_visual, LoadedBoard};
 pub use clock::PausedFrames;
 use clock::{fixed_step, frame_step, place_rider, report};
-use controls::{PadLock, late_controls, read_controls};
+use controls::{PadLock, latch_frame, latch_frame_end, viewer_key_presses};
 use draw::{
     animate_rider, draw_rail_debug, hide_viewer_hud, light_gear, outro_fade, screen_effects, shade_rider,
     spawn_outro_fade, terrain_ripple, toggle_viewer_hud, world_render,
@@ -28,14 +29,17 @@ mod draw;
 pub mod helicopter;
 mod hud;
 mod key_player;
+mod latch;
 pub mod live;
 mod map_intro;
+pub mod rumble;
 mod scripted;
 mod start;
 mod step;
 mod strip;
+mod tap_script;
+mod workers;
 
-pub use controls::read_live_controls;
 pub use draw::TerrainRipple;
 
 const TRIGGER_THRESHOLD: f32 = 0.5;
@@ -185,6 +189,7 @@ pub struct OutroRun {
 #[derive(Resource)]
 pub struct Ride {
     world: std::sync::Arc<PhysicsWorld>,
+    scripts_task: Option<bevy::tasks::Task<std::thread::Result<ssx_physics::session::ScriptsBuild>>>,
     spawn: (Vec3, Vec3),
     pub intro: Option<std::sync::Arc<ssx_physics::nis::IntroAssets>>,
     intro_short: Option<std::sync::Arc<ssx_physics::nis::IntroAssets>>,
@@ -239,6 +244,7 @@ pub struct Ride {
     pub last_exec: Option<Execution>,
     press_script: Option<(bool, f32, f32)>,
     r1: bool,
+    r3: bool,
     wingsuit_script: Option<(f32, f32)>,
     ws_pressed: Option<f32>,
     ws_deployed: Option<f32>,
@@ -265,6 +271,9 @@ pub struct Ride {
     flare_pushes: usize,
     viewer_keys: bool,
     a_lock: PadLock,
+    latch: latch::PadLatch,
+    flush_latch: bool,
+    step_read: bool,
     grind_since: Option<f32>,
     grind_ended: Option<f32>,
     messages_logged: f64,
@@ -275,11 +284,18 @@ pub struct Ride {
     pub chat_held: bool,
     pub pose_blocks: Option<ssx_physics::graph::LiveBlocks>,
     pub ghost_rumble: ssx_physics::graph::LandingRumble,
+    rumble: rumble::RumblePost,
     pub start_gate: live::StartGate,
     pub go_step: Option<u64>,
+    stream_start: Vec3,
+    stream_from_start: bool,
 }
 
 impl Ride {
+    pub fn stream_from_start(&self) -> Option<Vec3> {
+        self.stream_from_start.then_some(self.stream_start)
+    }
+
     pub fn sim_content_id(&self) -> Option<&str> {
         self.sim_content_id.as_deref()
     }
@@ -290,6 +306,27 @@ impl Ride {
 
     pub fn world(&self) -> &PhysicsWorld {
         &self.world
+    }
+
+    // PORT(choice): the objectives' sets A and B, the game start's other batches with the scene batch and the entities'
+    // controllers are built on a thread from the level's start (the spawn frame: the flag store seeded, the loading
+    // threads ended) instead of in the ride's first execution on the game thread, where they took 10.9–19.3 ms and made
+    // the ride's first frame 25–37 ms (alps0101, Mount Eddie, the heli scene, an online race; untraced, development
+    // laptop). The first execution takes the build only when it was made from its world, the session's inputs and the
+    // content state as they are then (`ScriptsBuild::made_from`), else builds them as before. The console built them in
+    // the first update of `FMGameScripting` (0x82379D40); its threads are not decoded.
+    pub fn build_scripts_ahead(&mut self) {
+        let inputs = ssx_physics::session::ScriptsInputs::of(&self.session);
+        let world = std::sync::Arc::clone(&self.world);
+        let pool = bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        self.scripts_task = Some(pool.spawn(async move {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let start = std::time::Instant::now();
+                let build = ssx_physics::session::ScriptsBuild::ahead(inputs, world);
+                info!("objectives: the level's scripts built ahead in {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+                build
+            }))
+        }));
     }
 
     pub fn event_def(&self) -> Option<&ssx_physics::event::EventDef> {
@@ -331,6 +368,10 @@ impl Ride {
         (self.render_time * SIM_HZ - (self.steps as f32 - 1.0)).clamp(0.0, 1.0)
     }
 
+    pub fn render_steps(&self) -> f32 {
+        self.steps as f32 - self.render_lag * SIM_HZ
+    }
+
     pub fn live_clock(&self) -> bool {
         matches!(self.clock, Clock::Fixed)
     }
@@ -365,6 +406,31 @@ pub struct RideLoad {
 }
 
 impl RideLoad {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        if let Some(b) = self.body.as_mut() {
+            b.queue_images(uploads, images);
+        }
+        if let Some(b) = self.board.as_mut() {
+            b.queue_images(uploads, images);
+        }
+        if let Some(a) = self.avalanche.as_mut() {
+            a.queue_images(uploads, images);
+        }
+    }
+
+    pub fn queue_post_images(
+        &mut self,
+        uploads: &mut crate::render::uploads::LevelUploads,
+        images: &mut Assets<Image>,
+    ) {
+        if let Some(Ok(o)) = self.overlay.as_mut() {
+            o.queue_images(uploads, images);
+        }
+        if let Some(Ok(t)) = self.topogrid.as_mut() {
+            t.queue_images(uploads, images);
+        }
+    }
+
     pub fn ride(&self) -> &Ride {
         &self.ride
     }
@@ -375,6 +441,12 @@ impl RideLoad {
 
     pub fn avalanche(&self) -> Option<&crate::render::avalanche::AvalancheScene> {
         self.avalanche.as_ref()
+    }
+
+    pub fn rider_effect_inputs(
+        &self,
+    ) -> Option<(&str, &ssx_assets::character::Loadout, &ssx_formats::crsf::SceneGraph)> {
+        self.body.as_ref().map(|b| (b.summary.as_str(), &self.ride.loadout, b.rig()))
     }
 
     pub fn heli_intro(&self) -> Option<std::sync::Arc<ssx_physics::nis::IntroAssets>> {
@@ -403,12 +475,24 @@ pub fn prepare(
     let board = setup.board.take();
     let mut body = setup.rider.take();
     let (load_secs, spawn, fly) = (setup.load_secs, setup.spawn, setup.fly_camera);
-    let ride = Ride::new(setup).context("no ground within 100 m below the spawn point")?;
+    let mut ride = Ride::new(setup).context("no ground within 100 m below the spawn point")?;
     let loadout = &ride.loadout;
     if let Some(b) = body.as_mut().filter(|_| *loadout != ssx_assets::character::Loadout::default()) {
         match b.dress(loadout) {
             Ok(()) => info!("Ride: dressed in {:?} {:?}", loadout.items, loadout.descriptions),
             Err(e) => warn!("Ride: the loadout's gear meshes failed ({e:#}); default outfit"),
+        }
+    }
+    // PORT(choice): the rider's graph builds the intro's graphs from the bundles read ahead (`start::read_ahead`) on
+    // the level's loading thread, not in the ride's first step (or a restart's) on the game thread, where its build
+    // took 36 ms of alps0101's first ride frame (58 ms) and 53 ms of Mount Eddie's (105 ms; development laptop,
+    // `trace_chrome`). The graph is the same one (built from the same bundles, NIS, rig, bind pose and float DOFs); the
+    // console's loader threads are not decoded.
+    if let Some(b) = body.as_mut() {
+        for intro in [ride.intro.as_ref(), ride.intro_short.as_ref()].into_iter().flatten() {
+            if let Err(e) = b.build_intro_ahead(intro) {
+                debug!("intro: its graph not built ahead ({e:#}): the step that binds it builds it");
+            }
         }
     }
     let s = &ride.world.survival;
@@ -418,17 +502,27 @@ pub fn prepare(
         (false, false, true) => OverlayDrop::Avalanche,
         _ => OverlayDrop::Default,
     };
-    let presets = match ride.world.survival.objectives.as_deref() {
+    let mut presets = match ride.world.survival.objectives.as_deref() {
         Some(d) => {
             let event = ride.session.event.setup.objectives.as_ref().map(|e| &e.scripts);
             ssx_physics::controllers::postfx_presets(d, event)
         }
         None => Vec::new(),
     };
+    let drop_postfx = lighting.and_then(|l| l.postfx.clone());
+    if let Some(name) = drop_postfx.as_ref().filter(|n| !presets.contains(n)) {
+        presets.push(name.clone());
+    }
     let goggles = ride.world.survival.goggles_preset.as_ref().map(|(_, state)| state);
     let (layers, topogrid) = match ssx_assets::postfx::LevelPresets::load(big_root, &presets) {
         Ok(p) => {
             let layers = crate::render::post::layers::load(&p);
+            ride.session.postfx = ssx_assets::postfx_state::PostFxService::new(layers.scene().layer_table());
+            if let Some(name) = drop_postfx.as_deref()
+                && ride.session.postfx.request(name, 0.0, 1.0).is_none()
+            {
+                warn!("post-FX: the drop's preset {name} names no layer (or did not load): the frame shows without it");
+            }
             let topogrid = crate::render::post::topogrid::load(big_root, layers.scene(), goggles);
             (Ok(layers), topogrid)
         }
@@ -519,13 +613,17 @@ pub fn insert(world: &mut World, r: RideLoad) -> anyhow::Result<()> {
 pub fn register(app: &mut App, hud: bool) {
     let riding = resource_exists::<Ride>;
     crate::shell::level::scoped::<key_player::TestPad>(app);
+    crate::shell::level::scoped::<tap_script::TapScript>(app);
+    rumble::register(app);
     app.add_observer(controls::pad_axes_as_read);
     app.init_resource::<PausedFrames>()
         .add_systems(FixedUpdate, fixed_step.in_set(RideStepSet).run_if(riding))
+        .add_systems(FixedUpdate, tap_script::steps.after(RideStepSet).run_if(riding))
         .add_systems(
             PreUpdate,
             (
                 key_player::test_pad.run_if(riding),
+                tap_script::inject.run_if(riding),
                 key_player::test_pad_end.run_if(not(riding)).run_if(resource_exists::<key_player::TestPad>),
             )
                 .before(bevy::input::InputSystems),
@@ -533,7 +631,7 @@ pub fn register(app: &mut App, hud: bool) {
         .add_systems(
             Update,
             (
-                read_controls,
+                viewer_key_presses,
                 frame_step.in_set(RideStepSet),
                 place_rider,
                 crate::render::avalanche::update,
@@ -549,7 +647,8 @@ pub fn register(app: &mut App, hud: bool) {
                 .chain()
                 .run_if(riding),
         )
-        .add_systems(PostUpdate, late_controls.run_if(riding))
+        .add_systems(RunFixedMainLoop, latch_frame.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop).run_if(riding))
+        .add_systems(PostUpdate, latch_frame_end.run_if(riding))
         .add_systems(Update, draw_rail_debug.after(place_rider).run_if(riding))
         .add_systems(Update, strip::capture.after(report).run_if(riding))
         .add_systems(Update, world_render.after(place_rider))

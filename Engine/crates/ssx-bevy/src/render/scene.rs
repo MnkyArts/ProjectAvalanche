@@ -44,7 +44,7 @@ fn cpu_clustering(settings: Option<ResMut<GlobalClusterSettings>>) {
     }
 }
 
-fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<WireframeConfig>) {
+pub(crate) fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<WireframeConfig>) {
     if keys.just_pressed(KeyCode::KeyF) {
         config.global = !config.global;
     }

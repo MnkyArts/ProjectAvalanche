@@ -164,6 +164,7 @@ pub struct DropSurvival {
     pub per_level: PerLevelMods,
     pub loadout: Option<crate::character::GearStats>,
     pub objectives: Option<std::sync::Arc<crate::objectives::DropScripts>>,
+    pub camera_nis_wind: Option<f32>,
 }
 
 impl Default for DropSurvival {
@@ -187,6 +188,7 @@ impl Default for DropSurvival {
             per_level: PerLevelMods::default(),
             loadout: None,
             objectives: None,
+            camera_nis_wind: None,
         }
     }
 }
@@ -274,6 +276,7 @@ pub struct SurvivalState {
     pub oxygen_tank: f32,
     pub oxygen_use_requested: bool,
     pub low_oxygen: bool,
+    pub oxygen_pad: OxygenPad,
     pub temperature_enabled: bool,
     pub head_lamp_battery: f32,
     pub pulse_goggles_battery: f32,
@@ -312,12 +315,25 @@ impl Default for SurvivalState {
             oxygen_tank: 1.0,
             oxygen_use_requested: false,
             low_oxygen: false,
+            oxygen_pad: OxygenPad::default(),
             temperature_enabled: false,
             head_lamp_battery: 1.0,
             pulse_goggles_battery: 1.0,
             ice_axe_effectiveness: 1.0,
             lap_count: 0,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OxygenPad {
+    pub use_oxygen: bool,
+    pub use_oxygen_classic: bool,
+}
+
+impl OxygenPad {
+    pub fn requested(&self, classic: bool) -> bool {
+        if classic { self.use_oxygen_classic } else { self.use_oxygen }
     }
 }
 

@@ -62,6 +62,12 @@ impl RiderSounds {
         sfx.remix_race_start();
     }
 
+    pub fn nis_state(&mut self, sfx: &mut SfxEngine, state: u8) {
+        if matches!(state, 2 | 3) {
+            sfx.fire_event("Stop_DD_NIS", &[]);
+        }
+    }
+
     pub fn shutdown(&mut self, sfx: &mut SfxEngine) {
         sfx.fire_event("trigger_STOP_Trick_SFX", &[]);
         sfx.remix_run(false);

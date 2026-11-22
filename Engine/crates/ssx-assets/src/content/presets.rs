@@ -271,6 +271,7 @@ impl GameContent {
                     cube: ColourCube { texels },
                     stages: vec![format!("the cube {cube}")],
                     needs_second_lut: false,
+                    strip: true,
                 }
             }
             None if colour_cubes == disc.colour_cubes => build.clone(),

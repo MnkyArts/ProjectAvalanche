@@ -158,6 +158,9 @@ fn inputs(p: vec3<f32>, color: vec4<f32>, uv: vec2<f32>, uv_b: vec2<f32>) -> Inp
     t.w_snow = color;
     t.cov = 2.0 * uv.x - 1.0;
     let code = u32(round(uv_b.y));
+@if(SSX_TERRAIN_SIMPLE)
+    t.group = 3u;
+@else
     t.group = u32(round(terrain.snow_fall.w));
     t.base_bits = (code >> 12u) & 3u;
     if t.group == 1u {
@@ -170,6 +173,9 @@ fn inputs(p: vec3<f32>, color: vec4<f32>, uv: vec2<f32>, uv_b: vec2<f32>) -> Inp
     }
     if t.group == 2u {
         t.has_snow = false;
+    }
+    if t.group == 3u {
+        t.has_snow = true;
     }
     t.b = uv.y;
     if t.base_bits == 1u {
@@ -190,6 +196,9 @@ fn inputs(p: vec3<f32>, color: vec4<f32>, uv: vec2<f32>, uv_b: vec2<f32>) -> Inp
     if terrain.snow_blend.w == 0.0 {
         t.fade_snow = 1.0;
         t.fade_base = 1.0;
+    }
+    if t.group == 3u {
+        t.fade_snow = 0.0;
     }
     return t;
 }

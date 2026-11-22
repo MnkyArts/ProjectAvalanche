@@ -7,7 +7,7 @@ use bevy::render::render_resource::*;
 use bevy::render::renderer::RenderDevice;
 use bevy::shader::{Shader, ShaderDefVal};
 
-use super::{COLOUR_FORMAT, DEPTH_COPY_FORMAT, DEPTH_FORMAT, DrawUniform, Globals, PassGlobals};
+use super::{COLOUR_FORMAT, DEPTH_COPY_FORMAT, DEPTH_FORMAT, DrawUniform, Globals};
 use crate::render::post::PostUniform;
 
 #[derive(Resource)]
@@ -140,7 +140,7 @@ pub(super) fn init_pipelines(
             ShaderStages::FRAGMENT,
             (
                 uniform_buffer::<PostUniform>(false),
-                uniform_buffer::<PassGlobals>(false),
+                uniform_buffer::<Globals>(false),
                 texture_2d(float),
                 sampler(SamplerBindingType::Filtering),
                 storage_buffer_read_only_sized(false, None),

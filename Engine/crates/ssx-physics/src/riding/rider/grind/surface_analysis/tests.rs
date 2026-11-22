@@ -236,6 +236,8 @@ fn the_fused_rasteriser_is_the_plain_one() {
     let cl = crate::collision::Cluster {
         min: Vec3::splat(-12.0),
         max: Vec3::splat(12.0),
+        entry_min: Vec3::splat(-12.0),
+        entry_max: Vec3::splat(12.0),
         vert_start: 0,
         vert_count: n as u16,
         tri_start: 0,

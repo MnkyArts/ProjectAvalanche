@@ -8,7 +8,7 @@ import bevy_pbr::render::{
 import package::render::lighting::game_lighting as gl;
 import package::rider::character_normal::{
     params, rider, normal_map, character_sampler, rider_dynamic, rider_shadow_point,
-    HAIR, EYE, APPAREL, BOARD, SECONDARY, ps5_alpha, ps5_normal, holo_on, holo_nz, holo_kill,
+    HAIR, EYE, APPAREL, BOARD, SECONDARY, ps5_alpha, ps5_normal, holo, holo_on, holo_nz, holo_kill,
 };
 
 @if(SSX_LOCAL_LIGHTS)
@@ -17,6 +17,7 @@ var<private> light: gl::GameLight;
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> light: gl::GameLight;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var specular_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var ambient_map: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var<storage, read> level: gl::LevelLight;
 
 fn pow_safe(x: f32, y: f32) -> f32 {
     return exp2(y * log2(max(x, 1e-7)));
@@ -78,10 +79,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         holo_kill(nz);
         let ndc_x = (in.position.x - view.viewport.x) / view.viewport.z * 2.0 - 1.0;
         let scan = 2.0 * abs(fract(60.0 * ndc_x) - 0.5);
-        if params.holo.y > 0.0 && 1.4 * params.holo.y > 0.3 + nz {
+        let h = holo();
+        if h.y > 0.0 && 1.4 * h.y > 0.3 + nz {
             holo_add = params.holo_bloom.rgb * scan;
         }
-        holo_glow = (params.holo.x + params.holo.y) * scan * scan * scan;
+        holo_glow = (h.x + h.y) * scan * scan * scan;
     }
 
     let v = gl::to_eye(p);
@@ -94,11 +96,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if effect != SECONDARY {
         pst = player_shadow_test(in.position.xy);
     }
-    let rim_dir = normalize((view.world_from_view * vec4(rider.rim_dir.xyz, 0.0)).xyz);
-    let rim_base = rider.rim_color.w * pow_safe(saturate((1.0 - abs(dot(n, v))) * (1.0 + rider.rim.y)), rider.rim.x);
-    let rim_offset = 1.0 + rider.rim.w * (pow_safe(dot(n, rim_dir) * 0.5 + 0.5, rider.rim.z) - 1.0);
-    let rim = rim_base * rim_offset * (1.0 + rider.rim_dir.w * (pst - 1.0));
-    let fill = rider.fill_color.w * saturate(dot(n, rider.fill_dir.xyz)) * (1.0 + rider.fill_dir.w * (pst - 1.0));
+    let preset = level.rim_fill;
+    let rim_dir = normalize((view.world_from_view * vec4(preset.rim_dir.xyz, 0.0)).xyz);
+    let rim_base = preset.rim_color.w * pow_safe(saturate((1.0 - abs(dot(n, v))) * (1.0 + preset.rim.y)), preset.rim.x);
+    let rim_offset = 1.0 + preset.rim.w * (pow_safe(dot(n, rim_dir) * 0.5 + 0.5, preset.rim.z) - 1.0);
+    let rim = rim_base * rim_offset * (1.0 + preset.rim_dir.w * (pst - 1.0));
+    let fill = preset.fill_color.w * saturate(dot(n, preset.fill_dir.xyz)) * (1.0 + preset.fill_dir.w * (pst - 1.0));
 
     let dyn_ao = rider_dynamic().x;
     let albedo = d.rgb * d.rgb + holo_add;
@@ -108,11 +111,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if effect == HAIR {
         let tint = mix(light.ramp_shade.rgb, vec3(1.0), ao_map * ao_map);
         let spec = (si * s) * (si * s);
-        col = albedo * tint * (lit.rgb + rim * rider.rim_color.rgb + fill * rider.fill_color.rgb) + spec * spec_light;
+        col = albedo * tint * (lit.rgb + rim * preset.rim_color.rgb + fill * preset.fill_color.rgb) + spec * spec_light;
     } else if effect == EYE {
         let tint = mix(light.ramp_shade.rgb, vec3(1.0), ao_map * ao_map * dyn_ao);
         let spec = (si * s.g) * (si * s.g);
-        col = albedo * tint * (lit.rgb + fill * rider.fill_color.rgb) + spec * spec_light * dyn_ao;
+        col = albedo * tint * (lit.rgb + fill * preset.fill_color.rgb) + spec * spec_light * dyn_ao;
     } else {
         let tint = mix(light.ramp_shade.rgb, vec3(1.0), dyn_ao);
         let spec = (si * s.g) * (si * s.g);
@@ -120,7 +123,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         if effect == BOARD {
             rim_light = rim * params.board.x;
         }
-        col = albedo * tint * (lit.rgb + rim_light * rider.rim_color.rgb + fill * rider.fill_color.rgb)
+        col = albedo * tint * (lit.rgb + rim_light * preset.rim_color.rgb + fill * preset.fill_color.rgb)
             + spec * spec_light * dyn_ao;
         if effect == APPAREL {
             col += params.glow.rgb * glow_mask * rider_dynamic().y / max(light.misc.y, 1e-6);

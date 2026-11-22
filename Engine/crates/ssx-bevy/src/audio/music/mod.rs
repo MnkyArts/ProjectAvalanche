@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
@@ -11,6 +10,7 @@ use ssx_assets::musicbox::{LicensedMusic, MusicBox, Playlist, RaceType, SongSwit
 use ssx_assets::sfx::output::{MixQueue, Output, Scheduling, mix_queue};
 pub use ssx_assets::sfx::output::{discard, stats};
 use ssx_assets::sfx::{MusicSource, OutputMix};
+use ssx_assets::sfx_queue::{self, Receiver, Sender};
 
 use crate::ride::Ride;
 
@@ -121,7 +121,7 @@ struct AudioReplies(Mutex<Receiver<Reply>>);
 fn apply_replies(world: &mut World) {
     let replies: Vec<Reply> = world
         .get_resource::<AudioReplies>()
-        .and_then(|r| r.0.lock().ok().map(|rx| rx.try_iter().collect()))
+        .and_then(|r| r.0.lock().ok().map(|mut rx| rx.try_iter().collect()))
         .unwrap_or_default();
     for r in replies {
         r(world);
@@ -133,7 +133,7 @@ pub fn output(app: &mut App) -> GameAudio {
         return g.clone();
     }
     let (queue, inbox) = mix_queue();
-    let (tx, rx) = channel();
+    let (tx, rx) = sfx_queue::queue();
     let g = GameAudio { queue, back: Back(tx) };
     app.insert_resource(g.clone()).insert_resource(AudioReplies(Mutex::new(rx))).add_systems(First, apply_replies);
     match Output::start(OutputMix::new(None, RATE, None), inbox, None, Scheduling::Audio) {
@@ -253,6 +253,12 @@ pub fn load_level_event(
             ssx_core::eprintln!("warning: music unavailable: {e:#}");
             None
         }
+    }
+}
+
+impl MusicLevel {
+    pub fn remix_event_type(level: Option<&MusicLevel>, world: &World) -> Option<i32> {
+        level.filter(|_| world.contains_resource::<GameAudio>()).map(|l| l.remix_type)
     }
 }
 

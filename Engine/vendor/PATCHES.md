@@ -4,7 +4,7 @@ Each directory here is a crate exactly as published on crates.io (the `.crate` c
 `Cargo.toml.orig`, `Cargo.lock`, `.cargo_vcs_info.json`) plus the patches listed below, and nothing else. The
 workspace uses them through `[patch.crates-io]` in `Engine/Cargo.toml`; they are not workspace members (`exclude`), so
 our formatting, lints and tests do not run on them. Every patched place carries a comment that starts with
-`Project Avalanche patch` and names its patch (T1…T24 below).
+`Project Avalanche patch` and names its patch (T1…T26 below).
 
 **Licenses.** lightyear and bevy_replicon are MIT OR Apache-2.0. lightyear's published crates carry no license file;
 each lightyear directory holds `LICENSE-MIT` and `LICENSE-APACHE` from the lightyear repository at the commit the
@@ -46,8 +46,8 @@ again (or drops it if the release has an equivalent fix); the line numbers below
 | `lightyear_core` 0.31.0 | T10 |
 | `bevy_replicon` 0.45.2 | T12, T14 |
 | `rav1d` 1.1.0 | T17, T18 |
-| `gilrs` 0.11.2 | T19, T20, T22, T23, T24 |
-| `gilrs-core` 0.6.8 | T21 |
+| `gilrs` 0.11.2 | T19, T20, T22, T23, T24, T25 (tests), T26 |
+| `gilrs-core` 0.6.8 | T21, T25, T26 (the Wine check) |
 
 ## T1 — fragment reassembly is bounded (`lightyear_transport`)
 
@@ -498,6 +498,77 @@ identical. Linux rows 718 → 749 (rows with a GUID 717 → 748): 32 added, 40 c
 `every_bundled_linux_row_is_read` parses every Linux row with gilrs' own parser (749 of 749; before the refresh the same
 count gave 718 of 718).
 
+## T25 — the Windows.Gaming.Input backend loses no change and survives a failed read (`gilrs-core`)
+
+**Why.** Issue #108 (a DualSense on Windows, through Steam Input: presses needed twice, triggers read as held). The
+WGI backend's thread polls every controller every 8 ms. gilrs-core 0.6.8 swapped its two readings before it looked at
+the timestamp, so a reading it skipped for an unchanged timestamp became the base of the next comparison: a press or a
+release that reading carried was never reported, and a controller whose timestamp stays 0 reported nothing at all (SDL
+commit 1cdd6dc8, "Fixed reading input from the Razer Atrox Arcade Stick using Windows Gaming Input": such devices
+exist). A failed read was compared all the same, against the buffer of two polls before (a release and a new press
+that never happened), and logged at every poll; a failed first reading unwrapped and ended the thread, and with it
+every pad's input. SDL 3.4.20 takes a reading when its timestamp is 0 or differs from the last taken one and sends each
+value against its own state (`WGI_JoystickUpdate`, `src/joystick/windows/SDL_windows_gaming_input.c:856`).
+
+**What.** `src/wgi_reading.rs` (new; compiled for the WGI backend and for tests on every platform): `Readings` keeps
+the last taken reading and the poll's buffer; `poll` takes a reading as SDL does and hands it to the comparison with
+the last taken one, which then becomes the base; a skipped reading or a failed read changes nothing. A raw controller's
+GUID (`raw_controller_guid`) and axis value (`raw_axis_value`) moved there unchanged from the backend, so their tests
+run here. `src/platform/windows_wgi/gamepad.rs`: the thread uses `Readings`; a failed first reading is tried again at
+the next poll; a failing read is logged once a minute (as the thread already logged a failing id). Not changed: the
+first reading is still the base and reported as nothing; WGI's all-zero reading when the window loses focus is reported
+as values (SDL recentres such a controller, `SDL_windows_gaming_input.c:862-873`, to each axis' zero, which it
+tracks per axis: `SDL_PrivateJoystickForceRecentering`, `SDL_joystick.c:2439-2468`, the zero 2517-2527; recorded in
+`Docs/research/controller-input.md` 2026-11-20 as open).
+
+**Tests.** gilrs-core: the change carried by a reading with an unchanged timestamp (press and release), a controller
+whose timestamp stays 0, a failed read, an unchanged reading; the GUIDs of the DualSense, the DualSense Edge and both
+DualShock 4 models (the database's Windows rows), equal to gilrs-core 0.6.8's expression for 42 vendor/product pairs;
+the axis range. gilrs: the bundled Windows rows of the DualSense and the Edge bind SDL 3.4.20's own WGI indices
+(`SDL_gamepad_db.h:43`: Cross b1 = South, Circle b2, Square b0, Triangle b3, L2/R2 a3/a4, the right stick a2/a5, the
+d-pad hat 0), and a trigger at rest reads 0 through both WGI ranges.
+
+## T26 — gilrs does not offer the gamepads SDL's environment variables exclude (`gilrs`; the Wine check in `gilrs-core`)
+
+**Why.** Steam Input reads a physical pad itself and offers it again as its virtual pad (Steam Virtual Gamepad,
+28de:11ff). It tells the games it starts which pads to leave alone through SDL's variables
+(`SDL_GAMECONTROLLER_IGNORE_DEVICES`, `…_EXCEPT`, `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD`; Valve: SDL 2.0.8 or
+later "allows Steam to tell SDL to ignore input for controllers configured by Steam Input, which avoids double-input
+bugs"). gilrs read none of them: a pad that both the OS and Steam list was read twice (issue #108).
+
+**What.** `src/ignore.rs` ports SDL 3.4.20's rule (`SDL_ShouldIgnoreGamepad`, `src/joystick/SDL_gamepad.c:3260-3319`,
+after its name words): under Wine with Steam's permission every pad is read (`WIN_IsWine`, Windows only); Steam's
+virtual gamepad (`SDL_IsJoystickSteamVirtualGamepad`, `SDL_joystick.c:3272-3279`: 28de:11ff, on macOS 045e:028e with
+version 0) only with `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD` on (`SDL_GetStringBoolean`); then, if `…_EXCEPT`
+names any pad, only the pads it names; else not the pads `SDL_GAMECONTROLLER_IGNORE_DEVICES` names. The lists are read
+as SDL reads them (`SDL_LoadVIDPIDListFromHint`, `SDL_joystick.c:3876-3915`: `@file`, each "0x" a number as `strtol`
+reads it, cut to 16 bits, up to the first NUL). `src/gamepad.rs`: the variables are read once when gilrs starts and one
+log line says what they held; a gamepad's data decides at its `Connected` (and at start); a gamepad SDL would not open
+is never offered (`gamepads()`, `connected_gamepad()`), its events are dropped before the application sees them (no
+`Connected`, no input, no `Disconnected`; a blocking wait keeps its timeout), it gets no mapping and no force feedback,
+and one log line says why. The backend lists and reads it as before (gilrs-core opens every joystick node read-only,
+without a grab; WGI lists every controller): gilrs drops what it reports. Every gamepad now gets one log line on every
+platform: its name, GUID, vendor, product and mapping (on Linux T23's line; elsewhere new, where gilrs 0.11.2 only
+warned about a GUID without a row). gilrs-core's `utils::is_wine()` is SDL's `WIN_IsWine`
+(`src/core/windows/SDL_windows.c:335-351`: ntdll.dll exports `wine_get_version`), asked once and only when Steam's
+permission is on, as SDL asks it.
+
+Port choice, marked `PORT(choice):` at its place: a list longer than 64 KiB, or an `@file` that is not a regular file,
+is not read and the log says so (SDL reads any length and any file; Steam's list holds 13 bytes per pad). Not ported:
+SDL's name words (" Motion Sensors", "Keyboard", …: SDL matches them against its own name of the device, which comes
+from its controller table, `GuessControllerName`) and `SDL_ShouldIgnoreJoystick`'s list of VID/PIDs that are no gamepads
+(`blacklist_devices`, the ROG mice); which devices are joysticks at all is gilrs-core's (udev's `ID_INPUT_JOYSTICK` on
+Linux, WGI's controller list on Windows). Recorded as open for the user in `Docs/research/controller-input.md`
+(2026-11-20).
+
+**Tests.** Steam's lists (one pad, two, spaces and upper-case digits); SDL's corners (upper-case "0X", a vendor without
+a product, "0x" without a digit, the 16-bit cut, `strtol`'s overflow at the platform's `long`, the NUL); hostile lists
+at the size limit (pseudo-random bytes, "0x" repeated, digits without end, 8192 entries); a value over the limit; a list
+file (read, missing, a folder, too long); Steam's permission ("0", "0x1", "false", "FALSE", "" off; "1", "yes", "true",
+"on" on); Steam's environment (its pad read, the DualSense not, another pad read); the except list (alone it decides;
+Steam's pad by its own variable; a list with no entry is none); Wine (every pad read; not asked without Steam's
+permission); the log line; a GUID's version.
+
 ## Tests of the patched crates
 
 gilrs (2026-11-10, `Game-Data/Converted/handoff/nacon-v032/vendor-tests.log`):
@@ -522,6 +593,17 @@ and analog; hat 1 as the shoulders; Sony's face buttons, xpad's d-pad buttons an
 (749 of 749 Linux rows). Before the refresh the same read gave 718 of 718. T21 has no unit test of its own (its facts
 come from ioctls and udev); the `/dev/uinput` pads in `Docs/research/controller-input.md` exercise it on devices the
 kernel made.
+
+gilrs and gilrs-core (2026-11-20, round `pad1`, T25 and T26; `Game-Data/Converted/handoff/pad1/vendor_tests.txt`, the
+same two commands): gilrs-core **7 passed** (T25's six on the WGI reading run on every platform: the GUIDs of Sony's
+pads as the database's Windows rows and as 0.6.8 built them for 42 vendor / product pairs, the raw axis' range, the take
+rule: a change under an unchanged timestamp, timestamp 0, a failed read, no change), gilrs **39 passed** (T26's eleven:
+Steam's lists read as SDL reads them, the corners of `strtol`, hostile lists without a panic, the 64 KiB limit, `@file`,
+Steam's virtual pad, the EXCEPT list, Wine, the log line, the GUID's version; T25's trigger at rest on the WGI ranges;
+the DualSense's Windows rows against SDL's WGI row), warning-free. Clippy over both crates standalone (`--lib --tests`,
+Linux and `x86_64-pc-windows-gnu`; `vendor_clippy_*.txt` beside the record): none in this round's lines (its one, the
+Wine check's export name, is a `c""` literal since); gilrs' others are older: `build.rs:47` and
+`src/mapping/automatic.rs:534` on both, `src/gamepad.rs:302` on Windows only (T23's hat value, `None` there).
 
 Each crate's own tests, run standalone with the features the workspace uses, each against the other patched crates
 (`Game-Data/Converted/handoff/net0/d19/vendor_tests.txt`): `lightyear_transport` 76 + 1 (85 + 1 with `compression_lz4`;

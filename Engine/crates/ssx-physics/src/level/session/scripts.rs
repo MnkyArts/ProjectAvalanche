@@ -1,4 +1,6 @@
 use super::*;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 impl Session {
     pub fn update_objectives(&mut self, s: &mut RiderState, w: &World, nis_active: bool, dt_s: f32) {
@@ -45,7 +47,7 @@ impl Session {
             tutorial: Some(t),
             unapplied: &mut o.unapplied,
             nis: &self.nis_events,
-            postfx: &mut o.postfx,
+            postfx: &mut self.postfx,
             backwards: self.rewind_backwards,
             stats: &mut self.stats,
             ui_flags: &self.ui_flags,
@@ -71,53 +73,26 @@ impl Session {
         if !self.objectives_loaded {
             self.nis_events = crate::nis_events::NisEvents::new(w.tuning.posted_events.clone());
             self.objectives_loaded = true;
-            let event = self.event.setup.objectives.as_ref().map(|e| &e.scripts);
-            let batch = match (&w.survival.objectives, event) {
-                (Some(d), e) => d.level_batch(e),
-                (None, Some(e)) => e.batch(),
-                (None, None) => Vec::new(),
+            let build = match self.scripts_ahead.take() {
+                Some(b) if b.made_from(self, w) => {
+                    self.scripts_built_ahead = true;
+                    b
+                }
+                _ => ScriptsBuild::build(ScriptsInputs::of(self), w),
             };
-            let root = w
-                .survival
-                .objectives
-                .as_ref()
-                .and_then(|d| d.root.clone())
-                .or_else(|| event.and_then(|e| e.root.clone()));
-            if !batch.is_empty() {
-                let event_type = self.event.setup.event_type.map(|t| t as i32);
-                let (slots, log) = (w.survival.slots, self.objectives_log);
-                let drop = w.survival.objectives.as_deref();
-                let game = drop.map_or_else(Vec::new, |d| d.named(&crate::objectives::GAME_SCRIPTS));
-                self.stats.level_start(&slots, event_type);
-                let seed: Vec<u32> = self.named_flag_seed.iter().copied().collect();
-                let message = self.event.setup.message.clone();
-                let load = crate::objectives::LoadWorld { slots, event_type, message, effects: Vec::new() };
-                let mut o = crate::objectives::LevelObjectives::load(&game, &batch, load, log, root.as_deref(), &seed);
-                if let Some(h) = self.heli_jump.as_mut()
-                    && o.nis_built.contains(ssx_assets::nis::HELI_GRAB_OUTRO_BINDING)
-                    && let Err(e) = h.read_outro_ahead()
-                {
-                    o.report.problems.push(format!("the heli grab's outros: {e:#}"));
-                }
-                self.objectives = Some(o);
-                if let Some(d) = drop {
-                    let scripts = crate::objectives::LevelScripts::load(d, event);
-                    let mut c = crate::controllers::Controllers::load(
-                        &scripts.state_sets,
-                        &scripts.scene,
-                        &scripts.schemas,
-                        &w.triggers,
-                        w.survival.head_lamp_scale,
-                    );
-                    c.log = self.controllers_log.then(Vec::new);
-                    for e in &self.named_entities {
-                        if let Some(x) = e.controller() {
-                            c.add_entity(x);
-                        }
-                    }
-                    self.controllers = Some(c);
-                    self.scripts = Some(std::sync::Arc::new(scripts));
-                }
+            let Some(Built { mut objectives, scripts }) = build.built else { return };
+            let event_type = self.event.setup.event_type.map(|t| t as i32);
+            self.stats.level_start(&w.survival.slots, event_type);
+            if let Some(h) = self.heli_jump.as_mut()
+                && objectives.nis_built.contains(ssx_assets::nis::HELI_GRAB_OUTRO_BINDING)
+                && let Err(e) = h.read_outro_ahead()
+            {
+                objectives.report.problems.push(format!("the heli grab's outros: {e:#}"));
+            }
+            self.objectives = Some(objectives);
+            if let Some((scripts, c)) = scripts {
+                self.controllers = Some(c);
+                self.scripts = Some(scripts);
             }
         }
     }
@@ -199,6 +174,13 @@ impl Session {
                 }
             }
         }
+        if let Some(d) = s.pin.as_mut() {
+            let signals = crate::driver::PinSignals { position: s.traj_cached, orientation: s.traj_orientation };
+            if let Some((p, q)) = d.update(dt, signals) {
+                s.traj = p.unwrap_or(s.traj);
+                s.traj_orientation = q.unwrap_or(s.traj_orientation);
+            }
+        }
         let Some(d) = s.attachment.as_mut() else { return };
         let (Some(Animatable::Helicopter), Some(h)) = (s.target_animatable, heli) else { return };
         let heli_rig = ssx_assets::nis::HELI_RIG;
@@ -238,12 +220,164 @@ impl Session {
             tutorial: self.tutorial.as_mut(),
             unapplied: &mut o.unapplied,
             nis: &self.nis_events,
-            postfx: &mut o.postfx,
+            postfx: &mut self.postfx,
             backwards: self.rewind_backwards,
             stats: &mut self.stats,
             ui_flags: &self.ui_flags,
             presentation: &mut self.presentation,
         };
         o.runner.restart_set(crate::objectives::SetId::Level, &mut world);
+    }
+}
+
+// PORT(choice): a caller may build it ahead on another thread ([`ScriptsBuild::ahead`], `Session::scripts_ahead`);
+// the level's first execution takes it only when it was made from the world the execution gets (the same shared
+// world, which nothing changes while it is shared), from the session's inputs as they are then and under the content
+// state the NIS bindings are read under then (the data folder's generation and simulation policy, unchanged during
+// the build), else builds it as before, so the objects are the same. Built in that execution it took 10.9–19.3 ms
+// (alps0101, Mount Eddie, the heli scene, an online race; the objectives' sets A and B 6.9–12.8 ms, the batches
+// 2.2–4.0, the controllers 1.6–3.5; untraced, development laptop). The console built them in the first update of
+// `FMGameScripting` (0x82379D40). The Lua VM's one thread state is `math.random`'s generator, which no disc or DLC
+// script calls; the build draws nothing from the game's global generator.
+#[derive(Clone)]
+pub struct ScriptsBuild {
+    inputs: ScriptsInputs,
+    ahead: Option<Ahead>,
+    built: Option<Built>,
+}
+
+impl std::fmt::Debug for ScriptsBuild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ahead = self.ahead.as_ref().map(|a| (Arc::as_ptr(&a.world), &a.content));
+        f.debug_struct("ScriptsBuild")
+            .field("inputs", &self.inputs)
+            .field("ahead", &ahead)
+            .field("built", &self.built)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+struct Ahead {
+    world: Arc<World>,
+    content: Option<ContentRead>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ContentRead {
+    root: Option<std::path::PathBuf>,
+    state: Option<(u64, ssx_content::policy::ClientMods)>,
+}
+
+impl ContentRead {
+    fn now(root: Option<std::path::PathBuf>) -> Self {
+        let state = root.as_deref().map(|r| {
+            let content = ssx_assets::content::GameContent::of(r);
+            (content.generation(), content.sim_policy())
+        });
+        Self { root, state }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Built {
+    objectives: crate::objectives::LevelObjectives,
+    scripts: Option<(Arc<crate::objectives::LevelScripts>, crate::controllers::Controllers)>,
+}
+
+impl ScriptsBuild {
+    pub fn ahead(inputs: ScriptsInputs, w: Arc<World>) -> Self {
+        let before = ContentRead::now(Self::root(&inputs, &w));
+        let mut b = Self::build(inputs, &w);
+        let content = (ContentRead::now(before.root.clone()) == before).then_some(before);
+        b.ahead = Some(Ahead { world: w, content });
+        b
+    }
+
+    fn root(inputs: &ScriptsInputs, w: &World) -> Option<std::path::PathBuf> {
+        let event = inputs.event.as_ref().map(|e| &e.scripts);
+        w.survival.objectives.as_ref().and_then(|d| d.root.clone()).or_else(|| event.and_then(|e| e.root.clone()))
+    }
+
+    fn build(inputs: ScriptsInputs, w: &World) -> Self {
+        let event = inputs.event.as_ref().map(|e| &e.scripts);
+        let drop = w.survival.objectives.as_deref();
+        let batch = match (drop, event) {
+            (Some(d), e) => d.level_batch(e),
+            (None, Some(e)) => e.batch(),
+            (None, None) => Vec::new(),
+        };
+        if batch.is_empty() {
+            return Self { inputs, ahead: None, built: None };
+        }
+        let root = Self::root(&inputs, w);
+        let game = drop.map_or_else(Vec::new, |d| d.named(&crate::objectives::GAME_SCRIPTS));
+        let seed: Vec<u32> = inputs.seed.iter().copied().collect();
+        let (slots, event_type, message) = (w.survival.slots, inputs.event_type, inputs.message.clone());
+        let load = crate::objectives::LoadWorld { slots, event_type, message, effects: Vec::new() };
+        let log = inputs.objectives_log;
+        let objectives = crate::objectives::LevelObjectives::load(&game, &batch, load, log, root.as_deref(), &seed);
+        let scripts = drop.map(|d| {
+            let scripts = crate::objectives::LevelScripts::load(d, event);
+            let (sets, scene, schemas, lamp) =
+                (&scripts.state_sets, &scripts.scene, &scripts.schemas, w.survival.head_lamp_scale);
+            let mut c = crate::controllers::Controllers::load(sets, scene, schemas, &w.triggers, lamp);
+            c.log = inputs.controllers_log.then(Vec::new);
+            for e in &inputs.named_entities {
+                if let Some(x) = e.controller() {
+                    c.add_entity(x);
+                }
+            }
+            (Arc::new(scripts), c)
+        });
+        Self { inputs, ahead: None, built: Some(Built { objectives, scripts }) }
+    }
+
+    pub fn made_from(&self, s: &Session, w: &World) -> bool {
+        self.ahead.as_ref().is_some_and(|a| {
+            std::ptr::eq(Arc::as_ptr(&a.world), w)
+                && a.content.as_ref().is_some_and(|c| ContentRead::now(c.root.clone()) == *c)
+        }) && self.inputs.matches(s)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ScriptsInputs {
+    event: Option<Arc<crate::objectives::EventObjectives>>,
+    event_type: Option<i32>,
+    message: crate::objectives::DropMessage,
+    seed: BTreeSet<u32>,
+    objectives_log: bool,
+    named_entities: Vec<crate::controllers::NamedEntity>,
+    controllers_log: bool,
+}
+
+impl ScriptsInputs {
+    pub fn of(s: &Session) -> Self {
+        Self {
+            event: s.event.setup.objectives.clone(),
+            event_type: s.event.setup.event_type.map(|t| t as i32),
+            message: s.event.setup.message.clone(),
+            seed: s.named_flag_seed.clone(),
+            objectives_log: s.objectives_log,
+            named_entities: s.named_entities.clone(),
+            controllers_log: s.controllers_log,
+        }
+    }
+
+    fn matches(&self, s: &Session) -> bool {
+        let Self { event, event_type, message, seed, objectives_log, named_entities, controllers_log } = self;
+        let same_event = match (event, &s.event.setup.objectives) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        same_event
+            && *event_type == s.event.setup.event_type.map(|t| t as i32)
+            && *message == s.event.setup.message
+            && *seed == s.named_flag_seed
+            && *objectives_log == s.objectives_log
+            && *named_entities == s.named_entities
+            && *controllers_log == s.controllers_log
     }
 }

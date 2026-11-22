@@ -74,7 +74,7 @@ pub(super) fn spq(s: &mut RiderState, w: &World, dt: f32, correct: Option<()>) {
         s.correction_shift = out.position - s.traj;
         s.traj = out.position;
         if let Some(b) = out.bounce {
-            (s.traj_velocity, s.velocity, s.filtered_velocity) = (b, b, b);
+            (s.traj_velocity, s.velocity) = (b, b);
             s.impacts += 1;
         }
         if let Some(v) = out.soft
@@ -145,13 +145,15 @@ pub(super) fn spq(s: &mut RiderState, w: &World, dt: f32, correct: Option<()>) {
         }
         impact.colliding = true;
     }
+    let ground_valid = s.contact.is_some();
+    s.rumble.landing(&t.queries.landing_rumble, in_air, ground_valid, s.ground_normal, dt);
     if s.landing.uber_crash || s.landing.tumbling {
         impact.trigger_impact = false;
     }
     if let Some(g) = s.ghost_impact.take() {
         let v = s.traj_velocity;
         let b = w.ghost_bounce(v, g);
-        (s.traj_velocity, s.velocity, s.filtered_velocity) = (b, b, b);
+        (s.traj_velocity, s.velocity) = (b, b);
         impact = w.ghost_impact_state(impact, s.traj_orientation, v, prev_colliding);
     }
     s.impact = impact;

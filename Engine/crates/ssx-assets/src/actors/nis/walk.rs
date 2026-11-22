@@ -145,20 +145,30 @@ impl<'a> Walk<'a> {
         a.guid("DefaultControllerAsset").with_context(|| format!("{}: unresolved", a.name()))
     }
 
-    pub(super) fn sequence(&self, g: Guid, loop_end: Option<f32>, depth: usize) -> Result<(Asset<'a>, Option<f32>)> {
+    pub(super) fn sequence(
+        &self,
+        g: Guid,
+        looping: Option<LoopFields>,
+        depth: usize,
+        layers: &mut Vec<(Asset<'a>, usize)>,
+    ) -> Result<(Asset<'a>, Option<LoopFields>)> {
         let a = self.db.get(g).with_context(|| format!("controller {g} not loaded"))?;
         anyhow::ensure!(depth < 16, "{}: too deep", a.name());
         match a.class() {
-            "SequenceContainerAsset" => Ok((a, loop_end)),
+            "SequenceContainerAsset" => Ok((a, looping)),
             "LayersControllerAsset" => {
                 let first = a.guids("ControllerAssets").first().copied().context("no layer 0")?;
-                self.sequence(first, loop_end, depth + 1)
+                layers.extend(Self::upper_layers(&a));
+                self.sequence(first, looping, depth + 1, layers)
             }
             "LoopingControllerAsset" => {
+                anyhow::ensure!(looping.is_none(), "{}: a loop inside a loop (not ported)", a.name());
                 let s = a.guid("SubjectControllerAsset").context("Looping without subject")?;
-                self.sequence(s, Some(a.f32("LoopEndTime").unwrap_or(0.0)), depth + 1)
+                self.sequence(s, Some(LoopFields::of_asset(&a)), depth + 1, layers)
             }
-            "ProxyControllerAsset" => self.sequence(self.proxy_subject(&a, ROLE_CHARACTER1)?, loop_end, depth + 1),
+            "ProxyControllerAsset" => {
+                self.sequence(self.proxy_subject(&a, ROLE_CHARACTER1)?, looping, depth + 1, layers)
+            }
             c => bail!("{}: {c} is not resolved to a sequence", a.name()),
         }
     }
@@ -180,10 +190,21 @@ impl<'a> Walk<'a> {
             first.holds
         );
         let mut actor = self.descend(a.name(), role, &first.asset)?;
-        let nested_loop = actor.root.as_ref().is_some_and(|(_, l)| l.is_some());
+        let nested_loop = actor.root.as_ref().is_some_and(|r| r.looping.is_some());
         anyhow::ensure!(
             clock.start_in == 0.0 && clock.scale == 1.0 || !nested_loop && actor.pieces.is_empty(),
             "{}: a nested sequence's loop or later animations under a track animation with its own clock (not ported)",
+            a.name()
+        );
+        for l in &mut actor.layers {
+            l.clock = LayerClock::Element(match l.clock {
+                LayerClock::Node => clock,
+                LayerClock::Element(inner) => clock.then(&inner),
+            });
+        }
+        anyhow::ensure!(
+            actor.layers.is_empty() || actor.choices.is_empty(),
+            "{}: layers under a random chooser's element (not ported)",
             a.name()
         );
         actor.clock = clock.then(&actor.clock);
@@ -226,6 +247,7 @@ impl<'a> Walk<'a> {
                 && inner.clock == ElementClock::SEQUENCE,
             "{name}: track animation {k} is a chooser or a sequence (not ported)"
         );
+        anyhow::ensure!(inner.layers.is_empty(), "{name}: track animation {k} has layers (not ported)");
         Ok(NisPiece { clock, clip: inner.clip, offset: inner.offset })
     }
 
@@ -241,7 +263,8 @@ impl<'a> Walk<'a> {
         let rig = self.rig(role);
         let mut ctrl = *ctrl;
         let (mut offset, mut choices, mut seed, mut chooser) = (None, Vec::new(), None, None);
-        let (mut toc_root, mut loop_end) = (None, None);
+        let (mut toc_root, mut looping) = (None, None);
+        let mut found: Vec<(Asset<'a>, usize)> = Vec::new();
         for _ in 0..24 {
             match ctrl.class() {
                 "TrajectoryOffsetControllerAsset" => {
@@ -261,10 +284,12 @@ impl<'a> Walk<'a> {
                 }
                 "LayersControllerAsset" => {
                     let first = ctrl.guids("ControllerAssets").first().copied().context("no layer 0")?;
+                    found.extend(Self::upper_layers(&ctrl));
                     ctrl = self.db.get(first).context("layer 0")?;
                 }
                 "LoopingControllerAsset" => {
-                    loop_end = loop_end.or(ctrl.f32("LoopEndTime"));
+                    anyhow::ensure!(looping.is_none(), "{name}: {}: a loop inside a loop (not ported)", ctrl.name());
+                    looping = Some((LoopFields::of_asset(&ctrl), toc_root.is_some()));
                     ctrl = self
                         .db
                         .get(ctrl.guid("SubjectControllerAsset").context("loop without subject")?)
@@ -289,7 +314,12 @@ impl<'a> Walk<'a> {
                     if inner.offset.is_none() {
                         inner.offset = offset;
                     }
-                    inner.root = Some((toc_root.unwrap_or_else(|| ctrl.name().to_string()), loop_end));
+                    inner.root = Some(NisRoot {
+                        controller: toc_root.unwrap_or_else(|| ctrl.name().to_string()),
+                        looping: looping.map(|l| l.0),
+                        loop_in_root: looping.is_some_and(|l| l.1),
+                    });
+                    inner.layers.extend(self.layers_for(role, &found, LayerClock::Node)?);
                     return Ok(inner);
                 }
                 "ChooserControllerAsset" => {
@@ -307,6 +337,7 @@ impl<'a> Walk<'a> {
                         for e in &entries {
                             let c = target(e).context("chooser entry")?;
                             let item = self.descend(name, role, &c)?;
+                            anyhow::ensure!(item.layers.is_empty(), "{name}: a random item with layers (not ported)");
                             choices.push((item.clip, e.f32("Weight").unwrap_or(1.0), item.clock));
                         }
                         anyhow::ensure!(!choices.is_empty(), "{name}: empty chooser");
@@ -352,10 +383,15 @@ impl<'a> Walk<'a> {
                         seed,
                         chooser,
                         sequences: Vec::new(),
-                        root: toc_root.map(|r| (r, loop_end)),
+                        root: toc_root.map(|controller| NisRoot {
+                            controller,
+                            looping: looping.map(|l| l.0),
+                            loop_in_root: looping.is_some_and(|l| l.1),
+                        }),
                         tags: Tags::default(),
                         clock: ElementClock::SEQUENCE,
                         pieces: Vec::new(),
+                        layers: self.layers_for(role, &found, LayerClock::Node)?,
                     });
                 }
                 c => bail!("{name}: {} is a {c}, no clip", ctrl.name()),
@@ -400,18 +436,25 @@ impl<'a> Walk<'a> {
             chooser.name(),
             problems.join("; ")
         );
-        let (sequence, loop_end) = actors
-            .iter()
-            .find(|a| a.role == ROLE_CHARACTER1)
-            .and_then(|a| a.root.clone())
-            .unwrap_or_else(|| (chooser.name().to_string(), None));
+        let root = actors.iter().find(|a| a.role == ROLE_CHARACTER1).and_then(|a| a.root.clone());
+        let sequence = root.as_ref().map_or_else(|| chooser.name().to_string(), |r| r.controller.clone());
+        let own = |a: &NisActor| a.root.as_ref().and_then(|r| r.looping);
+        let fields = root.as_ref().and_then(|r| r.looping);
+        anyhow::ensure!(
+            actors.iter().all(|a| own(a) == fields),
+            "{}: the roles' loops differ (not ported)",
+            chooser.name()
+        );
+        let in_root = root.as_ref().is_some_and(|r| r.loop_in_root);
+        let looping =
+            fields.map(|f| NisLoop::of_scene(f, in_root, &actors)).transpose().context(chooser.name().to_string())?;
         let mut node_tags = Tags::default();
         self.tags(node, self.rigs[0], &mut node_tags);
         let active_signals = self.names(node, "ActiveSignals");
         Ok(NisScene {
             node: node.name().to_string(),
             sequence,
-            loop_end,
+            looping,
             actors,
             node_tags,
             problems,
@@ -429,7 +472,9 @@ impl<'a> Walk<'a> {
         let mut out: Option<NisActor> = None;
         for e in chooser.guids("EntryAssetList").into_iter().filter_map(|g| self.db.get(g)) {
             let proxy = e.guid("ControllerAsset").context("entry without controller")?;
-            let (seq, _) = self.sequence(proxy, None, 0)?;
+            let mut layers = Vec::new();
+            let (seq, _) = self.sequence(proxy, None, 0, &mut layers)?;
+            anyhow::ensure!(layers.is_empty(), "{}: a pick with layers (not ported)", chooser.name());
             let actor = seq
                 .guids("ActorAssets")
                 .into_iter()
@@ -571,20 +616,29 @@ impl<'a> Walk<'a> {
         {
             return self.role_scene(node, &c).with_context(|| format!("node {}", node.name()));
         }
-        let (seq, loop_end) = self.sequence(subject, None, 0).with_context(|| format!("node {}", node.name()))?;
-        let actors = seq
+        let mut layers = Vec::new();
+        let (seq, fields) =
+            self.sequence(subject, None, 0, &mut layers).with_context(|| format!("node {}", node.name()))?;
+        let mut actors = seq
             .guids("ActorAssets")
             .into_iter()
             .filter_map(|g| self.db.get(g))
             .map(|a| self.actor(&a))
             .collect::<Result<Vec<_>>>()
             .with_context(|| format!("sequence {}", seq.name()))?;
+        for a in &mut actors {
+            let own =
+                self.layers_for(a.role, &layers, LayerClock::Node).with_context(|| format!("node {}", node.name()))?;
+            a.layers.extend(own);
+        }
+        let looping =
+            fields.map(|f| NisLoop::of_scene(f, false, &actors)).transpose().with_context(|| seq.name().to_string())?;
         let mut node_tags = Tags::default();
         self.tags(node, self.rigs[0], &mut node_tags);
         Ok(NisScene {
             node: node.name().to_string(),
             sequence: seq.name().to_string(),
-            loop_end,
+            looping,
             actors,
             node_tags,
             problems: Vec::new(),
@@ -606,7 +660,7 @@ impl<'a> Walk<'a> {
         Ok(NisScene {
             node: seq.name().to_string(),
             sequence: seq.name().to_string(),
-            loop_end: None,
+            looping: None,
             actors,
             node_tags: Tags::default(),
             problems: Vec::new(),

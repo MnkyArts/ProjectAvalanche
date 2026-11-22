@@ -12,7 +12,7 @@ use bevy::render::render_resource::{
     RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
 use bevy::render::renderer::{PendingCommandBuffers, RenderDevice, RenderGraph, RenderGraphSystems};
-use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
+use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer, ShaderBufferData};
 use bevy::render::{Extract, ExtractSchedule, GpuResourceAppExt, MainWorld, RenderApp};
 use bevy::shader::ShaderRef;
 
@@ -40,8 +40,8 @@ impl Default for PlayerShadowQuery {
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct ShadowQueryMaterial {
-    #[uniform(0)]
-    pub point: Vec4,
+    #[storage(0, read_only, visibility(fragment))]
+    pub point: Handle<ShaderBuffer>,
     #[storage(1, visibility(fragment))]
     pub result: Handle<ShaderBuffer>,
 }
@@ -102,7 +102,7 @@ pub fn plugin(app: &mut App) {
 
 #[derive(Resource)]
 struct QueryMaterial {
-    material: Handle<ShadowQueryMaterial>,
+    point: Handle<ShaderBuffer>,
     result: Handle<ShaderBuffer>,
 }
 
@@ -124,32 +124,41 @@ fn spawn_query(
     let mut buffer = ShaderBuffer::from(vec![Vec4::new(1.0, 0.0, 0.0, 0.0)]);
     buffer.buffer_usage |= BufferUsages::COPY_SRC;
     let result = buffers.add(buffer);
-    let material = materials.add(ShadowQueryMaterial { point: Vec4::ZERO, result: result.clone() });
+    let point = buffers.add(ShaderBuffer::from(vec![Vec4::ZERO]));
+    let material = materials.add(ShadowQueryMaterial { point: point.clone(), result: result.clone() });
     let quad = meshes.add(Rectangle::new(2.0 * QUAD_HALF, 2.0 * QUAD_HALF));
     commands.spawn((
         Name::new("player shadow query"),
         Mesh3d(quad),
-        MeshMaterial3d(material.clone()),
+        MeshMaterial3d(material),
         Transform::from_xyz(0.0, 0.0, -QUAD_DISTANCE),
         NotShadowCaster,
         NotShadowReceiver,
         ChildOf(camera),
     ));
-    commands.insert_resource(QueryMaterial { material, result });
+    commands.insert_resource(QueryMaterial { point, result });
 }
 
-fn set_point(
-    ride: Option<Res<Ride>>,
-    handle: Option<Res<QueryMaterial>>,
-    mut materials: ResMut<Assets<ShadowQueryMaterial>>,
-) {
+fn set_point(ride: Option<Res<Ride>>, handle: Option<Res<QueryMaterial>>, mut buffers: ResMut<Assets<ShaderBuffer>>) {
     let Some(handle) = handle else { return };
     let point = ride.map_or(Vec4::ZERO, |r| r.render.traj.extend(1.0));
-    if let Some(m) = materials.get(&handle.material)
-        && m.point != point
-        && let Some(mut m) = materials.get_mut(&handle.material)
+    // PORT(choice): the point is a buffer of its own that the material binds, written in place when it moves (the same
+    // 16 bytes, so Bevy's `GpuShaderBuffer` writes the GPU buffer it has and the material stays as it is). As a uniform
+    // of the material, every frame of a moving rider changed the material: Bevy made its bind group again (0.08 ms a
+    // frame in the render world; Mount Eddie, `--benchmark`, traced) and flagged its entity for specialising again
+    // (`AssetChanged` in `check_entities_needing_specialization`, which runs every frame either way). Now that
+    // preparation is 0.01 ms a frame and the buffers' 0.01 more. The shader reads the point in the same frame either
+    // way: the buffer's write is queued in the frame's `PrepareAssets`, before the frame's passes are submitted. Bind
+    // groups and wgpu's buffers are the port's renderer; the console's query (0x82FBB620) has neither.
+    let Some(buffer) = buffers.get(&handle.point) else { return };
+    if let ShaderBufferData::Initialized { data, .. } = &buffer.data
+        && read_vec4(data.as_slice()) == Some(point)
     {
-        m.point = point;
+        return;
+    }
+    if let Some(mut buffer) = buffers.get_mut(&handle.point) {
+        buffer.clear();
+        buffer.extend_from_slice(&[point]);
     }
 }
 

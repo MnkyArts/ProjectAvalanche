@@ -508,7 +508,7 @@ impl MaterialSpec {
                 base,
                 red,
                 green,
-                light: light.uniform,
+                light: crate::render::lighting::game::LEVEL_LIGHT,
                 occlusion: image_or(fg.occlusion, &light.white),
                 normal: image_or(fg.normal, &light.flat_normal),
                 shadow_pass: self.shadow_pass,

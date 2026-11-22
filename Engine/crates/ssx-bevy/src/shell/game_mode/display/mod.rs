@@ -3,6 +3,8 @@ mod keeper;
 mod list;
 mod render_scale;
 mod resolve;
+mod scene_scale;
+pub use scene_scale::SceneScale;
 #[cfg(test)]
 mod tests;
 
@@ -174,12 +176,37 @@ impl WindowSpec {
         Window {
             title: title.into(),
             resolution,
-            present_mode: if self.vsync { PresentMode::default() } else { PresentMode::AutoNoVsync },
+            present_mode: present_mode(self.vsync),
+            desired_maximum_frame_latency: frame_latency(),
             position: self.position.map_or(WindowPosition::Automatic, |(x, y)| WindowPosition::At(IVec2::new(x, y))),
             visible: !deferred,
             ..default()
         }
     }
+}
+
+// PORT(choice): `SSX_PRESENT_MODE` is a switch for measurements and players' comparisons of the present modes (the
+// frame limiter's under each); unset or another value, VSync's setting decides. The console presented at the TV's
+// refresh.
+fn present_mode(vsync: bool) -> PresentMode {
+    match std::env::var("SSX_PRESENT_MODE").as_deref() {
+        Ok("fifo") => PresentMode::Fifo,
+        Ok("mailbox") => PresentMode::Mailbox,
+        Ok("immediate") => PresentMode::Immediate,
+        _ if vsync => PresentMode::Fifo,
+        _ => PresentMode::AutoNoVsync,
+    }
+}
+
+// PORT(choice): the swapchain's frame latency stays wgpu's 2 unless `SSX_FRAME_LATENCY` says 1–3 (a switch for
+// players' and measurements' comparisons). With the game's vsync (FIFO) at 60 Hz on the development laptop, latency 1
+// and 2 delivered the same frames (alps 1 801 and 1 801 in 30 s, eddie 1 795 and 1 796) at frame times with standard
+// deviations of 1.9 / 1.5 ms (alps) and 1.9 / 2.0 ms (eddie): 1 would save one refresh of latency there, but it takes
+// away the one frame of slack that keeps a machine near 60 fps (the players' GTX 1060 laptop at 18–28 ms) from
+// showing a refresh twice for every frame over 16.7 ms. The console presented at the TV's refresh.
+fn frame_latency() -> Option<std::num::NonZeroU32> {
+    let n: u32 = std::env::var("SSX_FRAME_LATENCY").ok()?.trim().parse().ok()?;
+    std::num::NonZeroU32::new(n).filter(|n| n.get() <= 3)
 }
 
 pub fn alt_held(keys: &ButtonInput<KeyCode>) -> bool {
@@ -226,7 +253,13 @@ impl DisplayState {
     }
 }
 
-pub fn register(app: &mut App, spec: &WindowSpec, keep: bool, follow_focus: bool) {
+pub fn register(
+    app: &mut App,
+    spec: &WindowSpec,
+    keep: bool,
+    follow_focus: bool,
+    scale: ssx_assets::port_options::ResolutionScale,
+) {
     let mut notes = spec.notes.clone();
     if !keep && spec.file.is_some() {
         notes.push("a test run: the window's state is not kept in settings.json".into());
@@ -255,6 +288,7 @@ pub fn register(app: &mut App, spec: &WindowSpec, keep: bool, follow_focus: bool
     });
     alt_enter::register(app);
     render_scale::register(app, &spec.display, (spec.width, spec.height));
+    scene_scale::register(app, scale);
     app.add_systems(PreUpdate, display_frame.after(bevy::input::InputSystems)).add_systems(Last, display_exit);
 }
 
@@ -348,7 +382,7 @@ pub(super) fn display_class_frame(
     pending: &mut Option<(DisplayClass, f64)>,
     started: bool,
     ui: &mut ssx_ui::game::GameUi,
-    scene: &mut crate::ui::UiScene,
+    scene: &mut crate::ui::UiSceneState,
     window: &Window,
     now: f64,
 ) {

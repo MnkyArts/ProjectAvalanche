@@ -1153,3 +1153,77 @@ mod tests {
         assert!(rows.iter().any(|row| row.starts_with("xinput,")));
     }
 }
+
+// Project Avalanche patch T25: what gilrs makes of the DualSense on Windows, where Windows.Gaming.Input reads it as a
+// raw controller (`gilrs_core`'s `wgi_reading` tests its GUID and axis values on every platform).
+#[cfg(test)]
+mod wgi_rows {
+    use super::parser::{Parser, Token};
+    use std::collections::BTreeMap;
+
+    /// SDL 3.4.20's own row for the DualSense read through WGI (src/joystick/SDL_gamepad_db.h:43; its GUID ends in
+    /// SDL's WGI driver signature 'w' and type 0: WGI does not read it as a `Gamepad`).
+    const SDL_WGI_DUALSENSE: &str = "030000004c050000e60c000000007700,PS5 Controller,a:b1,b:b2,back:b8,\
+                                     dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b4,\
+                                     leftstick:b10,lefttrigger:a3,leftx:a0,lefty:a1,misc1:b14,rightshoulder:b5,\
+                                     rightstick:b11,righttrigger:a4,rightx:a2,righty:a5,start:b9,x:b0,y:b3,";
+
+    /// A row's bindings: gilrs' element → "b<n>", "a<n>" or "h<hat>.<direction>". The elements gilrs has no name for
+    /// (`Button::Unknown`: touchpad, misc1) are left out.
+    fn bindings(row: &str) -> BTreeMap<String, String> {
+        let mut parser = Parser::new(row);
+        let mut out = BTreeMap::new();
+        while let Some(token) = parser.next_token() {
+            let (to, from) = match token.expect("the row reads") {
+                Token::ButtonMapping { from, to, .. } => (to, format!("b{from}")),
+                Token::AxisMapping { from, to, .. } => (to, format!("a{from}")),
+                Token::HatMapping { hat, direction, to, .. } => (to, format!("h{hat}.{direction}")),
+                _ => continue,
+            };
+            let to = format!("{to:?}");
+            if to != "Btn(Unknown)" {
+                out.insert(to, from);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_dualsenses_windows_rows_bind_sdls_wgi_indices() {
+        let sdl = bindings(SDL_WGI_DUALSENSE);
+        let database = include_str!("../../SDL_GameControllerDB/gamecontrollerdb.txt");
+        // The DualSense and the DualSense Edge: the GUIDs gilrs-core builds for them (bus USB, version 0).
+        for guid in [
+            "030000004c050000e60c000000000000",
+            "030000004c050000f20d000000000000",
+        ] {
+            let row = database
+                .lines()
+                .find(|row| row.starts_with(guid) && row.ends_with("platform:Windows,"))
+                .expect("a Windows row");
+            assert_eq!(bindings(row), sdl, "{guid}");
+        }
+        // What the game reads: Cross is South (the game's A), Circle East, Square West, Triangle North; the analog
+        // triggers are axes 3 and 4, the right stick axes 2 and 5.
+        for (element, input) in [
+            ("Btn(South)", "b1"),
+            ("Btn(East)", "b2"),
+            ("Btn(West)", "b0"),
+            ("Btn(North)", "b3"),
+            ("Btn(LeftTrigger)", "b4"),
+            ("Btn(RightTrigger)", "b5"),
+            ("Btn(LeftTrigger2)", "a3"),
+            ("Btn(RightTrigger2)", "a4"),
+            ("Btn(Select)", "b8"),
+            ("Btn(Start)", "b9"),
+            ("Btn(Mode)", "b12"),
+            ("Axis(LeftStickX)", "a0"),
+            ("Axis(LeftStickY)", "a1"),
+            ("Axis(RightStickX)", "a2"),
+            ("Axis(RightStickY)", "a5"),
+            ("Btn(DPadUp)", "h0.1"),
+        ] {
+            assert_eq!(sdl[element], input, "{element}");
+        }
+    }
+}

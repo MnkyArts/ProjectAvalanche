@@ -142,36 +142,45 @@ impl RealFft {
 }
 
 fn mac(slots: [Option<(f32, &[f32])>; 2], gains: [f32; 2], x: &[f32], y: &mut [f32]) {
-    let cmul = |hr: f32, hi: f32, k: usize, y: &mut [f32]| {
-        let (xr, xi) = (x[2 * k], x[2 * k + 1]);
-        let re = hr * xr - hi * xi;
-        let im = hr.mul_add(xi, hi * xr);
-        y[2 * k] += re;
-        y[2 * k + 1] += im;
-    };
-    let bins = x.len() / 2;
-    if let [Some((s0, h0)), Some((s1, h1))] = slots
-        && gains[0] > 0.0
-        && gains[1] > 0.0
-    {
-        let (c0, c1) = (gains[0] / s0, gains[1] / s1);
-        for k in 0..bins {
-            let hr = h1[2 * k].mul_add(c1, h0[2 * k] * c0);
-            let hi = h1[2 * k + 1].mul_add(c1, h0[2 * k + 1] * c0);
-            cmul(hr, hi, k, y);
-        }
-        return;
-    }
-    for (slot, g) in slots.into_iter().zip(gains) {
-        let Some((s, h)) = slot else { continue };
-        if g == 0.0 {
-            continue;
-        }
-        let c = g / s;
-        for k in 0..bins {
-            cmul(h[2 * k] * c, h[2 * k + 1] * c, k, y);
-        }
-    }
+    // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the 1–3 multiply-adds a bin are the
+    // instruction in line instead of calls to the runtime's `fmaf` (the same single rounding: the same samples bit for
+    // bit); the flag is not used (they stay fused without FMA too, as before); the console has 0x82A103F0, whose
+    // multiply-adds these are.
+    super::fused(
+        #[inline(always)]
+        |_| {
+            let cmul = |hr: f32, hi: f32, k: usize, y: &mut [f32]| {
+                let (xr, xi) = (x[2 * k], x[2 * k + 1]);
+                let re = hr * xr - hi * xi;
+                let im = hr.mul_add(xi, hi * xr);
+                y[2 * k] += re;
+                y[2 * k + 1] += im;
+            };
+            let bins = x.len() / 2;
+            if let [Some((s0, h0)), Some((s1, h1))] = slots
+                && gains[0] > 0.0
+                && gains[1] > 0.0
+            {
+                let (c0, c1) = (gains[0] / s0, gains[1] / s1);
+                for k in 0..bins {
+                    let hr = h1[2 * k].mul_add(c1, h0[2 * k] * c0);
+                    let hi = h1[2 * k + 1].mul_add(c1, h0[2 * k + 1] * c0);
+                    cmul(hr, hi, k, y);
+                }
+                return;
+            }
+            for (slot, g) in slots.into_iter().zip(gains) {
+                let Some((s, h)) = slot else { continue };
+                if g == 0.0 {
+                    continue;
+                }
+                let c = g / s;
+                for k in 0..bins {
+                    cmul(h[2 * k] * c, h[2 * k + 1] * c, k, y);
+                }
+            }
+        },
+    );
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

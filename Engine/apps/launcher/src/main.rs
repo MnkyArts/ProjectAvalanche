@@ -9,12 +9,15 @@ mod data_state;
 mod display;
 mod dlc_list;
 mod host;
+mod input;
 mod jobs;
 mod language;
 mod link_handler;
 mod main_screen;
 mod masters;
 mod mod_list;
+mod pads;
+mod retired;
 mod settings;
 mod settings_flow;
 mod setup_flow;
@@ -27,7 +30,7 @@ use std::path::Path;
 
 use eframe::egui;
 
-use crate::ui::{ExtrasTab, MenuItem, ModsTab, SettingsTab, layout};
+use crate::ui::{MenuItem, layout};
 
 fn main() -> eframe::Result {
     let started = std::time::Instant::now();
@@ -58,6 +61,9 @@ fn main() -> eframe::Result {
     if let Some(note) = masters::old_member_note(settings.old_masters) {
         ssx_core::eprintln!("note: {note}");
     }
+    if let Some(note) = retired::objects_note(settings.old_objects) {
+        ssx_core::eprintln!("note: {note}");
+    }
     if args.print {
         std::process::exit(print(&settings));
     }
@@ -66,9 +72,13 @@ fn main() -> eframe::Result {
     }
     let data_state = settings.data_state();
     let gallery = art::Gallery::start(app::art_request(&settings, data_state.playable()));
+    // PORT(choice): the launcher's window has no system title bar; it draws its own (`ui::titlebar`: minimize,
+    // maximize / restore, close, the move and resize areas), the user's request of 2026-11-20; a launcher is the
+    // port's own, the console had none.
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Project Avalanche")
         .with_app_id("project-avalanche")
+        .with_decorations(false)
         .with_inner_size(args.window.unwrap_or([layout::CANVAS.x, layout::CANVAS.y]));
     if args.window.is_none() {
         viewport = viewport.with_min_inner_size([960.0, 540.0]);
@@ -90,10 +100,8 @@ fn main() -> eframe::Result {
             if let Some(page) = args.start_page() {
                 app.go(page);
             }
-            if let Some(tab) = &args.tab {
-                app.settings_tab = SettingsTab::parse(tab).unwrap_or_default();
-                app.extras_tab = ExtrasTab::parse(tab).unwrap_or_default();
-                app.mods_tab = ModsTab::parse(tab).unwrap_or_default();
+            if let Some(tab) = args.start_tab() {
+                app.open_tab(tab);
             }
             if args.hover.as_deref() == Some(MenuItem::Exit.name()) {
                 app.cursor = MenuItem::Exit;
@@ -101,6 +109,9 @@ fn main() -> eframe::Result {
             app.forced_hover = args.hover.clone();
             app.window_pixels = args.window;
             app.scripted_keys = args.keys.iter().copied().collect();
+            app.nav_dump = args.nav_dump.clone();
+            app.scripted_pad = args.pad.iter().copied().collect();
+            app.scripted_clicks = args.clicks.iter().copied().collect();
             app.scroll = args.scroll;
             app.timing = std::env::var_os("PROJECT_AVALANCHE_TIMING").map(|_| started);
             app.auto_extract = args.extract;

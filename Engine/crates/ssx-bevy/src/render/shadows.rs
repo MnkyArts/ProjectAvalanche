@@ -6,52 +6,59 @@ use bevy::pbr::MeshPipelineKey;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Face, RenderPipelineDescriptor};
 use bevy::shader::ShaderDefVal;
+use ssx_assets::port_options::ShadowQuality;
 use ssx_formats::fxo::state;
 
 use crate::camera::GameProjection;
 use crate::render::fx_states;
 use crate::rider::visual::RiderRoot;
 
-const DISTANCE: f32 = 400.0;
 const SPLIT_LAMBDA: f32 = 0.65;
 pub const CASCADES: usize = 3;
-pub const MAP_SIZE: usize = 1024;
 const DEPTH_RANGE: f32 = 1000.0;
 
-fn light_view(doff: Vec3) -> Mat3 {
+pub(crate) fn light_view(doff: Vec3) -> Mat3 {
     let r2 = doff.normalize();
     let r0 = Vec3::Y.cross(r2).normalize();
     let r1 = r2.cross(r0);
     Mat3::from_cols(r0, r1, r2).transpose()
 }
 
-pub fn game_cascades(doff: Vec3, camera: &GlobalTransform, near: f32, far: f32) -> Vec<Cascade> {
+fn cascades_of(doff: Vec3, boxes: &[(Vec3, Vec3, f32)]) -> Vec<Cascade> {
+    let world_from_light = Mat4::from_mat3(light_view(doff).transpose());
+    boxes.iter().map(|&(min, max, t)| cascade(world_from_light, ortho(min, max, 1.0), t)).collect()
+}
+
+pub fn game_cascade_boxes(
+    doff: Vec3,
+    camera: &GlobalTransform,
+    (near, far): (f32, f32),
+    reach: f32,
+    map_size: u32,
+) -> [(Vec3, Vec3, f32); CASCADES] {
     let lv = light_view(doff);
     let axis = |z: f32| lv * camera.transform_point(Vec3::new(0.0, 0.0, z));
     let (n, a) = (-near, -far);
-    let f = n - DISTANCE;
+    let f = n - reach;
     let split = |p: f32| {
         let c = SPLIT_LAMBDA * n * (f / n).powf(p) + (1.0 - SPLIT_LAMBDA) * (n + (f - n) * p);
         (c - n) / (f - n)
     };
     let s = [0.0, split(1.0 / 3.0), split(2.0 / 3.0), 1.0];
-    let ratio = DISTANCE / (a - n).abs();
+    let ratio = reach / (a - n).abs();
     let zf = a * ratio;
     let zr = axis((zf + n) / 2.0).z - (zf - n).abs() / 2.0;
-    let world_from_light = Mat4::from_mat3(lv.transpose());
-    (0..CASCADES)
-        .map(|i| {
-            let (zf_i, zn_i) = (a * s[i + 1] * ratio, if i == 0 { n } else { 0.0 });
-            let span = (zf_i - zn_i).abs();
-            let r = span / 2.0;
-            let c = axis((zf_i + zn_i) / 2.0);
-            let t = span / MAP_SIZE as f32;
-            let snap = |v: Vec3| (v / t).floor() * t;
-            let min = snap(Vec3::new(c.x - r, c.y - r, -zr - DEPTH_RANGE));
-            let max = snap(Vec3::new(c.x + r, c.y + r, -zr));
-            cascade(world_from_light, ortho(min, max, 1.0), t)
-        })
-        .collect()
+    std::array::from_fn(|i| {
+        let (zf_i, zn_i) = (a * s[i + 1] * ratio, if i == 0 { n } else { 0.0 });
+        let span = (zf_i - zn_i).abs();
+        let r = span / 2.0;
+        let c = axis((zf_i + zn_i) / 2.0);
+        let t = span / map_size as f32;
+        let snap = |v: Vec3| (v / t).floor() * t;
+        let min = snap(Vec3::new(c.x - r, c.y - r, -zr - DEPTH_RANGE));
+        let max = snap(Vec3::new(c.x + r, c.y + r, -zr));
+        (min, max, t)
+    })
 }
 
 fn ortho(min: Vec3, max: Vec3, viewport: f32) -> Mat4 {
@@ -78,7 +85,7 @@ const CHARACTER_MARGIN: f32 = 1.5;
 const CHARACTER_DEPTH: f32 = 500.0;
 pub const CHARACTER_LAYER: usize = 1;
 
-pub fn character_cascade(doff: Vec3, min: Vec3, max: Vec3) -> Cascade {
+pub fn character_cascade(doff: Vec3, min: Vec3, max: Vec3, map_size: u32) -> Cascade {
     let lv = light_view(doff);
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for i in 0..8 {
@@ -91,7 +98,7 @@ pub fn character_cascade(doff: Vec3, min: Vec3, max: Vec3) -> Cascade {
     let top = hi.z;
     let min = Vec3::new(lo.x, lo.y, -top);
     let max = Vec3::new(hi.x, hi.y, -top + CHARACTER_DEPTH);
-    let viewport = CHARACTER_MAP_SIZE as f32 / MAP_SIZE as f32;
+    let viewport = CHARACTER_MAP_SIZE as f32 / map_size as f32;
     cascade(Mat4::from_mat3(lv.transpose()), ortho(min, max, viewport), (max.x - min.x) / CHARACTER_MAP_SIZE as f32)
 }
 
@@ -107,7 +114,7 @@ fn ground_frame(n: Vec3) -> (Vec3, Vec3, Vec3) {
     (n.cross(z), n, z)
 }
 
-pub fn contact_cascade(p: Vec3, n: Vec3, depth: f32, min: Vec3, max: Vec3) -> Cascade {
+pub fn contact_cascade(p: Vec3, n: Vec3, depth: f32, (min, max): (Vec3, Vec3), map_size: u32) -> Cascade {
     let (x, n, z) = ground_frame(n);
     let rotation = Mat4::from_mat3(Mat3::from_cols(x, z, -n).transpose());
     let light_from_world = Mat4::from_translation(Vec3::new(0.0, 0.0, depth)) * rotation * Mat4::from_translation(-p);
@@ -119,7 +126,7 @@ pub fn contact_cascade(p: Vec3, n: Vec3, depth: f32, min: Vec3, max: Vec3) -> Ca
         hi = hi.max(c);
     }
     let half = (hi - lo).abs() * 0.5 * CONTACT_MARGIN;
-    let viewport = CONTACT_MAP_SIZE as f32 / MAP_SIZE as f32;
+    let viewport = CONTACT_MAP_SIZE as f32 / map_size as f32;
     let clip_from_light = ortho(Vec3::new(-half.x, -half.y, 0.0), Vec3::new(half.x, half.y, CONTACT_DEPTH), viewport);
     Cascade {
         world_from_cascade: light_from_world.inverse(),
@@ -139,9 +146,21 @@ pub fn sun_components(travel: Vec3, illuminance: f32) -> impl Bundle {
             ..default()
         },
         Transform::default().looking_to(travel, Vec3::Y),
-        CascadeShadowConfig { bounds: vec![DISTANCE; CASCADES], overlap_proportion: 0.0, minimum_distance: 0.5 },
+        CascadeShadowConfig {
+            bounds: vec![ShadowQuality::GAME_REACH; CASCADES],
+            overlap_proportion: 0.0,
+            minimum_distance: 0.5,
+        },
         GameSun { doff: -travel },
+        CascadeFit::default(),
     )
+}
+
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct CascadeFit {
+    pub camera: Option<Entity>,
+    pub light: Mat3,
+    pub boxes: [(Vec3, Vec3); CASCADES],
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -196,11 +215,17 @@ struct CharacterBoardJoint(Option<Entity>);
 #[derive(Resource, Default)]
 struct CharacterAabb(Option<(Vec3, Vec3)>);
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShadowSettings(pub ShadowQuality);
+
 pub struct GameShadowPlugin;
 
 impl Plugin for GameShadowPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(DirectionalLightShadowMap { size: MAP_SIZE })
+        let quality = app.world().get_resource::<ShadowSettings>().copied().unwrap_or_default();
+        app.insert_resource(quality)
+            .insert_resource(DirectionalLightShadowMap { size: quality.0.map_size() as usize })
+            .add_systems(Update, follow_shadow_settings.run_if(resource_changed::<ShadowSettings>))
             .init_resource::<CharacterBoardJoint>()
             .init_resource::<CharacterAabb>()
             .init_resource::<DepthBelowSnow>()
@@ -216,6 +241,14 @@ impl Plugin for GameShadowPlugin {
             );
         use crate::render::lighting::fade::{LightingFadeSet, faded};
         app.add_systems(Update, follow_lighting.after(LightingFadeSet).run_if(faded));
+    }
+}
+
+fn follow_shadow_settings(settings: Res<ShadowSettings>, mut map: ResMut<DirectionalLightShadowMap>) {
+    let size = settings.0.map_size() as usize;
+    if map.size != size {
+        map.size = size;
+        info!("shadows: {} ({size}² maps, {} m)", settings.0, settings.0.reach());
     }
 }
 
@@ -271,7 +304,7 @@ fn fit_character(
     transforms: Query<&GlobalTransform>,
     parents: Query<&ChildOf>,
     roots: Query<(), With<RiderRoot>>,
-    board: Res<CharacterBoardJoint>,
+    (board, map): (Res<CharacterBoardJoint>, Res<DirectionalLightShadowMap>),
     mut aabb: ResMut<CharacterAabb>,
 ) {
     let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
@@ -297,7 +330,7 @@ fn fit_character(
         if !active {
             continue;
         }
-        let cascade = character_cascade(light.doff, min, max);
+        let cascade = character_cascade(light.doff, min, max, map.size as u32);
         for (entity, camera) in &cameras {
             if camera.is_active {
                 cascades.cascades.insert(entity, vec![cascade.clone()]);
@@ -326,6 +359,7 @@ fn fit_contact(
     mut depth: ResMut<DepthBelowSnow>,
     cameras: Query<(Entity, &Camera), With<Projection>>,
     mut lights: Query<(&mut Cascades, &mut DirectionalLight), With<GameContactShadow>>,
+    map: Res<DirectionalLightShadowMap>,
 ) {
     if let Some(s) = ride.as_deref().map(|r| &r.state).filter(|s| s.on_ground) {
         let h = -s.contact.as_ref().map_or(0.0, |g| g.distance);
@@ -339,7 +373,7 @@ fn fit_contact(
             directional.shadow_maps_enabled = fit.is_some();
         }
         let Some(((p, n, depth), (min, max))) = fit else { continue };
-        let cascade = contact_cascade(p, n, depth, min, max);
+        let cascade = contact_cascade(p, n, depth, (min, max), map.size as u32);
         for (entity, camera) in &cameras {
             if camera.is_active {
                 cascades.cascades.insert(entity, vec![cascade.clone()]);
@@ -348,11 +382,13 @@ fn fit_contact(
     }
 }
 
-fn fit_cascades(
+pub(crate) fn fit_cascades(
     cameras: Query<(Entity, &GlobalTransform, &Projection, &Camera)>,
-    mut suns: Query<(&GameSun, &mut Cascades)>,
+    mut suns: Query<(&GameSun, &mut Cascades, Option<&mut CascadeFit>)>,
+    settings: Res<ShadowSettings>,
+    map: Res<DirectionalLightShadowMap>,
 ) {
-    for (sun, mut cascades) in &mut suns {
+    for (sun, mut cascades, mut fit) in &mut suns {
         for (entity, transform, projection, camera) in &cameras {
             if !camera.is_active {
                 continue;
@@ -365,7 +401,15 @@ fn fit_cascades(
                 Projection::Perspective(p) => (p.near, p.far),
                 Projection::Orthographic(_) => continue,
             };
-            cascades.cascades.insert(entity, game_cascades(sun.doff, transform, near, far));
+            let boxes = game_cascade_boxes(sun.doff, transform, (near, far), settings.0.reach(), map.size as u32);
+            cascades.cascades.insert(entity, cascades_of(sun.doff, &boxes));
+            if let Some(fit) = fit.as_deref_mut() {
+                *fit = CascadeFit {
+                    camera: Some(entity),
+                    light: light_view(sun.doff),
+                    boxes: boxes.map(|(min, max, _)| (min, max)),
+                };
+            }
         }
     }
 }
@@ -404,6 +448,10 @@ pub fn specialize_shadow_pass(
     mesh_key: MeshPipelineKey,
     key: ShadowPassKey,
 ) {
+    if crate::render::gbuffer::is_depth_prepass(descriptor, mesh_key) {
+        crate::render::gbuffer::depth_prepass_writes(descriptor, false);
+        return;
+    }
     if !mesh_key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO) {
         return;
     }
@@ -440,7 +488,7 @@ mod tests {
     use super::*;
 
     fn pick(cascades: &[Cascade], p: Vec3) -> usize {
-        let edge = 0.5 - 2.0 / MAP_SIZE as f32;
+        let edge = 0.5 - 2.0 / 1024.0;
         cascades
             .iter()
             .position(|c| {
@@ -457,7 +505,7 @@ mod tests {
             Transform::from_xyz(0.0, 1000.0, 0.0).looking_to(Vec3::new(0.0, -0.2, -1.0), Vec3::Y),
         );
         let doff = Vec3::new(-0.6, 0.5, 0.6).normalize();
-        let cascades = game_cascades(doff, &camera, 0.5, 8000.0);
+        let cascades = cascades_of(doff, &game_cascade_boxes(doff, &camera, (0.5, 8000.0), 400.0, 1024));
         let forward = camera.forward().as_vec3();
         let at = |d: f32| pick(&cascades, camera.translation() + forward * d);
         assert_eq!((at(5.0), at(30.0)), (0, 0));
@@ -473,9 +521,9 @@ mod tests {
     fn character_box_fills_its_viewport() {
         let doff = Vec3::new(0.3, 0.8, 0.2).normalize();
         let (min, max) = (Vec3::new(10.0, 100.0, -5.0), Vec3::new(11.0, 101.8, -4.4));
-        let c = character_cascade(doff, min, max);
+        let c = character_cascade(doff, min, max, 1024);
         let clip = |p: Vec3| (c.clip_from_world * p.extend(1.0)).truncate();
-        let edge = -1.0 + 2.0 * CHARACTER_MAP_SIZE as f32 / MAP_SIZE as f32;
+        let edge = -1.0 + 2.0 * CHARACTER_MAP_SIZE as f32 / 1024.0;
         for i in 0..8 {
             let corner = Vec3::select(BVec3::new(i & 1 != 0, i & 2 != 0, i & 4 != 0), max, min);
             let q = clip(corner);
@@ -498,14 +546,14 @@ mod tests {
 
     #[test]
     fn contact_box_matches_the_emulated_fit() {
-        let c = contact_cascade(Vec3::ZERO, Vec3::Y, 0.0, Vec3::new(-0.5, 0.0, -0.3), Vec3::new(0.5, 1.8, 0.3));
+        let c = contact_cascade(Vec3::ZERO, Vec3::Y, 0.0, (Vec3::new(-0.5, 0.0, -0.3), Vec3::new(0.5, 1.8, 0.3)), 1024);
         let q = (c.clip_from_world * Vec4::new(0.3, 0.2, -0.1, 1.0)).truncate();
-        let s = CONTACT_MAP_SIZE as f32 / MAP_SIZE as f32;
+        let s = CONTACT_MAP_SIZE as f32 / 1024.0;
         let (xc, yc, zn) = (0.3 * 4.0 / 3.0, -0.1 / 0.45, 0.2 / 0.55);
         let expected = Vec3::new(s * xc + s - 1.0, s * yc + 1.0 - s, 1.0 - zn);
         assert!(q.abs_diff_eq(expected, 1e-5), "{q} vs {expected}");
         let (p, n, d) = (Vec3::new(10.0, 20.0, 30.0), Vec3::new(0.2, 0.9, -0.1).normalize(), 0.25);
-        let c = contact_cascade(p, n, d, p - Vec3::ONE, p + Vec3::ONE);
+        let c = contact_cascade(p, n, d, (p - Vec3::ONE, p + Vec3::ONE), 1024);
         let z = |h: f32| (c.clip_from_world * (p + n * (d + h)).extend(1.0)).z;
         assert!((z(0.0) - 1.0).abs() < 1e-5 && z(CONTACT_DEPTH).abs() < 1e-5);
         let recomposed = c.clip_from_cascade * c.world_from_cascade.inverse();

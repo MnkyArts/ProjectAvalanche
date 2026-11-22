@@ -15,7 +15,6 @@ use ssx_content::sky::{SkyCube, SkyDef};
 use ssx_content::texture::Want;
 
 use crate::render::lighting::GameLighting;
-use crate::render::reload::Recipe;
 
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 pub struct CubeSkyUniform {
@@ -58,8 +57,16 @@ pub struct PackageSky {
 }
 
 pub enum BackgroundLoad {
-    Cube { cube: Image, uniform: CubeSkyUniform },
-    Dome { mesh: Arc<DomeMesh>, texture: (Image, Option<Recipe>), uniform: DomeUniform, hook: Option<(u64, String)> },
+    Cube {
+        cube: crate::render::uploads::LevelImage,
+        uniform: CubeSkyUniform,
+    },
+    Dome {
+        mesh: Arc<DomeMesh>,
+        texture: crate::render::uploads::LevelImage,
+        uniform: DomeUniform,
+        hook: Option<(u64, String)>,
+    },
 }
 
 pub struct PackageLoad {
@@ -70,15 +77,19 @@ pub struct PackageLoad {
 }
 
 impl PackageLoad {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        match &mut self.background {
+            BackgroundLoad::Cube { cube, .. } => cube.queue(uploads, images),
+            BackgroundLoad::Dome { texture, .. } => texture.queue(uploads, images),
+        }
+    }
+
     pub fn into_settings(self, images: &mut Assets<Image>) -> PackageSky {
         let background = match self.background {
-            BackgroundLoad::Cube { cube, uniform } => Background::Cube { cube: images.add(cube), uniform },
-            BackgroundLoad::Dome { mesh, texture, uniform, hook } => Background::Dome {
-                mesh,
-                texture: crate::render::reload::add(images, texture.0, texture.1),
-                uniform,
-                hook,
-            },
+            BackgroundLoad::Cube { cube, uniform } => Background::Cube { cube: cube.into_handle(images), uniform },
+            BackgroundLoad::Dome { mesh, texture, uniform, hook } => {
+                Background::Dome { mesh, texture: texture.into_handle(images), uniform, hook }
+            }
         };
         PackageSky { background, overlay: self.overlay }
     }
@@ -216,7 +227,8 @@ pub fn load(l: &GameLighting, root: &Path) -> Result<Option<PackageLoad>> {
                 def.exposure,
                 if def.reflection { ", the reflection cube" } else { "" }
             );
-            (BackgroundLoad::Cube { cube: cube_image(cube), uniform: cube_uniform(&def, l) }, status)
+            let cube = crate::render::uploads::LevelImage::built(cube_image(cube), None);
+            (BackgroundLoad::Cube { cube, uniform: cube_uniform(&def, l) }, status)
         }
         LevelSky::Dome { id, source, model, material, .. } => {
             let (mesh, notes) = model.value.lod0_mesh().map_err(|e| anyhow::anyhow!("{}: {e}", model.id))?;
@@ -256,6 +268,7 @@ pub fn load(l: &GameLighting, root: &Path) -> Result<Option<PackageLoad>> {
             };
             let status = format!("sky: {id} from {source}, a dome ({} triangles){hook_note}", dome.indices.len() / 3);
             let uniform = dome_uniform(&def, material, l, 0.0);
+            let texture = crate::render::uploads::LevelImage::built(texture.0, texture.1);
             (BackgroundLoad::Dome { mesh: Arc::new(dome), texture, uniform, hook }, status)
         }
         LevelSky::Scattering => return Ok(None),

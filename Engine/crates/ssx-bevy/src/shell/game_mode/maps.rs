@@ -164,7 +164,7 @@ impl Shell {
                         &data.name,
                         &spec.character,
                         data.max_boost(),
-                        None,
+                        crate::audio::sfx::SfxLaunch::default(),
                         speech_lang,
                         false,
                     );

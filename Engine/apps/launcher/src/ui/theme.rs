@@ -14,6 +14,9 @@ pub const TEXT_DIM: Color32 = Color32::from_rgb(0x5F, 0x9A, 0xAE);
 pub const GOOD: Color32 = Color32::from_rgb(0x3C, 0xE8, 0x9A);
 pub const WARN: Color32 = Color32::from_rgb(0xF4, 0xB9, 0x4A);
 pub const ERROR: Color32 = Color32::from_rgb(0xFF, 0x73, 0x62);
+pub const W_REST: Color32 = Color32::from_rgb(0x07, 0x2C, 0x3A);
+pub const W_HOVER: Color32 = Color32::from_rgb(0x0A, 0x40, 0x50);
+pub const W_ACTIVE: Color32 = Color32::from_rgb(0x0C, 0x58, 0x6A);
 
 pub mod size {
     pub const HERO_TITLE: f32 = 30.0;
@@ -25,6 +28,7 @@ pub mod size {
     pub const MENU_TEXT: f32 = 15.0;
     pub const SMALL: f32 = 14.0;
     pub const CAPS: f32 = 13.0;
+    pub const CHIP: f32 = 11.0;
 }
 
 pub const CAP_HEIGHT: f32 = 0.688;
@@ -128,9 +132,9 @@ fn style(style: &mut egui::Style) {
     v.error_fg_color = ERROR;
     let fills = [
         (&mut v.widgets.noninteractive, Color32::from_rgb(0x04, 0x1C, 0x28), LINE_FAINT, TEXT_SOFT),
-        (&mut v.widgets.inactive, Color32::from_rgb(0x07, 0x2C, 0x3A), LINE, TEXT_SOFT),
-        (&mut v.widgets.hovered, Color32::from_rgb(0x0A, 0x40, 0x50), CYAN, TEXT),
-        (&mut v.widgets.active, Color32::from_rgb(0x0C, 0x58, 0x6A), CYAN, TEXT),
+        (&mut v.widgets.inactive, W_REST, LINE, TEXT_SOFT),
+        (&mut v.widgets.hovered, W_HOVER, CYAN, TEXT),
+        (&mut v.widgets.active, W_ACTIVE, CYAN, TEXT),
         (&mut v.widgets.open, Color32::from_rgb(0x08, 0x38, 0x48), CYAN, TEXT),
     ];
     for (w, fill, line, text) in fills {

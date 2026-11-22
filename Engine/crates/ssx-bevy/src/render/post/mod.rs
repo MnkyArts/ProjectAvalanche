@@ -1,4 +1,6 @@
 pub mod adapt;
+pub mod cube;
+pub mod fsr;
 pub mod layers;
 pub mod overlay;
 mod render;
@@ -42,6 +44,7 @@ pub struct PostUniform {
     pub blur_v_samples: Vec4,
     pub blur_v_offsets: Vec4,
     pub sizes: UVec4,
+    pub grade: Vec4,
 }
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -51,6 +54,44 @@ pub struct PostSettings {
     pub lut: Handle<Image>,
     pub scene_ready: bool,
     pub converge: bool,
+}
+
+// PORT(choice): the bloom and the FXAA can be switched off for slower machines, each for a measured saving (1920 ×
+// 1080 on the development laptop's Arc iGPU: bloom off 0.18 ms less GPU and 0.39 ms a frame, FXAA off 0.24–0.27 ms
+// less GPU); off, the bloom is the chain's own no-bloom path (a lighting preset's `bloom.z` = 0: no threshold or blur
+// passes, no bloom in the tone map, no particle bloom) and the composite reads the tone-mapped frame without FXAA. The
+// Post-Processing switch (`post`) turns off the chain's look passes together — the bloom, the FXAA and the colour cube
+// (the composite takes the tone-mapped values as an identity cube would) — and keeps everything that shows the player
+// something: the exposure and the tone map, the survival overlays (the thin-air, cold and physical-damage vignettes
+// of `world_entity_controllers_default.lua`'s post-FX tracks), the pulse goggles' TOPOGRID, the particles and the LDR
+// translucents (the ghosts, the helicopter's windows, the geotags), all drawn in the chain. The console always drew
+// the whole chain (FXAA forced on by FUN_82FD08B0).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
+#[extract_app(RenderApp)]
+pub struct PostLevels {
+    pub bloom: bool,
+    pub fxaa: bool,
+    pub post: bool,
+}
+
+impl Default for PostLevels {
+    fn default() -> PostLevels {
+        PostLevels { bloom: true, fxaa: true, post: true }
+    }
+}
+
+impl PostLevels {
+    pub fn of(bloom: bool, fxaa: bool) -> PostLevels {
+        PostLevels { bloom, fxaa, post: !env_is("SSX_GAME_POST", "off") }
+    }
+
+    pub fn bloom_drawn(self) -> bool {
+        self.bloom && self.post
+    }
+
+    pub fn fxaa_drawn(self) -> bool {
+        self.fxaa && self.post
+    }
 }
 
 impl Plugin for PostPlugin {
@@ -68,14 +109,16 @@ impl Plugin for PostPlugin {
         embedded_asset!(app, "post_bloom.wesl");
         embedded_asset!(app, "post_final.wesl");
         embedded_asset!(app, "post_fxaa.wesl");
-        app.add_systems(Update, (tick.run_if(resource_exists::<PostSettings>), msaa_off));
+        app.init_resource::<PostLevels>().add_systems(Update, (tick.run_if(resource_exists::<PostSettings>), msaa_off));
         use crate::render::lighting::fade::{LightingFadeSet, faded};
         app.add_systems(Update, follow_lighting.after(LightingFadeSet).run_if(faded));
         layers::build(app);
         overlay::build(app);
         topogrid::build(app);
         render::build(app);
+        fsr::build(app);
         crate::shell::level::scoped::<PostSettings>(app);
+        crate::shell::level::scoped::<cube::FrameCube>(app);
         crate::shell::level::scoped::<overlay::ScreenEffects>(app);
         app.add_systems(crate::shell::level::LevelStartup, |status: Option<Res<PostStatus>>| {
             if let Some(s) = status {
@@ -120,14 +163,12 @@ fn lut_image(cube: &postfx::ColourCube) -> Image {
 pub struct PostLoad {
     uniform: PostUniform,
     lut: Image,
+    frame_cube: Option<cube::FrameCube>,
     converge: bool,
     pub status: String,
 }
 
 pub fn load(lighting: &GameLighting, root: &std::path::Path, converge: bool) -> Result<PostLoad> {
-    if env_is("SSX_GAME_POST", "off") {
-        anyhow::bail!("disabled by SSX_GAME_POST=off");
-    }
     let name = lighting.postfx.clone().context("the drop names no post-FX preset")?;
     let (preset, build) = postfx::load_presets(root, &[name.as_str()])?.pop().context("preset not built")?;
     let l = lighting;
@@ -142,12 +183,22 @@ pub fn load(lighting: &GameLighting, root: &std::path::Path, converge: bool) -> 
         blur_h_offsets: ho,
         blur_v_samples: vs,
         blur_v_offsets: vo,
+        grade: Vec4::X,
         ..Default::default()
     };
     lighting_constants(l, &mut uniform);
     let identity = env_is("SSX_POST_LUT", "identity");
     let cube = if identity { postfx::ColourCube::identity() } else { build.cube.clone() };
     let lut = lut_image(&cube);
+    let frame_cube =
+        if identity { Ok(None) } else { cube::FrameCube::load(root, &preset.colour_cubes, &build).map(Some) };
+    let (frame_cube, frames) = match frame_cube {
+        Ok(c) => (c, ""),
+        Err(e) => {
+            bevy::prelude::warn!("the frames' colour cubes: the stacks did not load ({e:#}); the drop's cube stays");
+            (None, " | the frames' colour cubes NOT built")
+        }
+    };
 
     let groups: Vec<&str> = preset.colour_cubes.iter().map(|c| c.group.as_str()).collect();
     let second = if build.needs_second_lut { " (depth-blended 2nd LUT NOT built)" } else { "" };
@@ -163,9 +214,9 @@ pub fn load(lighting: &GameLighting, root: &std::path::Path, converge: bool) -> 
         blur,
         groups.join("+"),
         build.cube.max_deviation(),
-        if identity { " BYPASSED (SSX_POST_LUT=identity)" } else { "" },
+        if identity { " BYPASSED (SSX_POST_LUT=identity)" } else { frames },
     );
-    Ok(PostLoad { uniform, lut, converge, status })
+    Ok(PostLoad { uniform, lut, frame_cube, converge, status })
 }
 
 fn curve(l: &GameLighting) -> ([f32; 6], f32) {
@@ -204,6 +255,9 @@ fn follow_lighting(lighting: Res<GameLighting>, settings: Option<ResMut<PostSett
 pub fn insert(world: &mut World, load: PostLoad) -> Result<()> {
     let lut = world.get_resource_mut::<Assets<Image>>().context("no image assets")?.add(load.lut);
     world.insert_resource(PostSettings { uniform: load.uniform, lut, scene_ready: false, converge: load.converge });
+    if let Some(c) = load.frame_cube {
+        world.insert_resource(c);
+    }
     Ok(())
 }
 

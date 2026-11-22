@@ -3,7 +3,8 @@ mod pipelines;
 use std::collections::HashMap;
 
 use bevy::core_pipeline::tonemapping::tonemapping;
-use bevy::core_pipeline::{Core2d, Core2dSystems};
+use bevy::core_pipeline::upscaling::upscaling;
+use bevy::core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems};
 use bevy::prelude::*;
 use bevy::render::render_phase::TrackedRenderPass;
 use bevy::render::render_resource::*;
@@ -12,7 +13,8 @@ use bevy::render::view::ViewTarget;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 
-use super::{GRADIENT_ROWS, UiBlend, UiCamera, UiFrame, UiOp, UiTexture};
+use super::{DRAW_FLOATS, GRADIENT_ROWS, UiBlend, UiCamera, UiFrame, UiOp, UiTexture};
+use crate::render::bind_cache::BindGroupCache;
 use pipelines::{UiPipelines, init_pipelines, result_out_pipeline};
 
 const SAMPLES: u32 = 1;
@@ -37,9 +39,14 @@ pub(super) fn build(app: &mut App) {
         .init_resource::<UiGpu>()
         .add_systems(RenderStartup, init_pipelines)
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareResources))
+        .add_systems(Core2d, ui_pass.in_set(Core2dSystems::PostProcess).in_set(super::UiPassSystems).after(tonemapping))
         .add_systems(
-            Core2d,
-            ui_pass.in_set(Core2dSystems::PostProcess).in_set(super::UiPassSystems).after(tonemapping),
+            Core3d,
+            ui_pass
+                .in_set(super::UiPassSystems)
+                .after(Core3dSystems::PostProcess)
+                .after(bevy::ui_render::render_pass::ui_pass)
+                .before(upscaling),
         );
 }
 
@@ -57,13 +64,59 @@ struct UiGpu {
     gradients: Option<(TextureView, BindGroup)>,
     white: Option<(TextureView, BindGroup)>,
     glyphs: Option<(u64, UVec2, TextureView, BindGroup)>,
-    vertices: Option<Buffer>,
-    paint_coords: Option<Buffer>,
-    draw_ids: Option<Buffer>,
-    indices: Option<Buffer>,
-    draws: Option<Buffer>,
+    gradient_rows: Vec<[u8; 4]>,
+    frame: Option<Buffer>,
     draws_group: Option<BindGroup>,
+    regions: FrameRegions,
+    staged: Vec<u8>,
+    written: Vec<u8>,
     targets: Option<Targets>,
+}
+
+// PORT(choice): the frame's draw records, vertices, paint coordinates, draw ids and indices go to the GPU in one
+// buffer, written with one `write_buffer` (one staging copy of wgpu's instead of five) only when its bytes differ from
+// the last frame's (a still screen writes nothing), from two byte vectors kept from frame to frame instead of five new
+// ones a frame; the draw records' storage binding is the whole buffer from its start, the vertex and index buffers its
+// slices. The gradient rows are written when they differ from the rows the texture holds. The bytes and the draws are
+// the same, so the picture is. Bevy's render world and wgpu's queue are the port's engine; the console's UI renderer
+// had neither.
+#[derive(Clone, Default)]
+struct FrameRegions {
+    vertices: std::ops::Range<u64>,
+    paint_coords: std::ops::Range<u64>,
+    draw_ids: std::ops::Range<u64>,
+    indices: std::ops::Range<u64>,
+}
+
+impl FrameRegions {
+    fn drawn(&self) -> bool {
+        [&self.vertices, &self.paint_coords, &self.draw_ids, &self.indices].iter().all(|r| !r.is_empty())
+    }
+}
+
+fn stage(out: &mut Vec<u8>, frame: &UiFrame) -> FrameRegions {
+    fn put(out: &mut [u8], at: &mut usize, words: impl ExactSizeIterator<Item = [u8; 4]>) -> std::ops::Range<u64> {
+        let start = *at;
+        *at += words.len() * 4;
+        for (dst, w) in out[start..*at].as_chunks_mut::<4>().0.iter_mut().zip(words) {
+            *dst = w;
+        }
+        start as u64..*at as u64
+    }
+    let words = frame.draws.len() * DRAW_FLOATS
+        + (frame.vertices.len() + frame.paint_coords.len()) * 2
+        + frame.draw_ids.len()
+        + frame.indices.len();
+    out.clear();
+    out.resize(words * 4, 0);
+    let at = &mut 0;
+    put(out, at, frame.draws.as_flattened().iter().map(|v| v.to_le_bytes()));
+    FrameRegions {
+        vertices: put(out, at, frame.vertices.as_flattened().iter().map(|v| v.to_le_bytes())),
+        paint_coords: put(out, at, frame.paint_coords.as_flattened().iter().map(|v| v.to_le_bytes())),
+        draw_ids: put(out, at, frame.draw_ids.iter().map(|v| v.to_le_bytes())),
+        indices: put(out, at, frame.indices.iter().map(|v| v.to_le_bytes())),
+    }
 }
 
 fn texture_2d_desc(
@@ -98,38 +151,32 @@ fn upload_rgba(
         .create_view(&TextureViewDescriptor::default())
 }
 
-fn le_bytes<const N: usize, T: Copy>(items: &[[T; N]], to: impl Fn(T) -> [u8; 4]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(items.len() * N * 4);
-    for a in items {
-        for &v in a {
-            out.extend_from_slice(&to(v));
-        }
-    }
-    out
-}
-
-fn write_buffer(
-    device: &RenderDevice,
-    queue: &RenderQueue,
-    slot: &mut Option<Buffer>,
-    label: &'static str,
-    usage: BufferUsages,
-    data: &[u8],
-) -> bool {
-    let size = (data.len().max(16) as u64).next_power_of_two();
-    let grown = slot.as_ref().is_none_or(|b| b.size() < size);
+fn write_frame(device: &RenderDevice, queue: &RenderQueue, layout: &BindGroupLayout, gpu: &mut UiGpu) {
+    let size = (gpu.staged.len().max(16) as u64).next_power_of_two();
+    let grown = gpu.frame.as_ref().is_none_or(|b| b.size() < size);
     if grown {
-        *slot = Some(device.create_buffer(&BufferDescriptor {
-            label: Some(label),
+        let usage = BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::INDEX | BufferUsages::COPY_DST;
+        let buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("ssx_ui_frame"),
             size,
-            usage: usage | BufferUsages::COPY_DST,
+            usage,
             mapped_at_creation: false,
-        }));
+        });
+        gpu.draws_group = Some(device.create_bind_group(
+            "ssx_ui_draws",
+            layout,
+            &BindGroupEntries::single(buffer.as_entire_binding()),
+        ));
+        gpu.frame = Some(buffer);
+    } else if gpu.staged == gpu.written {
+        return;
     }
-    if let Some(b) = slot {
-        queue.write_buffer(b, 0, data);
+    if let Some(b) = &gpu.frame
+        && !gpu.staged.is_empty()
+    {
+        queue.write_buffer(b, 0, &gpu.staged);
     }
-    grown
+    std::mem::swap(&mut gpu.staged, &mut gpu.written);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -180,11 +227,12 @@ fn prepare(
         let g = paint_group(&v, &p.linear);
         gpu.gradients = Some((v, g));
     }
-    if frame.gradient_rows_used > 0
+    let used = frame.gradient_rows_used.min(rows.y);
+    let texels = &frame.gradients[..(used * 256) as usize];
+    if used > 0
+        && gpu.gradient_rows.get(..texels.len()) != Some(texels)
         && let Some((v, _)) = &gpu.gradients
     {
-        let used = frame.gradient_rows_used.min(rows.y);
-        let bytes: Vec<u8> = frame.gradients[..(used * 256) as usize].iter().flatten().copied().collect();
         queue.write_texture(
             TexelCopyTextureInfo {
                 texture: v.texture(),
@@ -192,47 +240,17 @@ fn prepare(
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
-            &bytes,
+            texels.as_flattened(),
             TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256 * 4), rows_per_image: Some(used) },
             Extent3d { width: 256, height: used, depth_or_array_layers: 1 },
         );
-    }
-    write_buffer(
-        &device,
-        &queue,
-        &mut gpu.vertices,
-        "ssx_ui_vertices",
-        BufferUsages::VERTEX,
-        &le_bytes(&frame.vertices, f32::to_le_bytes),
-    );
-    let paint = le_bytes(&frame.paint_coords, f32::to_le_bytes);
-    write_buffer(&device, &queue, &mut gpu.paint_coords, "ssx_ui_paint_coords", BufferUsages::VERTEX, &paint);
-    let u32_bytes = |v: &[u32]| {
-        let mut out = Vec::with_capacity(v.len() * 4);
-        for i in v {
-            out.extend_from_slice(&i.to_le_bytes());
+        if gpu.gradient_rows.len() < texels.len() {
+            gpu.gradient_rows.resize(texels.len(), [0; 4]);
         }
-        out
-    };
-    let ids = u32_bytes(&frame.draw_ids);
-    write_buffer(&device, &queue, &mut gpu.draw_ids, "ssx_ui_draw_ids", BufferUsages::VERTEX, &ids);
-    let indices = u32_bytes(&frame.indices);
-    write_buffer(&device, &queue, &mut gpu.indices, "ssx_ui_indices", BufferUsages::INDEX, &indices);
-    let grown = write_buffer(
-        &device,
-        &queue,
-        &mut gpu.draws,
-        "ssx_ui_draws",
-        BufferUsages::STORAGE,
-        &le_bytes(&frame.draws, f32::to_le_bytes),
-    );
-    if (grown || gpu.draws_group.is_none())
-        && let Some(b) = &gpu.draws
-    {
-        let layout = cache.get_bind_group_layout(&p.fill_layout);
-        gpu.draws_group =
-            Some(device.create_bind_group("ssx_ui_draws", &layout, &BindGroupEntries::single(b.as_entire_binding())));
+        gpu.gradient_rows[..texels.len()].copy_from_slice(texels);
     }
+    gpu.regions = stage(&mut gpu.staged, &frame);
+    write_frame(&device, &queue, &cache.get_bind_group_layout(&p.fill_layout), gpu);
     let size = frame.viewport;
     if size.x > 0 && gpu.targets.as_ref().is_none_or(|t| t.size != size) {
         let attach = TextureUsages::RENDER_ATTACHMENT;
@@ -279,14 +297,10 @@ fn prepare(
             }
         }
     }
-    let used: Vec<(usize, bool)> = frame
-        .ops
-        .iter()
-        .filter_map(|o| match o {
-            UiOp::Draw { texture: UiTexture::Image { image, smooth }, .. } => Some((*image, *smooth)),
-            _ => None,
-        })
-        .collect();
+    let used = frame.ops.iter().filter_map(|o| match o {
+        UiOp::Draw { texture: UiTexture::Image { image, smooth }, .. } => Some((*image, *smooth)),
+        _ => None,
+    });
     for key in used {
         if !gpu.image_groups.contains_key(&key)
             && let Some(v) = gpu.images.get(key.0)
@@ -406,15 +420,14 @@ fn ui_pass(
     pipelines: Option<Res<UiPipelines>>,
     gpu: Res<UiGpu>,
     cache: Res<PipelineCache>,
+    mut binds: Local<BindGroupCache>,
     mut ctx: RenderContext,
 ) {
     let (Some(frame), Some(p)) = (frame, pipelines) else { return };
     let target = view.into_inner();
     let gpu = &*gpu;
     let Some(t) = gpu.targets.as_ref().filter(|t| t.size == frame.viewport) else { return };
-    let (Some(vb), Some(pb), Some(db), Some(ib), Some(draws_group)) =
-        (&gpu.vertices, &gpu.paint_coords, &gpu.draw_ids, &gpu.indices, &gpu.draws_group)
-    else {
+    let (Some(buffer), Some(draws_group)) = (&gpu.frame, &gpu.draws_group) else {
         return;
     };
     let get = |id: CachedRenderPipelineId| cache.get_render_pipeline(id).cloned();
@@ -431,6 +444,11 @@ fn ui_pass(
     let device = ctx.render_device().clone();
     let full_layout = cache.get_bind_group_layout(&p.full_layout);
     let post = target.post_process_write();
+    // PORT(choice): the scene's and the result's bind groups are kept across frames and made again only when what
+    // they bind changes (`BindGroupCache`: the view's two main textures in turn, the UI target, its sampler), instead
+    // of two made and freed every frame. The same resources bound, so the same passes. wgpu's bind groups are the
+    // port's renderer; the console's GPU had none.
+    binds.next_frame();
     match frame.clear {
         Some([r, g, b]) => {
             let _ = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
@@ -451,7 +469,8 @@ fn ui_pass(
             });
         }
         None => {
-            let g = device.create_bind_group(
+            let g = binds.get(
+                &device,
                 "ssx_ui_scene",
                 &full_layout,
                 &BindGroupEntries::sequential((post.source, &p.linear)),
@@ -483,20 +502,22 @@ fn ui_pass(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_vertex_buffer(0, vb.slice(..));
-        rp.set_vertex_buffer(1, pb.slice(..));
-        rp.set_vertex_buffer(2, db.slice(..));
-        rp.set_index_buffer(ib.slice(..), IndexFormat::Uint32);
-        rp.set_bind_group(0, draws_group, &[]);
-        rp.set_stencil_reference(0);
-        replay(&mut rp, &frame.ops, gpu, &|b, mode| match mode {
-            0 => content.get(&b),
-            1 => Some(&mask_incr),
-            _ => Some(&mask_decr),
-        });
+        let r = &gpu.regions;
+        if r.drawn() {
+            rp.set_vertex_buffer(0, buffer.slice(r.vertices.clone()));
+            rp.set_vertex_buffer(1, buffer.slice(r.paint_coords.clone()));
+            rp.set_vertex_buffer(2, buffer.slice(r.draw_ids.clone()));
+            rp.set_index_buffer(buffer.slice(r.indices.clone()), IndexFormat::Uint32);
+            rp.set_bind_group(0, draws_group, &[]);
+            rp.set_stencil_reference(0);
+            replay(&mut rp, &frame.ops, gpu, &|b, mode| match mode {
+                0 => content.get(&b),
+                1 => Some(&mask_incr),
+                _ => Some(&mask_decr),
+            });
+        }
     }
-    let g =
-        device.create_bind_group("ssx_ui_result", &full_layout, &BindGroupEntries::sequential((&t.color, &p.linear)));
+    let g = binds.get(&device, "ssx_ui_result", &full_layout, &BindGroupEntries::sequential((&t.color, &p.linear)));
     fullscreen(
         ctx.command_encoder(),
         "ssx_ui_result_out",
@@ -504,4 +525,43 @@ fn ui_pass(
         true,
         Full { pipeline: &out, groups: vec![g] },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{DRAW_FLOATS, UiFrame, stage};
+
+    #[test]
+    fn the_frames_arrays_are_staged_in_one_run_of_little_endian_bytes() {
+        let mut draw = [0.0; DRAW_FLOATS];
+        draw[0] = 1.5;
+        draw[DRAW_FLOATS - 1] = -2.0;
+        let frame = UiFrame {
+            draws: Arc::new(vec![draw, [0.25; DRAW_FLOATS]]),
+            vertices: Arc::new(vec![[1.0, 2.0], [3.0, 4.0], [5.0, -0.0]]),
+            paint_coords: Arc::new(vec![[0.5, 0.5], [0.0, 1.0], [1.0, 0.0]]),
+            draw_ids: Arc::new(vec![0, 0, 1]),
+            indices: Arc::new(vec![0, 1, 2]),
+            ..UiFrame::default()
+        };
+        let mut out = vec![7; 3];
+        let r = stage(&mut out, &frame);
+        let draws = 2 * DRAW_FLOATS as u64 * 4;
+        assert_eq!(r.vertices, draws..draws + 24);
+        assert_eq!(r.paint_coords, draws + 24..draws + 48);
+        assert_eq!(r.draw_ids, draws + 48..draws + 60);
+        assert_eq!(r.indices, draws + 60..draws + 72);
+        assert_eq!(out.len() as u64, draws + 72);
+        assert!(r.drawn());
+        assert_eq!(out[..4], 1.5f32.to_le_bytes());
+        assert_eq!(out[(draws - 4) as usize..draws as usize], 0.25f32.to_le_bytes());
+        assert_eq!(out[(draws + 20) as usize..(draws + 24) as usize], (-0.0f32).to_le_bytes());
+        assert_eq!(out[(draws + 56) as usize..(draws + 60) as usize], 1u32.to_le_bytes());
+
+        let r = stage(&mut out, &UiFrame::default());
+        assert!(out.is_empty());
+        assert!(!r.drawn());
+    }
 }

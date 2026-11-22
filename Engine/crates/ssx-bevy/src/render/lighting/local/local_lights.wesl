@@ -168,13 +168,13 @@ fn projection_uv(pl: vec3<f32>, a2: vec3<f32>) -> vec2<f32> {
 }
 
 @if(SSX_LOCAL_LIGHTS)
-fn light_source(
-    base: u32, bound: u32, planes: u32, n: vec3<f32>, v: vec3<f32>, ecc: f32, lli: f32
-) -> vec4<f32> {
+fn outside(bound: u32) -> bool {
     let b = word(bound);
-    if distance(ll_position, b.xyz) > b.w {
-        return vec4(1.0);
-    }
+    return distance(ll_position, b.xyz) > b.w;
+}
+
+@if(SSX_LOCAL_LIGHTS)
+fn light_source(base: u32, planes: u32, n: vec3<f32>, v: vec3<f32>, ecc: f32, lli: f32) -> vec4<f32> {
     let r3 = word(base + 3u);
     let flags = bitcast<u32>(r3.w);
     let r6 = word(base + 6u);
@@ -261,17 +261,6 @@ fn bin_at(base: u32) -> u32 {
     return (flags & 3u) * 2u + ((flags >> 2u) & 1u);
 }
 
-@if(SSX_LOCAL_LIGHTS)
-fn blend_light(
-    l8: vec4<f32>, base: u32, bound: u32, planes: u32, n: vec3<f32>, v: vec3<f32>, ecc: f32, lli: f32
-) -> vec4<f32> {
-    let src = light_source(base, bound, planes, n, v, ecc, lli);
-    if any(src < vec4(1.0)) {
-        return blend8(l8, src);
-    }
-    return l8;
-}
-
 fn apply(l8_in: vec4<f32>, n: vec3<f32>, v: vec3<f32>, ecc: f32, lli: f32) -> vec4<f32> {
     var l8 = l8_in;
 @if(SSX_LOCAL_LIGHTS) {
@@ -279,27 +268,54 @@ fn apply(l8_in: vec4<f32>, n: vec3<f32>, v: vec3<f32>, ecc: f32, lli: f32) -> ve
     let h1 = words(1u);
     let h2 = words(2u);
     let h3 = words(3u);
-    var next_dynamic = 0u;
-    let bounds = h3.w + 11u;
+    let dynamic_bounds = h3.w + 11u;
+    let dynamic_count = select(h3.y, 0u, outside(dynamic_bounds));
+    var list = vec2(0u);
     if h0.w != 0u {
         let cell = vec2<i32>(floor((ll_position.xz - vec2(bitcast<f32>(h0.x), bitcast<f32>(h0.y))) / bitcast<f32>(h0.z)));
         let inside = all(cell >= vec2(0)) && all(cell < vec2<i32>(h1.xy));
-        let list = words(h1.z + select(h1.x * h1.y, u32(cell.y) * h1.x + u32(cell.x), inside));
-        for (var k = 0u; k < list.y; k++) {
-            let at = list.x + k;
-            let index = words(h1.w + at / 4u)[at % 4u];
-            let base = h2.x + index * RECORD;
-            let bin = bin_at(base);
-            while next_dynamic < h3.y && bin_at(h3.x + next_dynamic * RECORD) < bin {
-                let d = h3.x + next_dynamic * RECORD;
-                l8 = blend_light(l8, d, bounds + h0.w + next_dynamic, h2.y, n, v, ecc, lli);
-                next_dynamic++;
-            }
-            l8 = blend_light(l8, base, bounds + index, h2.y, n, v, ecc, lli);
-        }
+        list = words(h1.z + select(h1.x * h1.y, u32(cell.y) * h1.x + u32(cell.x), inside)).xy;
     }
-    for (; next_dynamic < h3.y; next_dynamic++) {
-        l8 = blend_light(l8, h3.x + next_dynamic * RECORD, bounds + h0.w + next_dynamic, h2.y, n, v, ecc, lli);
+    var k = 0u;
+    var next_dynamic = 0u;
+    var listed = false;
+    var listed_base = 0u;
+    var listed_bin = 0u;
+    // PORT(choice): each list entry's bounds are tested before its light's index, record and bin are read; the dynamic
+    // records of the lower bins are multiplied in before the next listed light inside its bounds, all of them in one
+    // loop with one evaluation of a light (`light_source`) in it; the 8-bit products and their order are the same. The
+    // console drew each visible light's volume in its bin's order (DL_LightBufferPass, StaticLightsRenderObj before
+    // DynamicLightsRenderObj per bin).
+    loop {
+        if !listed {
+            while k < list.y && outside(h2.z + list.x + k) {
+                k++;
+            }
+            if k < list.y {
+                let at = list.x + k;
+                listed_base = h2.x + words(h1.w + at / 4u)[at % 4u] * RECORD;
+                listed_bin = bin_at(listed_base);
+                listed = true;
+                k++;
+            }
+        }
+        var base = listed_base;
+        if next_dynamic < dynamic_count && (!listed || bin_at(h3.x + next_dynamic * RECORD) < listed_bin) {
+            base = h3.x + next_dynamic * RECORD;
+            let bound = dynamic_bounds + 1u + next_dynamic;
+            next_dynamic++;
+            if outside(bound) {
+                continue;
+            }
+        } else if listed {
+            listed = false;
+        } else {
+            break;
+        }
+        let src = light_source(base, h2.y, n, v, ecc, lli);
+        if any(src < vec4(1.0)) {
+            l8 = blend8(l8, src);
+        }
     }
 }
     return l8;

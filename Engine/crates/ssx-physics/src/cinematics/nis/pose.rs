@@ -1,5 +1,7 @@
 use glam::{Quat, Vec3};
-use ssx_assets::nis::{NisActor, NisClip, ROLE_CAMERA1, ROLE_CHARACTER1, ROLE_GHOST1, ROLE_HELICOPTER1};
+use ssx_assets::nis::{
+    LayerClock, LayerSource, NisActor, NisClip, NisLayer, ROLE_CAMERA1, ROLE_CHARACTER1, ROLE_GHOST1, ROLE_HELICOPTER1,
+};
 use ssx_formats::ant_anim::Pose;
 
 use super::{IntroState, NisView, Rt, Side, compose, inverse, rt};
@@ -28,9 +30,37 @@ impl IntroState {
     }
 
     fn side_joint(&self, s: &Side, role: i64, joint: &str) -> Option<Rt> {
-        let (_, clip, p) = self.side_pose(s, role)?;
-        let (q, t) = clip.joint(&p, self.assets.nis.rig(role), joint);
-        Some(rt(q, t))
+        let (a, clip, p) = self.side_pose(s, role)?;
+        let (qn, tn) = (format!("{joint}.q"), format!("{joint}.t"));
+        let (mut q, mut t) = (clip.quat(&p, &qn), clip.vec3(&p, &tn));
+        for (l, at, v) in self.side_layers(s, a) {
+            q = l.over_quat(at, v, &qn, q);
+            t = l.over_vec3(at, v, &tn, t);
+        }
+        let (dq, dt) = self.assets.nis.rig(role).joint_default(joint);
+        Some(rt(q.unwrap_or(dq), t.unwrap_or(dt)))
+    }
+
+    fn side_layers<'a>(&'a self, s: &'a Side, a: &'a NisActor) -> impl Iterator<Item = (&'a NisLayer, f32, f32)> {
+        let camera = a.role == ROLE_CAMERA1;
+        let first = camera && self.side_element(s, a).piece.is_none();
+        a.layers.iter().filter(move |l| camera && (first || l.clock == LayerClock::Node)).map(move |l| {
+            let t = match l.clock {
+                LayerClock::Node => self.node_time(s),
+                LayerClock::Element(c) => c.clip_time(self.side_time(s)),
+            };
+            (l, l.time(t), self.layer_signal(l))
+        })
+    }
+
+    fn layer_signal(&self, l: &NisLayer) -> f32 {
+        match &l.source {
+            LayerSource::Clip(_) => 0.0,
+            LayerSource::BlendArray { signal, signal_default, .. } => match self.camera_wind {
+                Some(v) if signal == "FLT_NisWindValue" => v,
+                _ => *signal_default,
+            },
+        }
     }
 
     fn blended(&self, ticks: f32, role: i64, joint: &str, f: impl Fn(&Side) -> Option<Rt>) -> Option<Rt> {
@@ -158,7 +188,7 @@ impl IntroState {
             if t1 >= t0 {
                 return self.element_steps(s, a, t0, t1);
             }
-            let end = self.scene_of(s.scene).loop_end?;
+            let end = self.scene_of(s.scene).looping.as_ref()?.length;
             match (self.element_steps(s, a, t0, end), self.element_steps(s, a, 0.0, t1)) {
                 (Some(x), Some(y)) => Some(compose(x, y)),
                 (x, y) => x.or(y),
@@ -275,8 +305,12 @@ impl IntroState {
 
     fn camera_float(&self, ticks: f32, dof: &str) -> Option<f32> {
         let value = |s: &Side| {
-            let (_, clip, p) = self.side_pose(s, ROLE_CAMERA1)?;
-            clip.float(&p, dof)
+            let (a, clip, p) = self.side_pose(s, ROLE_CAMERA1)?;
+            let mut v = clip.float(&p, dof);
+            for (l, at, sig) in self.side_layers(s, a) {
+                v = l.over_float(at, sig, dof, v);
+            }
+            v
         };
         let sides = self.sides_at(ticks);
         let mut acc: Option<f32> = None;
@@ -296,8 +330,10 @@ mod tests {
     use std::sync::Arc;
 
     use glam::{Quat, Vec3};
+    use ssx_assets::anim_graph::LoopFields;
     use ssx_assets::nis::{
-        Blend, Channel, ElementClock, IntroNis, NisActor, NisClip, NisPiece, NisScene, ROLE_CHARACTER1, Rig, Tags,
+        Blend, Channel, ElementClock, IntroNis, NisActor, NisClip, NisLoop, NisPiece, NisScene, ROLE_CHARACTER1, Rig,
+        Tags,
     };
     use ssx_formats::ant_anim::{Animation, AnimationInfo, RawAnimation, Skeleton};
 
@@ -345,14 +381,18 @@ mod tests {
             tags: Tags::default(),
             clock: ElementClock::SEQUENCE,
             pieces: Vec::new(),
+            layers: Vec::new(),
         }
     }
 
     fn scene(node: &str, loop_end: Option<f32>, actor: NisActor, signals: &[&str]) -> NisScene {
+        let fields = |loop_end| LoopFields { loop_control: false, start: 0.0, loop_start: 0.0, loop_end };
+        let looping =
+            loop_end.map(|e| NisLoop::of_scene(fields(e), false, std::slice::from_ref(&actor)).expect("the loop"));
         NisScene {
             node: node.into(),
             sequence: node.into(),
-            loop_end,
+            looping,
             actors: vec![actor],
             node_tags: Tags::default(),
             problems: Vec::new(),
@@ -480,6 +520,12 @@ mod tests {
     }
 
     fn cut_to(ready: NisActor, jump: NisActor, jump_clips: Vec<usize>, piece_clips: Vec<usize>) -> IntroState {
+        let mut s = intro(ready, jump, jump_clips, piece_clips);
+        s.transition();
+        s
+    }
+
+    fn intro(ready: NisActor, jump: NisActor, jump_clips: Vec<usize>, piece_clips: Vec<usize>) -> IntroState {
         let nis = IntroNis {
             binding: "nis_binding_test".into(),
             controller: "SF_test".into(),
@@ -518,9 +564,27 @@ mod tests {
             loaded: None,
         });
         let world = crate::testutil::world(crate::testutil::plane(50.0, 0.0));
-        let mut s = IntroState::new(assets, &world, Vec3::ZERO, Quat::IDENTITY).expect("the intro on the plane");
-        s.transition();
-        s
+        IntroState::new(assets, &world, Vec3::ZERO, Quat::IDENTITY).expect("the intro on the plane")
+    }
+
+    #[test]
+    fn the_ready_loop_wraps_at_its_sequences_end() {
+        let glide = |f: f32| Vec3::new(0.05 * f, -0.2 * f, 0.15 * f);
+        let keys = [(0, Quat::IDENTITY, glide(0.0)), (100, Quat::IDENTITY, glide(100.0))];
+        let toc = Some(("VEC_NisPosition", "QUAT_NisOrientation"));
+        let go = actor(clip("go", true, &keys), None);
+        let mut s = intro(actor(clip("ready", false, &keys), toc), go, vec![usize::MAX], Vec::new());
+        let (q, p) = s.toc_frame(s.assets.nis.ready.actor(ROLE_CHARACTER1).expect("rider"));
+        let at = |s: &IntroState, f: f32| {
+            let root = s.placed_root().expect("the TOC places the rider");
+            assert!(root.1.distance(p + q * glide(f)) < 1e-4, "at clip frame {f}: {root:?}");
+        };
+        for update in 1..=60 {
+            s.advance(2.0);
+            let ticks = 2.0 * update as f32;
+            assert_eq!(s.side_time(&s.side()), ticks % 100.0, "update {update}");
+            at(&s, ticks % 100.0);
+        }
     }
 
     #[test]

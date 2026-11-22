@@ -215,6 +215,12 @@ fn intro_of_binding(
         (ready, end.node, end.blend.clone(), false, end.start)
     };
     let (ready, jump) = (walk.scene(&ready)?, walk.scene(&jump)?);
+    if jump_start > 0.0 && camera_layered(&jump) {
+        bail!(
+            "{binding}: the last scene {} has camera layers and is entered at tick {jump_start} (not ported)",
+            jump.node
+        );
+    }
     let controller = sf.name().to_string();
     let requires_wingsuit = b.bool("RequiresWingsuit").unwrap_or(false);
     let entry_blend = bind.entry_blend()?;
@@ -237,6 +243,10 @@ fn intro_of_binding(
         ready_loop,
         jump_start,
     })
+}
+
+fn camera_layered(sc: &NisScene) -> bool {
+    sc.actor(ROLE_CAMERA1).is_some_and(|a| !a.layers.is_empty())
 }
 
 pub fn for_character_of_interest(name: Option<&str>, character: &str) -> bool {
@@ -364,6 +374,9 @@ fn cabin_chain<'a>(
         let next = db.get(t.guid("To").context("transition without target")?).context("target node")?;
         let blend = walk.transition_blend(&t, scene.as_ref())?;
         if let Some(sc) = scene {
+            if start > 0.0 && camera_layered(&sc) {
+                bail!("{}: a scene with camera layers entered at tick {start} (not ported)", node.name());
+            }
             let tuning_offset = sc.node_tags.tuning_offset;
             out.push(CabinScene { tuning_offset, scene: sc, start, end, window, blend: blend.clone(), skip: None });
             nodes.push(node);

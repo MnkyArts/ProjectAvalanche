@@ -4723,6 +4723,15 @@
  ],
  "vendored": [
   {
+   "name": "FidelityFX Super Resolution 1",
+   "version": "1.0 (a21ffb8f)",
+   "license": "MIT",
+   "authors": [
+    "Copyright (c) 2021 Advanced Micro Devices, Inc.",
+    "Copyright (c) 2014 Michal Drobot (ffx_a.h's float approximations)"
+   ]
+  },
+  {
    "name": "Noto Sans",
    "version": "2.015",
    "license": "OFL-1.1",
@@ -4833,7 +4842,7 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "asset-viewer 0.4.1",
+   "package": "asset-viewer 0.4.2",
    "reason": "a package of this workspace"
   },
   {
@@ -4841,19 +4850,19 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "avalanche-game 0.4.1",
+   "package": "avalanche-game 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-launcher 0.4.1",
+   "package": "avalanche-launcher 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-master 0.4.1",
+   "package": "avalanche-master 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "avalanche-server 0.4.1",
+   "package": "avalanche-server 0.4.2",
    "reason": "a package of this workspace"
   },
   {
@@ -5705,6 +5714,10 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
+   "package": "profiling-procmacros 1.0.18",
+   "reason": "only with a feature the shipped builds leave off (development builds)"
+  },
+  {
    "package": "quick-error 2.0.1",
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
@@ -5869,83 +5882,83 @@
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
   },
   {
-   "package": "ssx-assets 0.4.1",
+   "package": "ssx-assets 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-bevy 0.4.1",
+   "package": "ssx-bevy 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-content 0.4.1",
+   "package": "ssx-content 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-core 0.4.1",
+   "package": "ssx-core 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-discord 0.4.1",
+   "package": "ssx-discord 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-files 0.4.1",
+   "package": "ssx-files 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-formats 0.4.1",
+   "package": "ssx-formats 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-gameplay 0.4.1",
+   "package": "ssx-gameplay 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-lua 0.4.1",
+   "package": "ssx-lua 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-movie 0.4.1",
+   "package": "ssx-movie 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net 0.4.1",
+   "package": "ssx-net 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-join 0.4.1",
+   "package": "ssx-net-join 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-lan 0.4.1",
+   "package": "ssx-net-lan 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-ops 0.4.1",
+   "package": "ssx-net-ops 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-portmap 0.4.1",
+   "package": "ssx-net-portmap 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-net-proto 0.4.1",
+   "package": "ssx-net-proto 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-physics 0.4.1",
+   "package": "ssx-physics 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-rules 0.4.1",
+   "package": "ssx-rules 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-script 0.4.1",
+   "package": "ssx-script 0.4.2",
    "reason": "a package of this workspace"
   },
   {
-   "package": "ssx-ui 0.4.1",
+   "package": "ssx-ui 0.4.2",
    "reason": "a package of this workspace"
   },
   {
@@ -6019,6 +6032,14 @@
   {
    "package": "tokio-tungstenite 0.30.0",
    "reason": "not linked by the game or the launcher (tools, tests, builds)"
+  },
+  {
+   "package": "tracing-chrome 0.7.2",
+   "reason": "only with a feature the shipped builds leave off (development builds)"
+  },
+  {
+   "package": "tracing-error 0.2.1",
+   "reason": "only with a feature the shipped builds leave off (development builds)"
   },
   {
    "package": "tracing-oslog 0.3.0",

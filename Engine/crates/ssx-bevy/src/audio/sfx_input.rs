@@ -540,6 +540,14 @@ impl SpeechLanguage {
     pub fn code(self) -> &'static str {
         self.0
     }
+
+    pub fn name(self) -> &'static str {
+        match self.0 {
+            "fre" => "French",
+            "ger" => "German",
+            _ => "English",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -562,7 +570,7 @@ pub struct SpeechDrop<'a> {
     pub rider: &'a ssx_assets::sfx::RiderAudioInfo,
     pub track: &'a ssx_assets::sfx::TrackAudioInfo,
     pub pilot: (i32, String),
-    pub session: &'a Session,
+    pub kind: ssx_assets::sfx::speech::game::EventKind,
     pub drop: Option<u32>,
     pub deadly_descent: bool,
     pub rng: ssx_assets::sfx::speech::context::SpeechRandom,
@@ -581,7 +589,7 @@ impl SpeechDrop<'_> {
             pilot_id: self.pilot.0,
             pilot: self.pilot.1,
             region_id: self.track.region_id,
-            kind: speech_kind(self.session),
+            kind: self.kind,
             deadly_descent: self.deadly_descent,
             rng: self.rng,
             random: self.random,
@@ -626,14 +634,20 @@ pub struct IntroFrame {
 
 struct NisScenes {
     assets: std::sync::Arc<ssx_physics::nis::IntroAssets>,
-    tags: [Vec<ssx_assets::sfx::nis::NisAudioTag>; 2],
-    inside: [bool; 2],
-    ready: [bool; 2],
+    tags: Vec<Vec<ssx_assets::sfx::nis::NisAudioTag>>,
 }
 
 impl NisScenes {
+    fn index(i: &ssx_physics::nis::IntroState) -> usize {
+        let cabin = i.assets.nis.cabin.len();
+        match (i.cabin, i.scene) {
+            (Some(c), _) => c.index,
+            (None, ssx_physics::nis::Scene::Ready { .. }) => cabin,
+            (None, ssx_physics::nis::Scene::Jump { .. }) => cabin + 1,
+        }
+    }
+
     fn load(big_root: &std::path::Path, i: &std::sync::Arc<ssx_physics::nis::IntroAssets>) -> anyhow::Result<Self> {
-        let mut out = Self { assets: i.clone(), tags: Default::default(), inside: [false; 2], ready: [false; 2] };
         let read;
         let db = match i.loaded.as_deref() {
             Some(db) => db,
@@ -645,19 +659,19 @@ impl NisScenes {
                 &read
             }
         };
-        for (k, scene) in [&i.nis.ready, &i.nis.jump].into_iter().enumerate() {
-            let all = ssx_assets::sfx::nis::nis_audio_tags_in(db, &scene.sequence)?;
-            out.tags[k] = all
-                .into_iter()
-                .filter(|t| {
-                    t.role == ssx_assets::nis::ROLE_CHARACTER1 && t.system == ssx_assets::sfx::nis::ANT_TAGS_SYSTEM
-                })
-                .collect();
-            let signals = ssx_assets::sfx::nis::nis_node_signals_in(db, &scene.node)?;
-            out.inside[k] = i.heli.is_ok() && signals.iter().any(|n| n == "BLN_InsideHeli");
-            out.ready[k] = signals.iter().any(|n| n == "BLN_IsNisReadyLoop");
-        }
-        Ok(out)
+        let scenes = i.nis.cabin.iter().map(|c| &c.scene).chain([&i.nis.ready, &i.nis.jump]);
+        let tags = scenes
+            .map(|scene| {
+                let all = ssx_assets::sfx::nis::nis_audio_tags_in(db, &scene.sequence)?;
+                Ok(all
+                    .into_iter()
+                    .filter(|t| {
+                        t.role == ssx_assets::nis::ROLE_CHARACTER1 && t.system == ssx_assets::sfx::nis::ANT_TAGS_SYSTEM
+                    })
+                    .collect())
+            })
+            .collect::<anyhow::Result<_>>()?;
+        Ok(Self { assets: i.clone(), tags })
     }
 }
 
@@ -700,7 +714,6 @@ impl IntroAudio {
 
     pub fn frame(&mut self, s: &RiderState, heli: Option<&ssx_physics::helicopter::Helicopter>) -> IntroFrame {
         use ssx_assets::sfx::heli::HeliTransform;
-        use ssx_physics::nis::Scene;
         let intro = s.start.as_ref().and_then(|l| l.intro.as_ref());
         if let Some(i) = intro
             && self.scenes.as_ref().is_none_or(|n| !std::sync::Arc::ptr_eq(&n.assets, &i.assets))
@@ -710,9 +723,9 @@ impl IntroAudio {
         }
         let scenes =
             self.scenes.as_ref().filter(|n| intro.is_some_and(|i| std::sync::Arc::ptr_eq(&n.assets, &i.assets)));
-        let k = intro.map(|i| usize::from(matches!(i.scene, Scene::Jump { .. })));
+        let k = intro.map(NisScenes::index);
         let active = s.start.is_some();
-        let ready = k.zip(scenes).is_some_and(|(k, n)| n.ready[k]);
+        let ready = intro.is_some_and(|i| i.in_ready_loop());
         let now = match (active, ready) {
             (false, _) => 0u8,
             (true, false) => 1,
@@ -728,7 +741,8 @@ impl IntroAudio {
         if self.flow == 0 && self.reported.0 != 0 {
             self.audio_type = 0;
         }
-        self.reported = (self.flow, k.zip(scenes).is_some_and(|(k, n)| n.inside[k]));
+        let inside = intro.is_some_and(|i| i.assets.heli.is_ok() && i.signals().iter().any(|n| n == "BLN_InsideHeli"));
+        self.reported = (self.flow, inside);
         self.flow = now;
         if let Some(h) = heli {
             let (q, p) = h.traj;

@@ -16,7 +16,7 @@ struct LdrTonemap {
     exposure: vec4<f32>,
 }
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> light: gl::GameLight;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage, read> light: gl::GameLight;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> params: HeliTranslucentParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var normal_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var object_sampler: sampler;

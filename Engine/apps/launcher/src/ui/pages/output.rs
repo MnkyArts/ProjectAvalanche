@@ -2,15 +2,22 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::app::Launcher;
 use crate::command;
+use crate::ui::details::Detail;
+use crate::ui::rows::{self, Row};
 use crate::ui::theme;
 use crate::ui::widgets::{self, Kind};
 
 impl Launcher {
     pub fn output_section(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.show_command, "Show commands");
-            self.started_line(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let shown = self.show_command;
+        rows::toggle(ui, Row::new("Show commands"), &mut self.show_command, || {
+            Detail::new("Show commands")
+                .text("The command lines Play and the tools' Launch run, to copy (with the options chosen here).")
+                .now(if shown { "On" } else { "Off" }, None)
         });
+        ui.spacing_mut().item_spacing.y = 6.0;
+        self.started_line(ui);
         if self.show_command {
             let big = self.settings.big_root();
             let (game, tool) = (command::game(&self.settings, &big), command::viewer(&self.settings, &big));
@@ -24,8 +31,8 @@ impl Launcher {
             });
         }
         ui.add_space(4.0);
-        let title = if self.started_game { "Game output" } else { "Viewer output" };
-        widgets::heading(ui, title);
+        let title = format!("{} output", self.started.name());
+        widgets::heading(ui, &title);
         match &self.viewer {
             Some(v) => {
                 let lines = v.log.lock().map(|l| l.join("\n")).unwrap_or_default();

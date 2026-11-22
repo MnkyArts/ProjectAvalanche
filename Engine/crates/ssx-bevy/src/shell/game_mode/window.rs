@@ -23,6 +23,13 @@ impl WindowHidden {
         });
         WindowHidden { test, ..default() }
     }
+
+    pub(super) fn restore_to(&mut self, to: &WinitSettings) -> bool {
+        if self.hidden {
+            self.saved = Some(to.clone());
+        }
+        self.hidden
+    }
 }
 
 // PORT(choice): a minimised or occluded window updates at most `HIDDEN_UPDATES` times a second and builds no UI render
@@ -57,7 +64,9 @@ pub fn hidden_frame(
         return;
     }
     state.hidden = hidden;
-    scene.window_hidden = hidden;
+    if let Some(scene) = scene.state() {
+        scene.window_hidden = hidden;
+    }
     if hidden {
         let wait = Duration::from_secs_f64(1.0 / HIDDEN_UPDATES);
         let low = UpdateMode::reactive_low_power(wait);

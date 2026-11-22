@@ -628,6 +628,28 @@ mod tests {
         assert!(one.frame(2).is_none());
     }
 
+    #[test]
+    fn ram_readers_give_the_sounds_frames() {
+        let sounds = [
+            RamSound { channels: 1, looped: true, sections: vec![vec![1.0, 2.0], vec![3.0, 4.0, 5.0]] },
+            RamSound { channels: 2, looped: true, sections: vec![(0..14).map(|x| x as f32).collect()] },
+            RamSound { channels: 1, looped: false, sections: vec![vec![1.0, 2.0, 3.0]] },
+            RamSound { channels: 1, looped: true, sections: vec![vec![1.0], vec![2.0]] },
+        ];
+        for r in &sounds {
+            let mut reader = r.reader();
+            let mut i = 0;
+            for step in [0, 1, 2, 3, 5, 1, 4, 4, 2, 0, 3, 1, 7, 2, 30, 1, 1] {
+                i += step;
+                assert_eq!(reader.frame(i), r.frame(i), "frame {i}");
+                assert_eq!(reader.frame(i + 1), r.frame(i + 1), "frame {}", i + 1);
+            }
+            for i in [3, 40, 2, 0, 9, 8, 100] {
+                assert_eq!(reader.frame(i), r.frame(i), "frame {i} after a jump");
+            }
+        }
+    }
+
     fn tricky_table() -> (HashMap<i32, (String, String)>, HashMap<i32, String>) {
         let entry = |p: &str, v: &str| (p.to_string(), v.to_string());
         let table = HashMap::from([

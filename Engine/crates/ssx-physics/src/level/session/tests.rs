@@ -197,6 +197,101 @@ tr:AddCondition( NOT( TriggerVolumeCondition( "", "Player1", "Touch" ) ) )
 }
 
 #[test]
+fn the_scripts_built_ahead_are_the_ones_the_first_execution_builds() {
+    use crate::triggers::{IG_TRIGGER, TriggerEntity};
+    use ssx_content::policy::ClientMods;
+    const SCRIPT: &str = r#"
+local s = CreateStateSet( "T" )
+local st = s:AddState( "Wait" )
+local tr = st:AddTransition( "In" )
+tr:AddCondition( TriggerVolumeCondition( "", "Player1", "Touch" ) )
+st = s:AddState( "In" )
+st:AddUpdateTrack( PrecipitationTrack( 0.5 ) )
+st:AddEnterTrack( SetNamedFlagTrack( "inside", 1, TEMPORARY ) )
+"#;
+    const OBJECTIVES: &[u8] = br#"
+BeginObjective("A")
+	WAIT_CheckNamedFlag("HintSeen")
+	DO_SetPermanentNamedFlag("HintFromScript", true)
+EndObjective()
+"#;
+    let root = std::env::temp_dir().join(format!("ssx-scripts-ahead-{}", std::process::id()));
+    let make = || {
+        let mut w = world(plane(400.0, 0.3));
+        let (object, instance) = (7, 9);
+        w.triggers.volumes.push(TriggerVolume {
+            name: "box".into(),
+            type_text: "trigger".into(),
+            groups: IG_TRIGGER,
+            interacts: crate::triggers::interaction_mask(IG_TRIGGER),
+            shape: VolumeShape::Box { half_extents: Vec3::new(50.0, 200.0, 4.0) },
+            centre: Vec3::new(0.0, 0.0, 12.0),
+            rotation: glam::Quat::IDENTITY,
+            object,
+            instance,
+            placement: 0,
+            scope: TriggerScope::Track,
+        });
+        let position = Vec3::new(0.0, 0.0, 12.0);
+        let (placement, scope, rotation) = (0, TriggerScope::Track, glam::Quat::IDENTITY);
+        w.triggers.entities.push(TriggerEntity { object, instance, placement, scope, position, rotation });
+        w.triggers.scripts.insert(object, ("scripts\\t.lua".into(), std::sync::Arc::from(SCRIPT)));
+        let list = vec!["o.lua".into()];
+        let mut d = crate::objectives::DropScripts { list, root: Some(root.clone()), ..Default::default() };
+        d.sources.insert("o.lua".into(), std::sync::Arc::from(OBJECTIVES));
+        w.survival.objectives = Some(std::sync::Arc::new(d));
+        std::sync::Arc::new(w)
+    };
+    let seen = crate::objectives::Name::new("HintSeen").hash;
+    let w = make();
+    let seeded = |flag: u32| {
+        let mut x = Session::default();
+        x.seed_named_flags([flag]);
+        x
+    };
+    let content = ssx_assets::content::GameContent::of(&root);
+    let ride = |ahead: Option<(u32, std::sync::Arc<crate::rider::World>, ClientMods)>| {
+        let mut s = RiderState::spawn(&w, Vec3::new(0.0, 50.0, 0.0), Vec3::Z).expect("ground");
+        s.velocity = Vec3::Z * 0.4;
+        let mut x = seeded(seen);
+        if let Some((flag, from, policy)) = ahead {
+            let inputs = ScriptsInputs::of(&seeded(flag));
+            let build = std::thread::scope(|t| t.spawn(|| ScriptsBuild::ahead(inputs, from)).join().expect("built"));
+            x.scripts_ahead = Some(build);
+            content.set_sim_policy(policy);
+        }
+        let input = Input { tuck: 1.0, ..Input::default() };
+        let (mut states, mut inside) = (Vec::new(), false);
+        for _ in 0..60 {
+            x.execute(&mut s, &w, &input, &TrickInput::default(), 0.0, &RewindPad::default(), None);
+            let weather = x.controllers.as_ref().expect("controllers").weather.targets();
+            inside |= weather.0 == 0.5;
+            states.push(format!("{s:?} {:?} {weather:?} {:?}", x.objectives, x.permanent_named_flags()));
+        }
+        assert!(x.scripts_ahead.is_none(), "the first execution took the build or dropped it");
+        assert!(inside, "the entity's controller ran its track");
+        let hint = crate::objectives::Name::new("HintFromScript").hash;
+        assert!(x.permanent_named_flags().contains(&hint), "the seed let the objective pass");
+        (x.scripts_built_ahead, states)
+    };
+    let (taken, in_line) = ride(None);
+    assert!(!taken);
+    let any = ClientMods::Any;
+    let (taken, ahead) = ride(Some((seen, w.clone(), any)));
+    assert!(taken, "the same inputs: taken");
+    assert!(ahead == in_line, "the build made ahead rides as the one built in the first execution");
+    let (taken, other) = ride(Some((seen ^ 1, w.clone(), any)));
+    assert!(!taken, "another seed: not taken");
+    assert!(other == in_line, "built in the first execution instead");
+    let (taken, other) = ride(Some((seen, make(), any)));
+    assert!(!taken, "another world (equal, not the same): not taken");
+    assert!(other == in_line, "built in the first execution instead");
+    let (taken, other) = ride(Some((seen, w.clone(), ClientMods::None)));
+    assert!(!taken, "another simulation policy after the build: not taken");
+    assert!(other == in_line, "built in the first execution instead");
+}
+
+#[test]
 fn the_profiles_named_flags_seed_the_store_and_come_back() {
     use crate::objectives::{LevelObjectives, Name};
     let (seen, hint, temp) = (Name::new("HintSeen"), Name::new("HintFromScript"), Name::new("Temp"));
@@ -481,4 +576,76 @@ fn the_bodies_step_by_the_rider_s_restored_ticks() {
     }
     assert!(entered, "the rewind entered");
     assert!(restored >= 8, "the enter phase restores the pre-rewind's ticks: {restored} executions differ");
+}
+
+#[test]
+fn a_restart_builds_the_levels_objectives_anew() {
+    use crate::objectives::{LevelObjectives, LoadWorld, Name};
+    use ssx_lua::game::objectives::{Node, Wait};
+    let script = br#"
+BeginObjective("Banner")
+	WAIT_ObjectiveMessage("Player1")
+EndObjective()
+"#;
+    let batch = [("t.lua".to_string(), script.to_vec())];
+    let mut o = LevelObjectives::load(&[], &batch, LoadWorld::default(), false, None, &[]);
+    assert!(o.report.problems.is_empty(), "{:?}", o.report.problems);
+    o.runner.flags.set(&Name::new("Kept"), true, false);
+    o.runner.flags.set(&Name::new("Dropped"), true, true);
+    let banner = |o: &LevelObjectives| match o.runner.waiting_at("Banner") {
+        Some(Node::Wait(Wait::ObjectiveMessage(m))) => (m.shown, m.time),
+        other => panic!("the banner's wait: {other:?}"),
+    };
+    if let Some(Node::Wait(Wait::ObjectiveMessage(m))) = o.runner.sets[1][0].nodes.get_mut(0) {
+        (m.shown, m.time) = (true, 3.0);
+    }
+    assert_eq!(banner(&o), (true, 3.0));
+    let mut s = Session { objectives: Some(o), ..Session::default() };
+    s.reset();
+    let o = s.objectives.as_ref().expect("objectives");
+    assert_eq!(banner(o), (false, 0.0), "a new node");
+    assert_eq!(o.runner.sets[1].len(), 1, "the batch's objective once");
+    let flags = &o.runner.flags;
+    assert!(flags.check(&Name::new("Kept")) && !flags.check(&Name::new("Dropped")));
+}
+
+#[test]
+fn a_restart_readies_the_hud_message() {
+    use tutorial::{HudMessage, Tutorial};
+    let dt = 1.0 / 30.0;
+    let mut s = Session { tutorial: Some(Tutorial::default()), ..Session::default() };
+    let t = s.tutorial.as_mut().expect("tutorial");
+    t.message.request(HudMessage::SHOWING, 5.0);
+    t.update(dt);
+    assert_eq!(t.message.current, HudMessage::SHOWING, "the tip shows");
+    s.reset();
+    let t = s.tutorial.as_mut().expect("tutorial");
+    t.update(dt);
+    assert_eq!(t.message.current, HudMessage::READY, "the restart's request taken");
+    t.message.request(HudMessage::SHOWING, 0.0);
+    for _ in 0..600 {
+        t.update(dt);
+    }
+    assert_eq!(t.message.current, HudMessage::SHOWING, "held after 20 s");
+}
+
+#[test]
+fn a_paused_frame_runs_the_hud_messages_seconds() {
+    use tutorial::{HudMessage, Tutorial};
+    let w = world(plane(400.0, 0.3));
+    let mut s = RiderState::spawn(&w, Vec3::new(0.0, 50.0, 0.0), Vec3::Z).expect("ground");
+    let mut x = Session { tutorial: Some(Tutorial::default()), ..Session::default() };
+    x.tutorial.as_mut().expect("tutorial").message.request(HudMessage::SHOWING, 4.0);
+    x.pause_begin();
+    x.paused_frame(&mut s, &w);
+    assert_eq!(x.tutorial.as_ref().expect("tutorial").message.current, HudMessage::SHOWING, "taken in the pause");
+    let current = |x: &Session| x.tutorial.as_ref().expect("tutorial").message.current;
+    for _ in 0..117 {
+        x.paused_frame(&mut s, &w);
+    }
+    assert_eq!(current(&x), HudMessage::SHOWING, "up for its seconds");
+    for _ in 0..6 {
+        x.paused_frame(&mut s, &w);
+    }
+    assert_eq!(current(&x), HudMessage::READY, "run out under the pause");
 }

@@ -186,3 +186,17 @@ fn the_goofy_grab_is_the_stance_mirror() {
         assert_eq!(mirrored_grab(g), g);
     }
 }
+
+#[test]
+fn location_stat_keys_hash_the_decimal_location() {
+    for (name, location) in [("HasCollectedThing", "Loc_A"), ("x", ""), ("Stat", "Cliff_07"), ("", "q")] {
+        let l = Name::new(location);
+        let key = StatKey { name: Name::new(name), scope: 0, location: Some(l.clone()) };
+        assert_eq!(key.key(), fnv1(format!("{name}{}", l.hash).as_bytes()));
+    }
+    for hash in [0, 7, 10, 4_294_967_295] {
+        let key = StatKey { name: Name::new("S"), scope: 0, location: Some(Name { hash, text: "".into() }) };
+        assert_eq!(key.key(), fnv1(format!("S{hash}").as_bytes()));
+    }
+    assert_eq!(fnv1_continue(fnv1(b"ab"), b"cd"), fnv1(b"abcd"));
+}

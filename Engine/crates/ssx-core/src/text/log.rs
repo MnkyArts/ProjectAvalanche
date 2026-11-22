@@ -69,25 +69,46 @@ impl Visit for Visitor<'_> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct QueuedStderr;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QueuedStdout;
+
 pub struct LineWriter {
+    stream: crate::output::Stream,
     keep: crate::output::Keep,
     line: Vec<u8>,
+}
+
+impl LineWriter {
+    fn new(stream: crate::output::Stream, meta: Option<&tracing::Metadata<'_>>) -> Self {
+        let keep = match meta {
+            Some(m) if *m.level() > tracing::Level::WARN => crate::output::Keep::Droppable,
+            _ => crate::output::Keep::Always,
+        };
+        LineWriter { stream, keep, line: Vec::new() }
+    }
 }
 
 impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for QueuedStderr {
     type Writer = LineWriter;
 
     fn make_writer(&'a self) -> LineWriter {
-        LineWriter { keep: crate::output::Keep::Always, line: Vec::new() }
+        LineWriter::new(crate::output::Stream::Err, None)
     }
 
     fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> LineWriter {
-        let keep = if *meta.level() <= tracing::Level::WARN {
-            crate::output::Keep::Always
-        } else {
-            crate::output::Keep::Droppable
-        };
-        LineWriter { keep, line: Vec::new() }
+        LineWriter::new(crate::output::Stream::Err, Some(meta))
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for QueuedStdout {
+    type Writer = LineWriter;
+
+    fn make_writer(&'a self) -> LineWriter {
+        LineWriter::new(crate::output::Stream::Out, None)
+    }
+
+    fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> LineWriter {
+        LineWriter::new(crate::output::Stream::Out, Some(meta))
     }
 }
 
@@ -105,7 +126,7 @@ impl std::io::Write for LineWriter {
 impl Drop for LineWriter {
     fn drop(&mut self) {
         if !self.line.is_empty() {
-            let _ = crate::output::line(crate::output::Stream::Err, self.keep, std::mem::take(&mut self.line));
+            let _ = crate::output::line(self.stream, self.keep, std::mem::take(&mut self.line));
         }
     }
 }

@@ -7,6 +7,7 @@
 
 use super::FfDevice;
 use crate::native_ev_codes as nec;
+use crate::wgi_reading::{raw_axis_value, raw_controller_guid, Readings, Timestamped};
 use crate::{utils, AxisInfo, Event, EventType, PlatformError, PowerInfo};
 
 #[cfg(feature = "serde-serialize")]
@@ -26,7 +27,7 @@ use windows::Gaming::Input::{
 };
 use windows::System::Power::BatteryStatus;
 
-const SDL_HARDWARE_BUS_USB: u32 = 0x03;
+// Project Avalanche patch T25: SDL_HARDWARE_BUS_USB (0x03) moved to `crate::wgi_reading` with the GUID.
 // const SDL_HARDWARE_BUS_BLUETOOTH: u32 = 0x05;
 
 // The general consensus is that standard xbox controllers poll at ~125 hz which
@@ -140,8 +141,11 @@ impl Gilrs {
                 let mut controllers: Vec<RawGameController> = Vec::new();
                 // To avoid allocating every update, store old and new readings for every controller
                 // and swap their memory
-                let mut readings: Vec<(HSTRING, Reading, Reading)> = Vec::new();
+                // Project Avalanche patch T25: the last taken reading and the poll's buffer, taken as SDL takes a
+                // reading (`crate::wgi_reading`).
+                let mut readings: Vec<(HSTRING, Readings<Reading>)> = Vec::new();
                 let mut last_failed_get_id: Option<Instant> = None;
+                let mut last_failed_reading: Option<Instant> = None;
                 loop {
                     match stop_rx.try_recv() {
                         Ok(_) => break,
@@ -183,40 +187,50 @@ impl Gilrs {
                         let index = match readings.iter().position(|(other_id, ..)| id == *other_id)
                         {
                             None => {
-                                let reading = match WgiGamepad::FromGameController(controller) {
+                                // Project Avalanche patch T25: a first reading that fails is tried again at the
+                                // next poll (gilrs-core 0.6.8 unwrapped it, which ended this thread and with it every
+                                // controller's input).
+                                let first = match WgiGamepad::FromGameController(controller) {
                                     Ok(wgi_gamepad) => {
-                                        Reading::Gamepad(wgi_gamepad.GetCurrentReading().unwrap())
+                                        wgi_gamepad.GetCurrentReading().map(Reading::Gamepad)
                                     }
-                                    _ => Reading::Raw(RawGamepadReading::new(controller).unwrap()),
+                                    _ => RawGamepadReading::new(controller).map(Reading::Raw),
                                 };
-
-                                readings.push((id, reading.clone(), reading));
-                                readings.len() - 1
+                                match first {
+                                    Ok(reading) => {
+                                        readings.push((id, Readings::new(reading)));
+                                        readings.len() - 1
+                                    }
+                                    Err(e) => {
+                                        if last_failed_reading
+                                            .map_or(true, |x| x.elapsed().as_secs() > 59)
+                                        {
+                                            error!("The first reading of a gamepad failed: {e}");
+                                            last_failed_reading = Some(Instant::now());
+                                        }
+                                        continue;
+                                    }
+                                }
                             }
                             Some(i) => i,
                         };
 
-                        let (_, old_reading, new_reading) = &mut readings[index];
-
-                        // Make last update's reading the old reading and get a new one.
-                        std::mem::swap(old_reading, new_reading);
-                        if let Err(e) = new_reading.update(controller) {
-                            if e.code().is_err() {
+                        // Project Avalanche patch T25: the reading is taken as SDL takes one and compared with the
+                        // last taken reading; a skipped reading or a failed read leaves that base as it is
+                        // (`crate::wgi_reading`). gilrs-core 0.6.8 swapped first and skipped after, and logged a
+                        // failing read at every poll.
+                        let (_, controller_readings) = &mut readings[index];
+                        if let Err(e) = controller_readings.poll(
+                            |reading| reading.update(controller),
+                            |old, new| Reading::send_events_for_differences(old, new, controller, &tx),
+                        ) {
+                            if e.code().is_err()
+                                && last_failed_reading.map_or(true, |x| x.elapsed().as_secs() > 59)
+                            {
                                 error!("Reading::update() function failed with {e}");
+                                last_failed_reading = Some(Instant::now());
                             }
                         }
-
-                        // Skip if this is the same reading as the last one.
-                        if old_reading.time() == new_reading.time() {
-                            continue;
-                        }
-
-                        Reading::send_events_for_differences(
-                            old_reading,
-                            new_reading,
-                            controller,
-                            &tx,
-                        );
                     }
                     thread::sleep(Duration::from_millis(EVENT_THREAD_SLEEP_TIME));
                 }
@@ -369,14 +383,17 @@ enum Reading {
     Gamepad(GamepadReading),
 }
 
-impl Reading {
-    fn time(&self) -> u64 {
+// Project Avalanche patch T25: the timestamp `crate::wgi_reading` decides by.
+impl Timestamped for Reading {
+    fn timestamp(&self) -> u64 {
         match self {
             Reading::Raw(r) => r.time,
             Reading::Gamepad(r) => r.Timestamp,
         }
     }
+}
 
+impl Reading {
     fn update(&mut self, controller: &RawGameController) -> windows::core::Result<()> {
         match self {
             Reading::Raw(raw_reading) => {
@@ -403,7 +420,8 @@ impl Reading {
                 for index in 0..new.axes.len() {
                     if old.axes.get(index) != new.axes.get(index) {
                         // https://github.com/libsdl-org/SDL/blob/6af17369ca773155bd7f39b8801725c4a6d52e4f/src/joystick/windows/SDL_windows_gaming_input.c#L863
-                        let value = ((new.axes[index] * 65535.0) - 32768.0) as i32;
+                        // Project Avalanche patch T25: the conversion moved to `crate::wgi_reading`, unchanged.
+                        let value = raw_axis_value(new.axes[index]);
                         let event_type = EventType::AxisValueChanged(
                             value,
                             crate::EvCode(EvCode {
@@ -557,31 +575,15 @@ impl Gamepad {
         let uuid = match wgi_gamepad.is_some() {
             true => Uuid::nil(),
             false => {
-                let vendor_id = raw_game_controller.HardwareVendorId().unwrap_or(0).to_be();
-                let product_id = raw_game_controller.HardwareProductId().unwrap_or(0).to_be();
-                let version = 0;
-
                 // SDL uses the SDL_HARDWARE_BUS_BLUETOOTH bustype for IsWireless devices:
                 // https://github.com/libsdl-org/SDL/blob/294ccba0a23b37fffef62189423444f93732e565/src/joystick/windows/SDL_windows_gaming_input.c#L335-L338
                 // In my testing though, it caused my controllers to not find mappings.
                 // SDL only uses their WGI implementation for UWP apps so I guess it hasn't been
                 // used enough for people to submit mappings with the different bustype.
-                let bustype = SDL_HARDWARE_BUS_USB.to_be();
-
-                Uuid::from_fields(
-                    bustype,
-                    vendor_id,
-                    0,
-                    &[
-                        (product_id >> 8) as u8,
-                        product_id as u8,
-                        0,
-                        0,
-                        (version >> 8) as u8,
-                        version as u8,
-                        0,
-                        0,
-                    ],
+                // Project Avalanche patch T25: the GUID is built in `crate::wgi_reading`, unchanged.
+                raw_controller_guid(
+                    raw_game_controller.HardwareVendorId().unwrap_or(0),
+                    raw_game_controller.HardwareProductId().unwrap_or(0),
                 )
             }
         };

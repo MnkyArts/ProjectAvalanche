@@ -3,7 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value as Json};
 use ssx_assets::display::{DisplaySettings, WindowMode};
-use ssx_assets::port_options::{BootMovie, MenuFocus, RangeMovies};
+use ssx_assets::port_options::{
+    BootMovie, FrameLimit, GraphicsLevers, GraphicsPreset, MenuFocus, RangeMovies, ResolutionScale, ShadowQuality,
+    ViewDistance,
+};
 
 use crate::game::loc::Localization;
 
@@ -47,6 +50,24 @@ const MENU_FOCUS: [(MenuFocus, &str); 2] = [
     (MenuFocus::FirstItem, "TXT_AVA_OPT_MENU_FOCUS_FIRST_ITEM"),
     (MenuFocus::LastItem, "TXT_AVA_OPT_MENU_FOCUS_LAST_ITEM"),
 ];
+const PRESETS: [(GraphicsPreset, &str); 4] = [
+    (GraphicsPreset::Original, "TXT_AVA_OPT_PRESET_ORIGINAL"),
+    (GraphicsPreset::High, "TXT_AVA_OPT_PRESET_HIGH"),
+    (GraphicsPreset::Medium, "TXT_AVA_OPT_PRESET_MEDIUM"),
+    (GraphicsPreset::Low, "TXT_AVA_OPT_PRESET_LOW"),
+];
+const SCALES: [(ResolutionScale, &str); 5] = [
+    (ResolutionScale::Native, "TXT_AVA_OPT_SCALE_NATIVE"),
+    (ResolutionScale::UltraQuality, "TXT_AVA_OPT_SCALE_ULTRA_QUALITY"),
+    (ResolutionScale::Quality, "TXT_AVA_OPT_SCALE_QUALITY"),
+    (ResolutionScale::Balanced, "TXT_AVA_OPT_SCALE_BALANCED"),
+    (ResolutionScale::Performance, "TXT_AVA_OPT_SCALE_PERFORMANCE"),
+];
+const SHADOWS: [(ShadowQuality, &str); 3] = [
+    (ShadowQuality::Original, "TXT_AVA_OPT_SHADOWS_ORIGINAL"),
+    (ShadowQuality::Medium, "TXT_AVA_OPT_SHADOWS_MEDIUM"),
+    (ShadowQuality::Low, "TXT_AVA_OPT_SHADOWS_LOW"),
+];
 const MUSICS: [(Music, &str, &str); 4] = [
     (Music::Auto, "Auto", "TXT_AVA_OPT_MUSIC_AUTO"),
     (Music::DeadlyDescent, "DeadlyDescent", "TXT_AVA_OPT_MUSIC_DEADLY_DESCENT"),
@@ -57,9 +78,14 @@ const MUSICS: [(Music, &str, &str); 4] = [
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortSettings {
     pub subdivide: u32,
+    pub view_distance: ViewDistance,
     pub shading: Shading,
     pub vsync: bool,
-    pub objects: bool,
+    pub frame_limit: FrameLimit,
+    pub resolution_scale: ResolutionScale,
+    pub shadow_quality: ShadowQuality,
+    pub bloom: bool,
+    pub fxaa: bool,
     pub wireframe: bool,
     pub particles: bool,
     pub snow_tracks: bool,
@@ -90,9 +116,14 @@ impl Default for PortSettings {
     fn default() -> Self {
         PortSettings {
             subdivide: ssx_assets::subdiv::GAME_LEVELS as u32,
+            view_distance: ViewDistance::ORIGINAL,
             shading: Shading::Auto,
             vsync: true,
-            objects: true,
+            frame_limit: FrameLimit::Off,
+            resolution_scale: ResolutionScale::Native,
+            shadow_quality: ShadowQuality::Original,
+            bloom: true,
+            fxaa: true,
             wireframe: false,
             particles: true,
             snow_tracks: true,
@@ -118,6 +149,24 @@ impl Default for PortSettings {
 pub const SUBDIVIDE_MAX: u32 = 3;
 
 impl PortSettings {
+    pub fn levers(&self) -> GraphicsLevers {
+        GraphicsLevers {
+            resolution_scale: self.resolution_scale,
+            shadow_quality: self.shadow_quality,
+            bloom: self.bloom,
+            fxaa: self.fxaa,
+            view_distance: self.view_distance,
+        }
+    }
+
+    pub fn set_levers(&mut self, l: GraphicsLevers) {
+        self.resolution_scale = l.resolution_scale;
+        self.shadow_quality = l.shadow_quality;
+        self.bloom = l.bloom;
+        self.fxaa = l.fxaa;
+        self.view_distance = l.view_distance;
+    }
+
     pub fn from_json(v: &Json) -> (PortSettings, Vec<String>) {
         let mut s = PortSettings::default();
         let mut problems = Vec::new();
@@ -129,6 +178,30 @@ impl PortSettings {
             match x.as_u64().filter(|&n| n <= u64::from(u32::MAX)) {
                 Some(n) => s.subdivide = n as u32,
                 None => bad("subdivide"),
+            }
+        }
+        if let Some(x) = m.get(ViewDistance::MEMBER) {
+            match x.as_f64().and_then(ViewDistance::nearest) {
+                Some(v) => s.view_distance = v,
+                None => bad(ViewDistance::MEMBER),
+            }
+        }
+        if let Some(x) = m.get(FrameLimit::MEMBER) {
+            match x.as_u64().and_then(FrameLimit::from_fps) {
+                Some(v) => s.frame_limit = v,
+                None => bad(FrameLimit::MEMBER),
+            }
+        }
+        if let Some(x) = m.get(ResolutionScale::MEMBER) {
+            match x.as_str().and_then(ResolutionScale::from_name) {
+                Some(v) => s.resolution_scale = v,
+                None => bad(ResolutionScale::MEMBER),
+            }
+        }
+        if let Some(x) = m.get(ShadowQuality::MEMBER) {
+            match x.as_str().and_then(ShadowQuality::from_name) {
+                Some(v) => s.shadow_quality = v,
+                None => bad(ShadowQuality::MEMBER),
             }
         }
         if let Some(x) = m.get("shading") {
@@ -163,7 +236,8 @@ impl PortSettings {
         }
         for (k, field) in [
             ("vsync", &mut s.vsync),
-            ("objects", &mut s.objects),
+            ("bloom", &mut s.bloom),
+            ("fxaa", &mut s.fxaa),
             ("wireframe", &mut s.wireframe),
             ("particles", &mut s.particles),
             ("snow_tracks", &mut s.snow_tracks),
@@ -205,14 +279,19 @@ impl PortSettings {
         let shading = SHADINGS.iter().find(|x| x.0 == self.shading).map_or("Auto", |x| x.1);
         let music = MUSICS.iter().find(|x| x.0 == self.music).map_or("Auto", |x| x.1);
         m.insert("subdivide".into(), Json::from(self.subdivide));
+        m.insert(ViewDistance::MEMBER.into(), Json::from(self.view_distance.meters()));
         m.insert("shading".into(), Json::String(shading.into()));
         m.insert("music".into(), Json::String(music.into()));
         m.insert(RangeMovies::MEMBER.into(), Json::String(self.range_movies.name().into()));
         m.insert(BootMovie::MEMBER.into(), Json::String(self.boot_movie.name().into()));
         m.insert(MenuFocus::MEMBER.into(), Json::String(self.menu_focus.name().into()));
+        m.insert(FrameLimit::MEMBER.into(), Json::from(self.frame_limit.fps().unwrap_or(0)));
+        m.insert(ResolutionScale::MEMBER.into(), Json::String(self.resolution_scale.name().into()));
+        m.insert(ShadowQuality::MEMBER.into(), Json::String(self.shadow_quality.name().into()));
         for (k, b) in [
             ("vsync", self.vsync),
-            ("objects", self.objects),
+            ("bloom", self.bloom),
+            ("fxaa", self.fxaa),
             ("wireframe", self.wireframe),
             ("particles", self.particles),
             ("snow_tracks", self.snow_tracks),
@@ -288,9 +367,15 @@ pub enum Item {
     WindowMode,
     RenderResolution,
     Subdivide,
+    ViewDistance,
     Shading,
     Vsync,
-    Objects,
+    FrameLimit,
+    Preset,
+    ResolutionScale,
+    ShadowQuality,
+    Bloom,
+    Fxaa,
     Wireframe,
     Particles,
     SnowTracks,
@@ -315,6 +400,7 @@ pub enum Item {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Display,
+    Graphics,
     Effects,
     Sound,
     Movies,
@@ -329,12 +415,15 @@ impl Page {
             Page::Display => &[
                 Item::WindowMode,
                 Item::RenderResolution,
+                Item::Vsync,
+                Item::FrameLimit,
                 Item::Subdivide,
                 Item::Shading,
-                Item::Vsync,
-                Item::Objects,
                 Item::Wireframe,
             ],
+            Page::Graphics => {
+                &[Item::Preset, Item::ResolutionScale, Item::ViewDistance, Item::ShadowQuality, Item::Bloom, Item::Fxaa]
+            }
             Page::Effects => &[Item::Particles, Item::SnowTracks, Item::LocalLights, Item::Post, Item::Sky],
             Page::Sound => &[Item::Music, Item::MusicVolume, Item::Sfx, Item::SfxVolume],
             Page::Movies => &[Item::RangeMovies, Item::BootMovie],
@@ -350,13 +439,19 @@ const NET_ITEMS: [Item; 3] = [Item::DownloadLimit, Item::ResourceCache, Item::Se
 #[cfg(not(feature = "net"))]
 const NET_ITEMS: [Item; 0] = [];
 
-const ALL: [Item; 19] = [
+const ALL: [Item; 25] = [
     Item::WindowMode,
     Item::RenderResolution,
     Item::Subdivide,
+    Item::ViewDistance,
     Item::Shading,
     Item::Vsync,
-    Item::Objects,
+    Item::FrameLimit,
+    Item::Preset,
+    Item::ResolutionScale,
+    Item::ShadowQuality,
+    Item::Bloom,
+    Item::Fxaa,
     Item::Wireframe,
     Item::Particles,
     Item::SnowTracks,
@@ -372,6 +467,10 @@ const ALL: [Item; 19] = [
     Item::MenuFocus,
 ];
 
+// PORT(choice): the game's Options step the view distance through these stops (the launcher's slider through every
+// 100 m); the console has no such setting.
+const VIEW_DISTANCE_STOPS: [u32; 12] = [200, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000, 5000, 8000];
+
 const RENDER_HEIGHTS: [Option<u32>; 7] = [None, Some(2160), Some(1440), Some(1080), Some(900), Some(720), Some(540)];
 
 // PORT(choice): the launcher's volumes (0 … 1 in hundredths on its slider) are shown and stepped in tenths, as the
@@ -385,9 +484,15 @@ impl Item {
             Item::WindowMode => "ava_opt_window",
             Item::RenderResolution => "ava_opt_render_resolution",
             Item::Subdivide => "ava_opt_subdivide",
+            Item::ViewDistance => "ava_opt_view_distance",
             Item::Shading => "ava_opt_shading",
             Item::Vsync => "ava_opt_vsync",
-            Item::Objects => "ava_opt_objects",
+            Item::FrameLimit => "ava_opt_frame_limit",
+            Item::Preset => "ava_opt_preset",
+            Item::ResolutionScale => "ava_opt_resolution_scale",
+            Item::ShadowQuality => "ava_opt_shadow_quality",
+            Item::Bloom => "ava_opt_bloom",
+            Item::Fxaa => "ava_opt_fxaa",
             Item::Wireframe => "ava_opt_wireframe",
             Item::Particles => "ava_opt_particles",
             Item::SnowTracks => "ava_opt_snow_tracks",
@@ -415,9 +520,15 @@ impl Item {
             Item::WindowMode => "TXT_AVA_OPT_WINDOW",
             Item::RenderResolution => "TXT_AVA_OPT_RENDER_RESOLUTION",
             Item::Subdivide => "TXT_AVA_OPT_SUBDIVIDE",
+            Item::ViewDistance => "TXT_AVA_OPT_VIEW_DISTANCE",
             Item::Shading => "TXT_AVA_OPT_SHADING",
             Item::Vsync => "TXT_AVA_OPT_VSYNC",
-            Item::Objects => "TXT_AVA_OPT_OBJECTS",
+            Item::FrameLimit => "TXT_AVA_OPT_FRAME_LIMIT",
+            Item::Preset => "TXT_AVA_OPT_PRESET",
+            Item::ResolutionScale => "TXT_AVA_OPT_RESOLUTION_SCALE",
+            Item::ShadowQuality => "TXT_AVA_OPT_SHADOW_QUALITY",
+            Item::Bloom => "TXT_AVA_OPT_BLOOM",
+            Item::Fxaa => "TXT_AVA_OPT_FXAA",
             Item::Wireframe => "TXT_AVA_OPT_WIREFRAME",
             Item::Particles => "TXT_AVA_OPT_PARTICLES",
             Item::SnowTracks => "TXT_AVA_OPT_SNOW_TRACKS",
@@ -447,7 +558,8 @@ impl Item {
     fn flag(self, s: &mut PortSettings) -> Option<&mut bool> {
         Some(match self {
             Item::Vsync => &mut s.vsync,
-            Item::Objects => &mut s.objects,
+            Item::Bloom => &mut s.bloom,
+            Item::Fxaa => &mut s.fxaa,
             Item::Wireframe => &mut s.wireframe,
             Item::Particles => &mut s.particles,
             Item::SnowTracks => &mut s.snow_tracks,
@@ -474,7 +586,12 @@ impl Item {
                 }
             }
             Item::Subdivide => s.subdivide = defaults.subdivide,
+            Item::ViewDistance => s.view_distance = defaults.view_distance,
             Item::Shading => s.shading = defaults.shading,
+            Item::FrameLimit => s.frame_limit = defaults.frame_limit,
+            Item::Preset => s.set_levers(defaults.levers()),
+            Item::ResolutionScale => s.resolution_scale = defaults.resolution_scale,
+            Item::ShadowQuality => s.shadow_quality = defaults.shadow_quality,
             Item::Music => s.music = defaults.music,
             Item::MusicVolume => s.music_volume = defaults.music_volume,
             Item::SfxVolume => s.sfx_volume = defaults.sfx_volume,
@@ -518,7 +635,19 @@ impl Item {
                 Some(h) => format!("{h}p"),
             },
             Item::Subdivide => s.subdivide.to_string(),
+            Item::ViewDistance if s.view_distance.is_original() => loc.text("TXT_AVA_OPT_VIEW_DISTANCE_ORIGINAL"),
+            Item::ViewDistance => format!("{} m", s.view_distance.meters()),
             Item::Shading => loc.text(SHADINGS.iter().find(|x| x.0 == s.shading).map_or("", |x| x.2)),
+            Item::FrameLimit => match s.frame_limit.fps() {
+                None => loc.text("TXT_OFF"),
+                Some(fps) => loc.text("TXT_AVA_OPT_FRAME_LIMIT_FPS").replace("%d", &fps.to_string()),
+            },
+            Item::Preset => match GraphicsPreset::of(&s.levers()) {
+                Some(p) => loc.text(PRESETS.iter().find(|x| x.0 == p).map_or("", |x| x.1)),
+                None => loc.text("TXT_AVA_OPT_PRESET_CUSTOM"),
+            },
+            Item::ResolutionScale => loc.text(SCALES.iter().find(|x| x.0 == s.resolution_scale).map_or("", |x| x.1)),
+            Item::ShadowQuality => loc.text(SHADOWS.iter().find(|x| x.0 == s.shadow_quality).map_or("", |x| x.1)),
             Item::Music => loc.text(MUSICS.iter().find(|x| x.0 == s.music).map_or("", |x| x.2)),
             Item::MusicVolume => volume_step(s.music_volume).to_string(),
             Item::SfxVolume => volume_step(s.sfx_volume).to_string(),
@@ -563,8 +692,36 @@ impl Item {
                 s.subdivide = to;
                 moved
             }
+            Item::ViewDistance => {
+                let to = view_distance_step(s.view_distance, next);
+                let moved = to != s.view_distance;
+                s.view_distance = to;
+                moved
+            }
             Item::Shading => {
                 s.shading = wrap(&SHADINGS.map(|x| x.0), s.shading, next);
+                true
+            }
+            Item::FrameLimit => {
+                s.frame_limit = wrap(&FrameLimit::ALL, s.frame_limit, next);
+                true
+            }
+            Item::Preset => {
+                let to = match GraphicsPreset::of(&s.levers()) {
+                    Some(p) => wrap(&GraphicsPreset::ALL, p, next),
+                    None if next => GraphicsPreset::Original,
+                    None => GraphicsPreset::Low,
+                };
+                let moved = to.levers() != s.levers();
+                s.set_levers(to.levers());
+                moved
+            }
+            Item::ResolutionScale => {
+                s.resolution_scale = wrap(&ResolutionScale::ALL, s.resolution_scale, next);
+                true
+            }
+            Item::ShadowQuality => {
+                s.shadow_quality = wrap(&ShadowQuality::ALL, s.shadow_quality, next);
                 true
             }
             Item::Music => {
@@ -606,6 +763,16 @@ impl Item {
             },
         }
     }
+}
+
+fn view_distance_step(v: ViewDistance, next: bool) -> ViewDistance {
+    let m = v.meters();
+    let to = if next {
+        VIEW_DISTANCE_STOPS.iter().copied().find(|&s| s > m)
+    } else {
+        VIEW_DISTANCE_STOPS.iter().rev().copied().find(|&s| s < m)
+    };
+    to.and_then(|s| ViewDistance::nearest(f64::from(s))).unwrap_or(v)
 }
 
 fn volume_step(v: f32) -> i32 {
@@ -660,6 +827,50 @@ mod tests {
     }
 
     #[test]
+    fn an_old_objects_member_is_not_read_and_not_written() {
+        for old in [serde_json::json!(false), serde_json::json!(true), serde_json::json!("off")] {
+            let (s, p) = PortSettings::from_json(&serde_json::json!({ "objects": old }));
+            assert!(s == PortSettings::default() && p.is_empty(), "{old}: {p:?}");
+        }
+        let mut m = Map::new();
+        PortSettings::default().write_json(&mut m);
+        assert!(!m.contains_key("objects"), "{m:?}");
+        assert_eq!(Item::of_dp("dp_ava_opt_objects"), None);
+    }
+
+    #[test]
+    fn the_view_distance_is_read_clamped_and_stepped_through_its_stops() {
+        let read = |v: serde_json::Value| PortSettings::from_json(&serde_json::json!({ "view_distance": v }));
+        let (s, p) = read(serde_json::json!(1000));
+        assert_eq!((s.view_distance.meters(), p.len()), (1000, 0));
+        for (v, m) in [(serde_json::json!(649.9), 600), (serde_json::json!(1e300), 8000), (serde_json::json!(-5), 200)]
+        {
+            let (s, p) = read(v.clone());
+            assert_eq!((s.view_distance.meters(), p.len()), (m, 0), "{v}");
+        }
+        for bad in
+            [serde_json::json!("600"), serde_json::json!(null), serde_json::json!([600]), serde_json::json!(true)]
+        {
+            let (s, p) = read(bad.clone());
+            assert!(s == PortSettings::default() && p.len() == 1 && p[0].contains("view_distance"), "{bad}");
+        }
+        let mut m = Map::new();
+        s.write_json(&mut m);
+        assert_eq!(m.get("view_distance"), Some(&serde_json::json!(1000)));
+        assert!(VIEW_DISTANCE_STOPS.iter().all(|&m| (ViewDistance::MIN..=ViewDistance::MAX).contains(&m)));
+        assert!(VIEW_DISTANCE_STOPS.contains(&ViewDistance::ORIGINAL.meters()));
+        let mut s = PortSettings::default();
+        assert!(Item::ViewDistance.step(&mut s, true) && s.view_distance.meters() == 800);
+        assert!(Item::ViewDistance.step(&mut s, false) && s.view_distance.is_original());
+        s.view_distance = ViewDistance::nearest(700.0).unwrap();
+        assert!(Item::ViewDistance.step(&mut s, false) && s.view_distance.is_original());
+        s.view_distance = ViewDistance::nearest(8000.0).unwrap();
+        assert!(!Item::ViewDistance.step(&mut s, true) && s.view_distance.meters() == 8000);
+        s.view_distance = ViewDistance::nearest(200.0).unwrap();
+        assert!(!Item::ViewDistance.step(&mut s, false) && s.view_distance.meters() == 200);
+    }
+
+    #[test]
     fn steps_wrap_choices_and_stop_numbers_at_their_ends() {
         let mut s = PortSettings::default();
         assert!(Item::Subdivide.step(&mut s, true) && s.subdivide == 3);
@@ -670,12 +881,12 @@ mod tests {
         s.sfx_volume = 0.37;
         assert!(Item::SfxVolume.step(&mut s, false) && s.sfx_volume == 0.3);
         assert!(Item::Vsync.step(&mut s, true) && !s.vsync);
-        for p in [Page::Display, Page::Effects, Page::Sound, Page::Movies, Page::Menus] {
+        for p in [Page::Display, Page::Graphics, Page::Effects, Page::Sound, Page::Movies, Page::Menus] {
             for i in p.items() {
                 assert_eq!(Item::of_dp(&format!("dp_{}", i.name())), Some(*i));
             }
         }
-        let pages = [Page::Display, Page::Effects, Page::Sound, Page::Movies, Page::Menus];
+        let pages = [Page::Display, Page::Graphics, Page::Effects, Page::Sound, Page::Movies, Page::Menus];
         assert_eq!(ALL.len(), pages.iter().map(|p| p.items().len()).sum::<usize>());
         assert!(Item::RangeMovies.step(&mut s, true) && s.range_movies == RangeMovies::FirstTimeOnly);
         assert!(Item::RangeMovies.step(&mut s, true) && s.range_movies == RangeMovies::EveryTime);
@@ -701,6 +912,56 @@ mod tests {
             assert!(Item::DownloadLimit.step(&mut s, false) && s.resources.download_limit_mib == 1024);
             assert!(Item::ServerScripts.step(&mut s, true) && !s.resources.server_scripts);
         }
+    }
+
+    #[test]
+    fn the_graphics_settings_are_read_stepped_and_the_preset_follows_them() {
+        let (s, p) = PortSettings::from_json(&serde_json::json!({
+            "frame_limit": 144, "resolution_scale": "Balanced", "shadow_quality": "Medium", "bloom": false, "fxaa": true
+        }));
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(
+            (s.frame_limit, s.resolution_scale, s.shadow_quality, s.bloom, s.fxaa),
+            (FrameLimit::Fps144, ResolutionScale::Balanced, ShadowQuality::Medium, false, true)
+        );
+        let mut m = Map::new();
+        s.write_json(&mut m);
+        assert_eq!(PortSettings::from_json(&Json::Object(m.clone())).0, s);
+        assert_eq!(
+            (m["frame_limit"].clone(), m["resolution_scale"].clone()),
+            (Json::from(144), Json::from("Balanced"))
+        );
+        for (member, bad) in [
+            ("frame_limit", serde_json::json!(75)),
+            ("frame_limit", serde_json::json!(-30)),
+            ("frame_limit", serde_json::json!("60")),
+            ("resolution_scale", serde_json::json!("quality")),
+            ("shadow_quality", serde_json::json!(2)),
+            ("bloom", serde_json::json!("off")),
+        ] {
+            let (s, p) = PortSettings::from_json(&serde_json::json!({ member: bad }));
+            assert!(s == PortSettings::default() && p.len() == 1 && p[0].contains(member), "{member} {bad}: {p:?}");
+        }
+        let mut s = PortSettings::default();
+        assert_eq!(GraphicsPreset::of(&s.levers()), Some(GraphicsPreset::Original));
+        assert!(Item::Preset.step(&mut s, true) && GraphicsPreset::of(&s.levers()) == Some(GraphicsPreset::High));
+        assert_eq!(s.resolution_scale, GraphicsPreset::High.levers().resolution_scale);
+        assert!(Item::Preset.step(&mut s, false) && s.levers() == GraphicsPreset::Original.levers());
+        assert!(Item::Preset.step(&mut s, false) && s.levers() == GraphicsPreset::Low.levers());
+        assert!(Item::Fxaa.step(&mut s, true) && GraphicsPreset::of(&s.levers()).is_none());
+        assert!(Item::Preset.step(&mut s, true) && s.levers() == GraphicsPreset::Original.levers());
+        assert!(Item::ViewDistance.step(&mut s, true) && GraphicsPreset::of(&s.levers()).is_none());
+        Item::Preset.reset(&mut s, &PortSettings::default());
+        assert_eq!(s.levers(), GraphicsPreset::Original.levers());
+        assert!(Item::FrameLimit.step(&mut s, false) && s.frame_limit == FrameLimit::Fps144);
+        assert!(Item::FrameLimit.step(&mut s, true) && s.frame_limit == FrameLimit::Off);
+        assert!(Item::ResolutionScale.step(&mut s, true) && s.resolution_scale == ResolutionScale::UltraQuality);
+        assert!(Item::ShadowQuality.step(&mut s, false) && s.shadow_quality == ShadowQuality::Low);
+        assert!(Item::Bloom.step(&mut s, true) && !s.bloom);
+        for i in Page::Graphics.items() {
+            Item::reset(*i, &mut s, &PortSettings::default());
+        }
+        assert_eq!(s.levers(), PortSettings::default().levers());
     }
 
     #[test]

@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
-use ssx_assets::port_options::{BootMovie, DiscordPresence, MenuFocus, RangeMovies};
+use ssx_assets::port_options::{
+    BootMovie, DiscordPresence, FrameLimit, MenuFocus, RangeMovies, ResolutionScale, ShadowQuality, ViewDistance,
+};
 use ssx_assets::settings_file::{self, UpdateError};
 
 const MERGE_LEVELS: u32 = 2;
@@ -48,10 +50,19 @@ pub struct Settings {
     pub lighting: Option<String>,
     pub character: String,
     pub subdivide: u32,
+    #[serde(deserialize_with = "view_distance_in", serialize_with = "view_distance_out")]
+    pub view_distance: ViewDistance,
     pub shading: Shading,
-    pub objects: bool,
     pub hud: bool,
     pub vsync: bool,
+    #[serde(deserialize_with = "frame_limit_in", serialize_with = "frame_limit_out")]
+    pub frame_limit: FrameLimit,
+    #[serde(deserialize_with = "resolution_scale_in", serialize_with = "resolution_scale_out")]
+    pub resolution_scale: ResolutionScale,
+    #[serde(deserialize_with = "shadow_quality_in", serialize_with = "shadow_quality_out")]
+    pub shadow_quality: ShadowQuality,
+    pub bloom: bool,
+    pub fxaa: bool,
     pub wireframe: bool,
     pub music: Music,
     pub music_volume: f32,
@@ -75,8 +86,10 @@ pub struct Settings {
     pub player_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    #[serde(rename = "masters", deserialize_with = "crate::masters::present", skip_serializing)]
+    #[serde(rename = "masters", deserialize_with = "crate::retired::present", skip_serializing)]
     pub old_masters: bool,
+    #[serde(rename = "objects", deserialize_with = "crate::retired::present", skip_serializing)]
+    pub old_objects: bool,
     #[serde(deserialize_with = "host_leniently", skip_serializing_if = "host_is_default")]
     pub host: crate::host::HostSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,6 +109,42 @@ fn display_leniently<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ssx_asset
 
 fn display_out<S: serde::Serializer>(s: &ssx_assets::display::DisplaySettings, out: S) -> Result<S::Ok, S::Error> {
     s.to_json().serialize(out)
+}
+
+fn view_distance_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ViewDistance, D::Error> {
+    let meters = f64::deserialize(d)?;
+    ViewDistance::nearest(meters).ok_or_else(|| serde::de::Error::custom("not a view distance in metres"))
+}
+
+fn view_distance_out<S: serde::Serializer>(v: &ViewDistance, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_u32(v.meters())
+}
+
+fn frame_limit_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<FrameLimit, D::Error> {
+    let fps = u64::deserialize(d)?;
+    FrameLimit::from_fps(fps).ok_or_else(|| serde::de::Error::custom("not a frame limit (0, 30, 60, 120, 144)"))
+}
+
+fn frame_limit_out<S: serde::Serializer>(l: &FrameLimit, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_u32(l.fps().unwrap_or(0))
+}
+
+fn resolution_scale_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ResolutionScale, D::Error> {
+    let name = String::deserialize(d)?;
+    ResolutionScale::from_name(&name).ok_or_else(|| serde::de::Error::custom("not a resolution scale"))
+}
+
+fn resolution_scale_out<S: serde::Serializer>(r: &ResolutionScale, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(r.name())
+}
+
+fn shadow_quality_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ShadowQuality, D::Error> {
+    let name = String::deserialize(d)?;
+    ShadowQuality::from_name(&name).ok_or_else(|| serde::de::Error::custom("not a shadow quality"))
+}
+
+fn shadow_quality_out<S: serde::Serializer>(q: &ShadowQuality, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(q.name())
 }
 
 fn range_movies_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<RangeMovies, D::Error> {
@@ -154,10 +203,15 @@ impl Default for Settings {
             lighting: None,
             character: ssx_assets::character::DEFAULT_CHARACTER.into(),
             subdivide: ssx_assets::subdiv::GAME_LEVELS as u32,
+            view_distance: ViewDistance::ORIGINAL,
             shading: Shading::Auto,
-            objects: true,
             hud: true,
             vsync: true,
+            frame_limit: FrameLimit::Off,
+            resolution_scale: ResolutionScale::Native,
+            shadow_quality: ShadowQuality::Original,
+            bloom: true,
+            fxaa: true,
             wireframe: false,
             music: Music::Auto,
             music_volume: 1.0,
@@ -179,6 +233,7 @@ impl Default for Settings {
             player_name: None,
             language: None,
             old_masters: false,
+            old_objects: false,
             resources: None,
             host: crate::host::HostSettings::default(),
             display: Default::default(),
@@ -255,6 +310,7 @@ impl Settings {
         let written = settings_file::update_object(path, |m| {
             settings_file::merge_changes(m, &base, &ours, MERGE_LEVELS);
             m.remove("masters");
+            m.remove("objects");
             Ok(())
         })?;
         Ok(Self::from_object(&written))
@@ -381,6 +437,71 @@ mod tests {
     }
 
     #[test]
+    fn the_view_distance_is_kept_in_metres_and_clamped() {
+        let s: Settings = serde_json::from_str(r#"{"view_distance": 1500}"#).unwrap();
+        assert_eq!(s.view_distance.meters(), 1500);
+        assert!(serde_json::to_string(&s).unwrap().contains(r#""view_distance":1500"#));
+        assert!(Settings::default().view_distance.is_original(), "the original's by default");
+        for (v, m) in [("1e9", 8000), ("-1", 200), ("649.9", 600), ("650", 700)] {
+            let s: Settings = serde_json::from_str(&format!(r#"{{"view_distance": {v}}}"#)).unwrap();
+            assert_eq!(s.view_distance.meters(), m, "{v}");
+        }
+        for bad in [r#""600""#, "true", "null", "[600]", r#"{"m": 600}"#] {
+            let m: Map<String, Json> = serde_json::from_str(&format!(r#"{{"view_distance": {bad}, "vsync": false}}"#))
+                .unwrap_or_else(|e| panic!("{bad}: {e}"));
+            let s = Settings::from_object(&m);
+            assert!(s.view_distance.is_original() && !s.vsync, "{bad}: the rest read");
+            assert!(s.notes.len() == 1 && s.notes[0].contains("view_distance"), "{bad}: {:?}", s.notes);
+        }
+    }
+
+    #[test]
+    fn the_graphics_settings_read_back_and_a_bad_value_keeps_the_default() {
+        let d = Settings::default();
+        assert_eq!(
+            (d.frame_limit, d.resolution_scale, d.shadow_quality, d.bloom, d.fxaa),
+            (FrameLimit::Off, ResolutionScale::Native, ShadowQuality::Original, true, true)
+        );
+        let text = r#"{"frame_limit": 60, "resolution_scale": "Quality", "shadow_quality": "Low", "bloom": false,
+            "fxaa": false}"#;
+        let s: Settings = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            (s.frame_limit, s.resolution_scale, s.shadow_quality, s.bloom, s.fxaa),
+            (FrameLimit::Fps60, ResolutionScale::Quality, ShadowQuality::Low, false, false)
+        );
+        let back = serde_json::to_string(&s).unwrap();
+        for part in [r#""frame_limit":60"#, r#""resolution_scale":"Quality""#, r#""shadow_quality":"Low""#] {
+            assert!(back.contains(part), "{part}: {back}");
+        }
+        assert!(serde_json::to_string(&d).unwrap().contains(r#""frame_limit":0"#));
+        for (member, bad) in [
+            ("frame_limit", "75"),
+            ("frame_limit", "-1"),
+            ("frame_limit", "1e99"),
+            ("frame_limit", r#""60""#),
+            ("frame_limit", "null"),
+            ("resolution_scale", r#""quality""#),
+            ("resolution_scale", "1.5"),
+            ("resolution_scale", r#""Ultra""#),
+            ("shadow_quality", r#""low""#),
+            ("shadow_quality", "[]"),
+            ("bloom", r#""off""#),
+            ("fxaa", "0"),
+        ] {
+            let m: Map<String, Json> = serde_json::from_str(&format!(r#"{{"{member}": {bad}, "vsync": false}}"#))
+                .unwrap_or_else(|e| panic!("{bad}: {e}"));
+            let s = Settings::from_object(&m);
+            assert!(!s.vsync, "{member} {bad}: the rest read");
+            assert_eq!(
+                (s.frame_limit, s.resolution_scale, s.shadow_quality, s.bloom, s.fxaa),
+                (d.frame_limit, d.resolution_scale, d.shadow_quality, d.bloom, d.fxaa),
+                "{member} {bad}: the default kept"
+            );
+            assert!(s.notes.len() == 1 && s.notes[0].contains(member), "{member} {bad}: {:?}", s.notes);
+        }
+    }
+
+    #[test]
     fn the_menu_focus_choice_is_kept_by_its_name() {
         let s: Settings = serde_json::from_str(r#"{"menu_focus": "LastItem"}"#).unwrap();
         assert_eq!(s.menu_focus, MenuFocus::LastItem);
@@ -419,6 +540,32 @@ mod tests {
         assert!(!serde_json::to_string(&Settings::default()).unwrap().contains("masters"));
         assert!(crate::masters::old_member_note(true).is_some_and(|n| n.contains(ssx_core::OFFICIAL_MASTER)));
         assert_eq!(crate::masters::old_member_note(false), None);
+    }
+
+    #[test]
+    fn an_old_objects_switch_is_read_noted_and_dropped_at_the_save() {
+        for old in ["false", "true", r#""off""#, "null", "[1]"] {
+            let text = format!(r#"{{"vsync": false, "wireframe": true, "objects": {old}}}"#);
+            let s: Settings = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{old}: {e}"));
+            assert!(s.old_objects && !s.vsync && s.wireframe, "{old}: the rest kept");
+            let back = serde_json::to_string(&s).unwrap();
+            assert!(!back.contains("objects") && back.contains(r#""vsync":false"#), "{old}: {back}");
+        }
+        assert!(!Settings::default().old_objects);
+        assert!(!serde_json::to_string(&Settings::default()).unwrap().contains("objects"));
+        assert!(crate::retired::objects_note(true).is_some_and(|n| n.contains("`objects`")));
+        assert_eq!(crate::retired::objects_note(false), None);
+
+        let path = temp("objects");
+        std::fs::write(&path, r#"{"objects": false, "future": 1, "player_name": "Elise"}"#).unwrap();
+        let saved = Settings::load_from(&path);
+        assert!(saved.old_objects && saved.notes.is_empty(), "{:?}", saved.notes);
+        let settings = Settings { sfx: false, ..saved.clone() };
+        let written = settings.save_to(&path, &saved).unwrap();
+        let v = file(&path);
+        assert!(v.get("objects").is_none() && v["future"] == 1 && v["player_name"] == "Elise", "{v}");
+        assert!(!written.old_objects && !written.sfx);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     fn temp(name: &str) -> PathBuf {
@@ -478,6 +625,89 @@ mod tests {
     }
 
     #[test]
+    fn every_option_off_its_default_is_written_and_read_back() {
+        use ssx_assets::display::{DisplaySettings, VideoMode, WindowMode};
+        let path = temp("every-option");
+        std::fs::write(&path, b"{}").unwrap();
+        let base = Settings::load_from(&path);
+        assert_eq!(base, Settings::default());
+        let host = crate::host::HostSettings {
+            folder: Some(PathBuf::from("/srv/avalanche")),
+            name: "Friday night".into(),
+            port: 27500,
+            max_players: 16,
+            password: "pow der".into(),
+            drop: "alps_ui_drop".into(),
+            listen: crate::host::Listen::Local,
+            lan: !crate::host::HostSettings::default().lan,
+            public: false,
+            port_mapping: true,
+            written: Some(0x1234_5678_9abc_def0),
+            map: Some(crate::host::HostMap { id: "community.map".into(), mode: "trick".into() }),
+        };
+        let display = DisplaySettings {
+            mode: WindowMode::Exclusive,
+            fullscreen: WindowMode::Exclusive,
+            monitor: Some("DP-2".into()),
+            video_mode: Some(VideoMode { width: 2560, height: 1440, refresh_mhz: 143_912 }),
+            window: Some((1280, 720)),
+            render_height: Some(1080),
+        };
+        let every = Settings {
+            iso: Some(PathBuf::from("/games/SSX.iso")),
+            game_data: Some(PathBuf::from("/games/GameData")),
+            mode: Mode::Ride,
+            track: "rock0201".into(),
+            drop: 3,
+            lighting: Some("dawn".into()),
+            character: "zoe".into(),
+            subdivide: 1,
+            view_distance: ViewDistance::nearest(1500.0).unwrap(),
+            shading: Shading::Material,
+            hud: false,
+            vsync: false,
+            frame_limit: FrameLimit::Fps144,
+            resolution_scale: ResolutionScale::Performance,
+            shadow_quality: ShadowQuality::Low,
+            bloom: false,
+            fxaa: false,
+            wireframe: true,
+            music: Music::Licensed,
+            music_volume: 0.25,
+            sfx: false,
+            sfx_volume: 0.5,
+            particles: false,
+            snow_tracks: false,
+            local_lights: false,
+            game_post: false,
+            game_sky: false,
+            boost_meter: 0.75,
+            range_movies: RangeMovies::FirstTimeOnly,
+            boot_movie: BootMovie::Skip,
+            menu_focus: MenuFocus::LastItem,
+            discord_presence: DiscordPresence::Off,
+            player_name: Some("Elise".into()),
+            language: Some("ger_de".into()),
+            old_masters: false,
+            old_objects: false,
+            host,
+            resources: Some(serde_json::json!({"download_limit_mb": 64})),
+            display,
+            display_notes: Vec::new(),
+            notes: Vec::new(),
+        };
+        let (ours, theirs) = (every.object().unwrap(), Settings::default().object().unwrap());
+        for (member, value) in &ours {
+            assert_ne!(theirs.get(member), Some(value), "{member} is its default");
+        }
+        let written = every.save_to(&path, &base).unwrap();
+        assert_eq!(written, every);
+        assert_eq!(Settings::load_from(&path), every, "{}", std::fs::read_to_string(&path).unwrap());
+        assert!(file(&path).get("objects").is_none() && file(&path).get("masters").is_none());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn a_broken_file_is_never_written_over_and_unknown_members_are_kept() {
         let path = temp("broken");
         let settings = Settings { vsync: false, ..Settings::default() };
@@ -490,17 +720,17 @@ mod tests {
         assert_eq!(std::fs::read(&aside).unwrap(), b"{\"vsync\": tru");
         assert!(!written.vsync && file(&path)["vsync"] == false);
 
-        let text = r#"{"future": {"a": [1]}, "hud": "yes", "objects": false, "masters": ["https://m.example.org"]}"#;
+        let text = r#"{"future": {"a": [1]}, "hud": "yes", "wireframe": true, "masters": ["https://m.example.org"]}"#;
         std::fs::write(&path, text).unwrap();
         let saved = Settings::load_from(&path);
-        assert!(!saved.objects && saved.hud, "the rest read, `hud` its default");
+        assert!(saved.wireframe && saved.hud, "the rest read, `hud` its default");
         assert!(saved.notes.len() == 1 && saved.notes[0].contains("\"hud\""), "{:?}", saved.notes);
         let settings = Settings { sfx: false, ..saved.clone() };
         let written = settings.save_to(&path, &saved).unwrap();
         let v = file(&path);
         assert_eq!((v["future"].clone(), v["hud"].clone()), (serde_json::json!({"a": [1]}), Json::from("yes")));
         assert!(v["sfx"] == false && v.get("masters").is_none(), "{v}");
-        assert!(!written.sfx && !written.objects);
+        assert!(!written.sfx && written.wireframe);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

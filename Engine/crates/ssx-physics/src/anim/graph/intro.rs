@@ -53,15 +53,19 @@ impl IntroGraph {
         floats: &[String],
     ) -> Result<Self> {
         let new = |root: &str| Animator::new(db, root, rig, bind.clone(), floats);
-        let cabin = nis.cabin.iter().map(|c| new(&c.scene.sequence)).collect::<Result<Vec<_>>>()?;
+        let scene = |sc: &ssx_assets::nis::NisScene| match &sc.looping {
+            Some(l) if !l.in_root => Animator::new_looping(db, &sc.sequence, l.fields, rig, bind.clone(), floats),
+            _ => new(&sc.sequence),
+        };
+        let cabin = nis.cabin.iter().map(|c| scene(&c.scene)).collect::<Result<Vec<_>>>()?;
         let rider = |sc: &ssx_assets::nis::NisScene| sc.actor(ssx_assets::nis::ROLE_CHARACTER1).cloned();
         let ready = match rider(&nis.ready).filter(|a| a.choices.len() > 1 && a.sequences.len() == a.choices.len()) {
             Some(a) => a.sequences.iter().map(|(seq, _)| new(seq)).collect::<Result<Vec<_>>>()?,
-            None => vec![new(&nis.ready.sequence)?],
+            None => vec![scene(&nis.ready)?],
         };
         let jump = match rider(&nis.jump).filter(|a| a.choices.len() > 1) {
             Some(a) => a.choices.iter().map(|(clip, ..)| new(&clip.name)).collect::<Result<Vec<_>>>()?,
-            None => vec![new(&nis.jump.sequence)?],
+            None => vec![scene(&nis.jump)?],
         };
         Ok(Self { cabin, ready, jump, shown: Vec::new(), blends: Vec::new(), entry_blend: nis.entry_blend.clone() })
     }

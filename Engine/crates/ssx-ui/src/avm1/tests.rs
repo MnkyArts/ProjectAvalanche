@@ -721,3 +721,41 @@ fn geometry_setters_keep_the_record_scaleform_keeps() {
     assert_eq!(get(&mut cx, "_yscale"), 0.0);
     assert_eq!(w.errors(), 0);
 }
+
+#[test]
+fn a_peek_reads_data_only() {
+    use crate::display::hit::tests::{at, hit_movie};
+    fn marks(cx: &mut Ctx, _: Value, _: &[Value]) -> Result<Value, super::Fault> {
+        let global = Value::Object(cx.vm.global);
+        cx.set_member(&global, "ran", Value::Bool(true))?;
+        Ok(Value::Number(1.0))
+    }
+    let mut lib = empty_lib();
+    let m = hit_movie(&mut lib, vec![at(1, 20, "a", 0, 0, 1.0), at(2, 20, "b", 10, 0, 1.0)]);
+    let (mut vm, mut player) = (Vm::new(), Player::new());
+    vm.load_level(&mut lib, &mut player, m, 0);
+    {
+        let mut cx = vm.ctx(&mut lib, &mut player);
+        let root = cx.player.levels[&0];
+        cx.object_for(root);
+        let a = cx.player.child_by_name(root, "a", true).unwrap();
+        let a = Value::Object(cx.object_for(a));
+        let data = Value::Object(cx.new_object());
+        cx.set_member(&data, "path", Value::str("views/x.swf")).unwrap();
+        cx.set_member(&a, "data", data.clone()).unwrap();
+        let marks = Value::Object(cx.new_native(marks));
+        let (add, home) = cx.get_method(&data, "addProperty").unwrap();
+        cx.call(&add, data.clone(), &[Value::str("lazy"), marks.clone(), Value::Null], home).unwrap();
+        cx.set_member(&data, "__resolve", marks).unwrap();
+    }
+    let objects = vm.display_objs.len();
+    let mut peek = |path: &str| vm.peek_path(&mut lib, &mut player, path);
+    assert!(matches!(peek("_level0.a.data.path"), Some(Value::String(s)) if &*s == "views/x.swf"));
+    assert!(matches!(peek("a.data.path"), Some(Value::String(s)) if &*s == "views/x.swf"));
+    assert!(peek("_level0.a.data.toString").is_some(), "the prototype chain's data");
+    for path in ["_level0.b", "_level0.a._x", "_level0.a.data.lazy", "_level0.a.data.missing", "_level0.c.data"] {
+        assert!(peek(path).is_none(), "{path}");
+    }
+    assert_eq!(vm.display_objs.len(), objects, "no object made for b");
+    assert!(vm.get_path(&mut lib, &mut player, "_global.ran").is_none(), "no getter and no __resolve ran");
+}

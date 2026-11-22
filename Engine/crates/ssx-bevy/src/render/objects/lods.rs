@@ -2,6 +2,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
+use bevy::render::batching::NoAutomaticBatching;
 use bevy::render::storage::ShaderBuffer;
 use ssx_assets::track_objects::Placement;
 
@@ -100,6 +101,44 @@ pub fn placement_transform(p: &Placement) -> Transform {
     }
 }
 
+// PORT(choice): Bevy draws a bin's entities in the order they entered it (an IndexMap; a removal swaps the last one
+// in), so two coincident placements of one mesh show the one the ride's history put last; the last of each group is
+// spawned with NoAutomaticBatching and drawn unbatched, after the phase's batched meshes, which gives the game's
+// pixels for the group whatever order the others are in. A group: one object, positions within 1 mm, scales within
+// 1e-4, unit quaternions within 1e-4 (either sign); the console's draw lists need no such grouping.
+pub(super) fn drawn_last(placements: &[(usize, Placement)]) -> Vec<bool> {
+    const POSITION: f32 = 1e-3;
+    const SCALE: f32 = 1e-4;
+    const ROTATION: f32 = 1e-4;
+    let near = |a: &[f32], b: &[f32], d: f32| a.iter().zip(b).all(|(x, y)| (x - y).abs() <= d);
+    let coincident = |a: &Placement, b: &Placement| {
+        let flipped = b.rotation.map(|v| -v);
+        near(&a.position, &b.position, POSITION)
+            && near(&a.scale, &b.scale, SCALE)
+            && (near(&a.rotation, &b.rotation, ROTATION) || near(&a.rotation, &flipped, ROTATION))
+    };
+    let mut order: Vec<usize> = (0..placements.len()).collect();
+    order.sort_by(|&i, &j| {
+        let (a, b) = (&placements[i], &placements[j]);
+        a.0.cmp(&b.0).then(a.1.position[0].total_cmp(&b.1.position[0]))
+    });
+    let (mut earlier, mut later) = (vec![false; placements.len()], vec![false; placements.len()]);
+    for (k, &i) in order.iter().enumerate() {
+        for &j in &order[k + 1..] {
+            let (a, b) = (&placements[i], &placements[j]);
+            if b.0 != a.0 || b.1.position[0] - a.1.position[0] > POSITION {
+                break;
+            }
+            if coincident(&a.1, &b.1) {
+                let (first, second) = if i < j { (i, j) } else { (j, i) };
+                later[first] = true;
+                earlier[second] = true;
+            }
+        }
+    }
+    earlier.iter().zip(&later).map(|(&e, &l)| e && !l).collect()
+}
+
 #[derive(SystemParam)]
 pub(super) struct SpawnAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
@@ -109,6 +148,7 @@ pub(super) struct SpawnAssets<'w> {
     buffers: ResMut<'w, Assets<ShaderBuffer>>,
     light: Res<'w, GameLightAssets>,
     post: Option<Res<'w, crate::render::post::PostSettings>>,
+    uploads: Option<ResMut<'w, crate::render::uploads::LevelUploads>>,
 }
 
 pub(super) fn spawn_objects(mut commands: Commands, mut pending: ResMut<PendingObjects>, assets: SpawnAssets) {
@@ -157,11 +197,7 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
     for p in &stats.package_objects {
         info!("track objects: drawn from a package: {p}");
     }
-    let image_handles: Vec<Handle<Image>> = loaded
-        .images
-        .into_iter()
-        .map(|(image, recipe)| crate::render::reload::add(&mut a.images, image, Some(recipe)))
-        .collect();
+    let image_handles: Vec<Handle<Image>> = loaded.images.into_handles(&mut a.images);
     let material_handles: Vec<MaterialHandle> = loaded
         .materials
         .iter()
@@ -178,12 +214,18 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
         .iter()
         .map(|h| if let MaterialHandle::Object(m) = h { Some(m.clone()) } else { None })
         .collect();
-    let mesh_handles: Vec<(Name, Handle<Mesh>)> =
-        loaded.meshes.into_iter().map(|(label, mesh)| (Name::new(label), a.meshes.add(mesh))).collect();
+    let mesh_handles: Vec<(Name, Handle<Mesh>)> = loaded
+        .meshes
+        .into_iter()
+        .map(|(label, mesh)| {
+            (Name::new(label), crate::render::uploads::add_mesh(a.uploads.as_deref_mut(), &mut a.meshes, mesh))
+        })
+        .collect();
 
     let mut buffer = vec![[1.0, 1.0]];
     let mut slots = Vec::with_capacity(loaded.placements.len());
-    for (object, placement) in &loaded.placements {
+    let last = drawn_last(&loaded.placements);
+    for ((object, placement), &last) in loaded.placements.iter().zip(&last) {
         let lods = &loaded.parts[*object];
         if lods.iter().all(Vec::is_empty) {
             continue;
@@ -205,6 +247,9 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
                         commands.spawn((name, mesh, MeshMaterial3d(m.clone()), transform, Visibility::Hidden)).id()
                     }
                 };
+                if last {
+                    commands.entity(id).insert(NoAutomaticBatching);
+                }
                 lod_entities.push((id, material));
             }
             entities.push(lod_entities);
@@ -220,6 +265,7 @@ fn spawn(commands: &mut Commands, loaded: LoadedObjects, mut a: SpawnAssets) {
             state: None,
         });
     }
+    info!("object placements drawn last (coincident with earlier ones): {}", last.iter().filter(|&&l| l).count());
     let pairs: std::collections::BTreeSet<(usize, usize)> =
         loaded.parts.iter().flatten().flatten().map(|&(mesh, material)| (mesh, material)).collect();
     let warm = super::warm_up::spawn(
@@ -382,6 +428,30 @@ mod tests {
         assert!((choose_lod(&t, 0.03).1 - 0.5).abs() < 1e-5);
         assert_eq!(fade_alpha(0.5), 0.5);
         assert_eq!(fade_alpha(0.9999), 999.0 * 0.001);
+    }
+
+    #[test]
+    fn the_last_of_a_coincident_group_is_drawn_last() {
+        let at = |object: usize, x: f32, rotation: [f32; 4]| {
+            (
+                object,
+                Placement { scale: [1.0; 3], rotation, position: [x, 2.0, 3.0], unk: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0] },
+            )
+        };
+        let q = [0.0, 0.6, 0.0, 0.8];
+        let placements = [
+            at(0, 10.0, q),
+            at(1, 10.0, q),
+            at(0, 10.0 + 5e-4, [0.0, -0.6, 0.0, -0.8]),
+            at(0, 20.0, q),
+            at(0, 20.0, q),
+            at(0, 20.0, [0.0, 0.6 + 5e-5, 0.0, 0.8]),
+            at(0, 30.0, q),
+            at(0, 30.002, q),
+            at(0, 40.0, q),
+            at(0, 40.0, [0.0, 0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(drawn_last(&placements), [false, false, true, false, false, true, false, false, false, false]);
     }
 
     #[test]

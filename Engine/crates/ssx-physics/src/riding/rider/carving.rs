@@ -189,11 +189,13 @@ pub(super) fn janked_motion(
     let t0 = s.janked.anim_ticks;
     s.janked.advance_sequence(&t.janked, dt);
     let t1 = s.janked.anim_ticks;
-    if s.janked_pin.is_none() && JANKED_PIN_TICKS - t1 <= TINY {
-        s.janked_pin = Some((s.traj_cached, s.traj_orientation));
-    }
-    if let Some((p, q)) = s.janked_pin {
-        (s.traj, s.traj_orientation) = (p, q);
+    if running.is_none() {
+        if s.janked_pin.is_none() && JANKED_PIN_TICKS - t1 <= TINY {
+            s.janked_pin = Some((s.traj_cached, s.traj_orientation));
+        }
+        if let Some((p, q)) = s.janked_pin {
+            (s.traj, s.traj_orientation) = (p, q);
+        }
     }
     if let Some(running) = running {
         if s.state == RideState::Riding {

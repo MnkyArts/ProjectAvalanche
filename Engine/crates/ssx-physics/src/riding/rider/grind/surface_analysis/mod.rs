@@ -343,11 +343,27 @@ pub fn gather_mask(grind_steering: bool, in_air: bool, landing_mode: bool, l2: b
 
 impl SaFeature {
     pub fn dispatch(&mut self, c: &CollisionWorld, i: &DispatchInputs) -> SurfaceAnalysis {
+        self.prepare(i).run(c)
+    }
+
+    pub fn prepare(&mut self, i: &DispatchInputs) -> SaJob {
         self.update_look_ahead(i);
         let la = self.look_ahead;
-        let r = region(i, &la);
-        self.aabb = r.aabb;
+        let region = region(i, &la);
+        self.aabb = region.aabb;
         let mask = gather_mask(i.grind_steering.is_some(), i.in_air, la.landing_mode, i.l2, i.super_grind);
+        SaJob { region, mask }
+    }
+}
+
+pub struct SaJob {
+    region: Region,
+    mask: u32,
+}
+
+impl SaJob {
+    pub fn run(&self, c: &CollisionWorld) -> SurfaceAnalysis {
+        let (r, mask) = (&self.region, self.mask);
         let to_world = r.to_grid.inverse();
         let mut heights = vec![0u8; GRID * GRID];
         let (lo, hi) = r.aabb;

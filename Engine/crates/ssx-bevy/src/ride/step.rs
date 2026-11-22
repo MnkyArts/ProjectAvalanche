@@ -6,6 +6,7 @@ use ssx_physics::death::DeathTimerEvent;
 use ssx_physics::rewind::RewindPad;
 use ssx_physics::rider::{RideState, RiderState};
 use ssx_physics::session::Execution;
+use ssx_physics::survival::OxygenPad;
 
 use super::clock::{lerp_pose, pose_of};
 use super::controls::{PadLock, scheme_holds};
@@ -84,6 +85,7 @@ impl Ride {
     }
 
     pub fn respawn(&mut self) {
+        self.stream_from_start = true;
         if let Some(short) = self.intro_short.take() {
             info!("intro: a restart takes the short path");
             self.intro = Some(short);
@@ -131,6 +133,7 @@ impl Ride {
                 pb.respawned();
             }
             self.ghost_rumble = ssx_physics::graph::LandingRumble::default();
+            self.rumble.restart();
             if let Some(data) = self.session.heli_jump.as_ref().map(|h| h.data.clone())
                 && let Some(mut s) = super::start::ride_from_ghost(
                     &self.world,
@@ -178,7 +181,7 @@ impl Ride {
             if !self.intro_graph {
                 self.intro_graph = true;
                 self.cabin_seen = self.intro.as_deref().filter(|i| !i.nis.cabin.is_empty()).map(|_| 0);
-                if let Err(e) = a.graph_mut().set_intro(&self.big_root, self.intro.as_deref().map(|i| &i.nis)) {
+                if let Err(e) = a.graph_mut().set_intro_assets(&self.big_root, self.intro.as_deref()) {
                     warn!("intro: the rider's NIS graph failed ({e:#}); the level start poses nothing");
                 }
             }
@@ -215,6 +218,7 @@ impl Ride {
         self.state.grind.pad_l2 = grind_held;
         self.state.grind.pad_l2_hold = self.l2_hold;
         self.state.wingsuit.pad_r1 = wingsuit_held;
+        self.state.survival.oxygen_pad = OxygenPad { use_oxygen: self.r1, use_oxygen_classic: self.r3 };
         let pad =
             RewindPad { flip_accel: input.matched().flip_acceleration(self.classic), rewind_held, ..self.rewind_pad };
         let gate = if at_start { self.start_gate } else { super::live::StartGate::Free };
@@ -224,11 +228,13 @@ impl Ride {
             super::live::StartGate::Hold => {
                 self.state.grind.release_l2();
                 self.state.wingsuit.pad_r1 = false;
+                self.state.survival.oxygen_pad = OxygenPad::default();
                 released()
             }
             super::live::StartGate::Go { pressed } => {
                 self.state.grind.release_l2();
                 self.state.wingsuit.pad_r1 = false;
+                self.state.survival.oxygen_pad = OxygenPad::default();
                 let releasing = self
                     .state
                     .start
@@ -247,6 +253,7 @@ impl Ride {
             super::live::StartGate::Free if self.pads_held || self.chat_held => {
                 self.state.grind.release_l2();
                 self.state.wingsuit.pad_r1 = false;
+                self.state.survival.oxygen_pad = OxygenPad::default();
                 released()
             }
             super::live::StartGate::Free => (input, tricks, pad),
@@ -304,7 +311,31 @@ impl Ride {
         };
         let held = self.pads_held || self.chat_held || gate != super::live::StartGate::Free;
         let r2 = if held { 0.0 } else { self.r2 };
+        let (in_gameplay, loops) = (self.state.gameplay.is_some(), self.session.event.loops);
+        if !self.session.objectives_loaded
+            && let Some(task) = self.scripts_task.take()
+        {
+            match bevy::tasks::block_on(task) {
+                Ok(build) => self.session.scripts_ahead = Some(build),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        let ahead = self.session.scripts_ahead.is_some();
         let e = self.session.execute_with(&mut self.state, &self.world, &input, &tricks, r2, &pad, graph, &mut actors);
+        if ahead && self.session.scripts_ahead.is_none() {
+            if self.session.scripts_built_ahead {
+                info!("objectives: the first execution took the level's scripts built ahead");
+            } else {
+                warn!("objectives: the level's scripts built ahead had other inputs: built in the first execution");
+            }
+        }
+        self.rumble.executed(&self.state.rumble, e.rewind.active);
+        if self.session.event.loops != loops {
+            self.stream_from_start = true;
+        }
+        if !in_gameplay && self.state.gameplay.is_some() {
+            self.stream_from_start = false;
+        }
         self.log_messages();
         // PORT(choice): a test start only (unset in play): at a survive loop's race start the rider is replaced by one
         // placed on a rival's recording S s before its helicopter contact; the console starts every loop at the top.

@@ -4,6 +4,7 @@ use std::sync::{Mutex, TryLockError};
 
 pub static WAITED_FIRST: AtomicU64 = AtomicU64::new(0);
 pub static WAITED_DRY: AtomicU64 = AtomicU64::new(0);
+pub static WAITED_NS: AtomicU64 = AtomicU64::new(0);
 
 const LABEL: usize = 40;
 

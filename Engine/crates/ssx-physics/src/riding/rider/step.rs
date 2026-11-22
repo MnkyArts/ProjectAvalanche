@@ -22,6 +22,7 @@ pub struct StepContext<'a> {
     pub rewind: Option<crate::rewind::RewindStep>,
     pub flow: GameFlowFlags,
     pub avalanche: Option<&'a mut crate::avalanche::AvalancheSim>,
+    pub workers: Option<&'a dyn crate::workers::Workers>,
 }
 
 pub fn avalanche_inputs(
@@ -110,14 +111,13 @@ pub fn step_with_trigger(
     tricks: &TrickInput,
     r2: f32,
     dt: f32,
-    mut x: StepContext,
+    x: StepContext,
 ) -> StepEvents {
     if dt.abs() <= TINY {
         return StepEvents::default();
     }
     s.audio_tags.clear();
     s.carving.subject_update = false;
-    let t = &w.tuning;
     if let Some(sig) = x.graph.as_ref().and_then(|g| g.signature()) {
         s.tricks.signature = sig;
     }
@@ -134,10 +134,9 @@ pub fn step_with_trigger(
     let input = &input.with_stick(s.pad_stick);
     let stick = s.pad_stick;
     let l2_last = s.grind.l2_hold;
-    let sa_next = grind::dispatch(
+    let job = grind::dispatch(
         &mut s.grind,
         &grind::DispatchState {
-            c: &w.collision,
             r: &w.props,
             traj: s.traj,
             velocity: s.traj_velocity,
@@ -148,6 +147,36 @@ pub fn step_with_trigger(
             dt,
         },
     );
+    let head = Head { input, raw_stick, stick, in_air, nis, r2, dt };
+    let workers = x.workers;
+    let (sa_next, (events, gather)) =
+        crate::workers::join(workers, || job.run(&w.collision), || step_after_dispatch(s, w, tricks, head, x));
+    if gather {
+        s.grind.sa = Some(std::sync::Arc::new(sa_next));
+    }
+    events
+}
+
+#[derive(Clone, Copy)]
+struct Head<'a> {
+    input: &'a Input,
+    raw_stick: Vec2,
+    stick: Vec2,
+    in_air: bool,
+    nis: bool,
+    r2: f32,
+    dt: f32,
+}
+
+fn step_after_dispatch(
+    s: &mut RiderState,
+    w: &World,
+    tricks: &TrickInput,
+    head: Head,
+    mut x: StepContext,
+) -> (StepEvents, bool) {
+    let Head { input, raw_stick, stick, in_air, nis, r2, dt } = head;
+    let t = &w.tuning;
     (s.grind.button, s.grind.l2_hold) = (s.grind.pad_l2, s.grind.pad_l2_hold);
     (s.wingsuit.hold_prev, s.wingsuit.hold) = (s.wingsuit.hold, s.wingsuit.pad_r1);
     s.grind.stick = crate::steering::stick_angle_and_magnitude(stick);
@@ -162,6 +191,7 @@ pub fn step_with_trigger(
     let prev_spray = s.spray;
     s.spray = Spray::default();
     s.survival.init_outputs(&t.survival, &w.props);
+    s.rumble.reset_motors();
     s.survival.shade = match (s.survival.temperature_enabled, s.survival.shade_query, w.survival.sun) {
         (false, ..) => 1.0,
         (true, Some(q), _) => q.clamp(0.0, 1.0),
@@ -231,7 +261,7 @@ pub fn step_with_trigger(
     let tsd = s.death.time_since_death;
     s.survival.ice_axe_wear(st, &w.props, run_flags, s.ice_axe.chop(), dt);
     s.survival.update_temperature(st, &w.props, ds, run_flags, tsd, dt);
-    s.survival.update_oxygen(st, &w.props, ds, run_flags, s.player_speed, s.wingsuit.hold, tsd, dt);
+    s.survival.update_oxygen(st, &w.props, ds, run_flags, s.player_speed, s.tricks.classic, tsd, dt);
     s.survival.update_batteries(st, &w.props, run_flags, dt);
     let race_start = !s.track_started && s.trigger_go;
     if race_start {
@@ -271,7 +301,7 @@ pub fn step_with_trigger(
                 right_stick: tricks.right_stick,
                 get_going: get_going(s.reverse_camera.is_some(), raw_stick, s.stick_prev),
             };
-            return level_start_step(s, w, (input, tricks, &go), &start, dt, x, sa_next, rider_dead);
+            return level_start_step(s, w, (input, tricks, &go), &start, dt, x, rider_dead);
         }
         None => false,
     };
@@ -279,7 +309,7 @@ pub fn step_with_trigger(
         && let UberRecovery::GettingUp(_) = s.landing.uber_recovery
     {
         s.landing.uber_recovery = UberRecovery::GettingUp(s.graph.recover_ticks);
-        if s.graph.recover_ticks >= UBER_RECOVER_TRIGGER_CLEAR_TICKS {
+        if !s.board_particle.stay_dead && s.graph.recover_ticks >= UBER_RECOVER_TRIGGER_CLEAR_TICKS {
             (s.landing.uber_crash, s.uber_trigger) = (false, false);
         }
     }
@@ -328,6 +358,13 @@ pub fn step_with_trigger(
             RideState::WingsuitEnter | RideState::WingsuitFly | RideState::WingsuitExit => (Vec3::ZERO, None, AERIAL),
         }
     };
+    let riding_node = s.state == RideState::Riding && s.get_going.is_none();
+    if !riding_node || s.reentry.is_some() {
+        s.tricks.leave_riding_node();
+    }
+    if riding_node {
+        s.tricks.riding_node_update(dt);
+    }
     let mirror_rebuild =
         s.goofy != goofy_before && air_node(before) && air_node(s.state) && !s.janked.janked && s.heli_trick.is_none();
     if mirror_rebuild {
@@ -436,6 +473,7 @@ pub fn step_with_trigger(
     }
     if let Some(g) = x.graph.as_deref_mut() {
         crate::driver::AttachmentDriver::on_events(&mut s.attachment, &g.take_driver_events());
+        crate::driver::PinTrajectoryDriver::on_events(&mut s.pin, &g.take_pin_events());
         let queued = g.take_queued_queries();
         s.queued_queries.extend(queued.iter().filter_map(|t| crate::query::QueryTask::from_name(t)));
         if let Some(d) = s.attachment.as_mut() {
@@ -456,16 +494,24 @@ pub fn step_with_trigger(
         r.apply_to(&mut ctx);
     }
     score(s, w, input, &ctx, dt);
-    s.tricks.script_tags();
+    if s.tricks.script_tags().bail_exit {
+        on_bail_exit(s);
+    }
     spq(s, w, dt, Some(()));
     s.traj_cached_prev = s.traj_cached;
     s.traj_cached = s.traj;
+    s.rumble.cache_velocity(s.traj_velocity);
     avalanche_gather(s, w, &mut x);
-    s.grind.sa = Some(sa_next);
     s.heading = (s.alignment * Vec3::X).try_normalize().unwrap_or(s.heading);
     s.position = s.board_point();
     s.stick_prev = raw_stick;
-    StepEvents { rider_dead, race_start }
+    (StepEvents { rider_dead, race_start }, true)
+}
+
+fn on_bail_exit(s: &mut RiderState) {
+    (s.landing.backslide, s.landing.tumbling) = (false, false);
+    (s.ice_axe.chopped, s.ice_axe.frame.active) = (false, false);
+    s.rumble.bail_exit();
 }
 
 pub fn vitals(s: &RiderState, w: &World) -> crate::death::Vitals {
@@ -495,12 +541,11 @@ pub(super) fn level_start_step(
     start: &StepStart,
     dt: f32,
     mut x: StepContext,
-    sa_next: std::sync::Arc<grind::surface_analysis::SurfaceAnalysis>,
     rider_dead: Option<RiderDead>,
-) -> StepEvents {
+) -> (StepEvents, bool) {
     let rm = &w.tuning.root_motion;
     s.audio_tags.clear();
-    let Some(ls) = s.start.as_mut() else { return StepEvents { rider_dead, ..StepEvents::default() } };
+    let Some(ls) = s.start.as_mut() else { return (StepEvents { rider_dead, ..StepEvents::default() }, false) };
     ls.controller_update(dt, || crate::levelstart::go_pick(rm.random_seed));
     let (phase, idle_pose, go_pose) = (ls.phase, ls.idle_pose(rm), ls.go_pose());
     let attached = ls.attached_step().zip(idle_pose);
@@ -586,10 +631,10 @@ pub(super) fn level_start_step(
     spq(s, w, dt, None);
     s.traj_cached_prev = s.traj_cached;
     s.traj_cached = s.traj;
+    s.rumble.cache_velocity(s.traj_velocity);
     avalanche_gather(s, w, &mut x);
-    s.grind.sa = Some(sa_next);
     s.heading = (s.traj_orientation * Vec3::X).try_normalize().unwrap_or(s.heading);
     s.position = s.board_point();
     s.stick_prev = start.raw_stick;
-    StepEvents { rider_dead, ..StepEvents::default() }
+    (StepEvents { rider_dead, ..StepEvents::default() }, true)
 }

@@ -4,11 +4,12 @@ import bevy_pbr::render::{
     skinning,
     morph::{morph_position, morph_normal, morph_tangent},
     forward_io::{Vertex, UncompressedVertex, VertexOutput, decompress_vertex},
-    view_transformations::position_world_to_clip,
 };
 import package::render::lighting::game_lighting as gl;
+import package::render::lighting::game_position::{MainOutput, place};
 @if(SSX_TERRAIN_RIPPLE)
 import package::render::terrain::terrain_ripple;
+
 @if(SSX_HOOK_VERTEX)
 import super::hook;
 @if(SSX_HOOK_VERTEX)
@@ -16,10 +17,16 @@ import package::render::objects::hook_types::VertexIn;
 @if(SSX_HOOK_VERTEX)
 import bevy_pbr::render::mesh_view_bindings::globals;
 
+@if(SSX_INVARIANT_POSITION)
+alias GameVertexOutput = MainOutput;
+@if(!SSX_INVARIANT_POSITION)
+alias GameVertexOutput = VertexOutput;
+
 @if(SSX_LIGHT_BUFFER)
 @group(constants::MATERIAL_BIND_GROUP) @binding(140) var<storage, read> light_buffer: array<vec4<f32>>;
 @else
-@group(constants::MATERIAL_BIND_GROUP) @binding(constants::SSX_LIGHT_BINDING) var<uniform> fog_light: gl::GameLight;
+@group(constants::MATERIAL_BIND_GROUP) @binding(constants::SSX_LIGHT_BINDING)
+var<storage, read> fog_light: gl::GameLight;
 
 @if(MORPH_TARGETS)
 fn morph_vertex(vertex_in: UncompressedVertex, instance_index: u32) -> UncompressedVertex {
@@ -44,8 +51,8 @@ fn morph_vertex(vertex_in: UncompressedVertex, instance_index: u32) -> Uncompres
 }
 
 @vertex
-fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
-    var out: VertexOutput;
+fn vertex(vertex_no_morph: Vertex) -> GameVertexOutput {
+    var out: GameVertexOutput;
     let uncompressed_vertex_no_morph = decompress_vertex(vertex_no_morph, vertex_no_morph.instance_index);
 @if(MORPH_TARGETS)
     var vertex = morph_vertex(uncompressed_vertex_no_morph, vertex_no_morph.instance_index);
@@ -72,25 +79,24 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 
 @if(VERTEX_POSITIONS) {
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-@if(SSX_HOOK_VERTEX) {
-    var hook_normal = vec3(0.0, 1.0, 0.0);
+    var normal = vec3(0.0, 1.0, 0.0);
 @if(VERTEX_NORMALS)
-    hook_normal = out.world_normal;
+    normal = out.world_normal;
+@if(SSX_HOOK_VERTEX) {
     var hook_uv = vec2(0.0);
 @if(VERTEX_UVS_A)
     hook_uv = vertex.uv;
-    let offset = hook::vertex_offset(VertexIn(out.world_position.xyz, hook_normal, hook_uv, globals.time));
+    let offset = hook::vertex_offset(VertexIn(out.world_position.xyz, normal, hook_uv, globals.time));
     out.world_position = vec4(out.world_position.xyz + offset, out.world_position.w);
 }
-@if(SSX_TERRAIN_RIPPLE && VERTEX_NORMALS) {
-    let rippled = terrain_ripple::apply(out.world_position.xyz, out.world_normal);
-    out.world_normal = rippled[1];
-    out.world_position = vec4(rippled[0], out.world_position.w);
-} @elif(SSX_TERRAIN_RIPPLE) {
-    let rippled = terrain_ripple::apply(out.world_position.xyz, vec3(0.0, 1.0, 0.0));
-    out.world_position = vec4(rippled[0], out.world_position.w);
-}
-    out.position = position_world_to_clip(out.world_position.xyz);
+@if(SSX_TERRAIN_RIPPLE)
+    let placed = terrain_ripple::place(out.world_position.xyz, normal);
+@else
+    let placed = place(out.world_position.xyz, normal);
+    out.world_position = vec4(placed.world_position, out.world_position.w);
+@if(VERTEX_NORMALS)
+    out.world_normal = placed.world_normal;
+    out.position = placed.clip_position;
 @if(SSX_LIGHT_BUFFER)
     let at = bitcast<u32>(light_buffer[3].w);
 @if(SSX_LIGHT_BUFFER)

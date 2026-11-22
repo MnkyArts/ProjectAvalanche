@@ -267,10 +267,12 @@ const ARC_E: [u32; 4] = [0xBD6D_D42D, 0xBED6_5553, 0x3E66_3246, 0x400B_1889];
 const ARC_F: [u32; 4] = [0x3F1D_D7B6, 0x4089_80BD, 0xBF98_3F2F, 0xC0D1_360E];
 const ARC_G: [u32; 4] = [0xBFAF_4418, 0xC08F_6AD9, 0x3FB5_8485, 0x40AF_6AD8];
 
+#[inline(always)]
 fn reduce(x: f32) -> f32 {
     nmsub(TWO_PI, round(mul(x, INV_TWO_PI)), x)
 }
 
+#[inline(always)]
 pub fn sin(x: f32) -> f32 {
     let v = reduce(x);
     let x2 = mul(v, v);
@@ -283,6 +285,7 @@ pub fn sin(x: f32) -> f32 {
     acc
 }
 
+#[inline(always)]
 pub fn cos(x: f32) -> f32 {
     let v = reduce(x);
     let c = COS.map(f32::from_bits);

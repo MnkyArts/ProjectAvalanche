@@ -1,5 +1,6 @@
 use bevy::math::{Vec3, Vec4};
 
+use super::params::name;
 use super::{Context, Particle, RNG_SEEDS, Rng, View, unit_float, xorshift};
 
 #[derive(Clone, Copy, Debug)]
@@ -26,20 +27,20 @@ impl Default for ActionPrivate {
 }
 
 pub(super) fn weather(p: &View, ps: &mut [Particle], ctx: &Context, st: &mut ActionPrivate, rng: &mut Rng) {
-    let w = ctx.weather.wind * p.f("fWeatherScalar");
-    let interval = p.i("iGustIntervalMs");
-    let mut stripes = (interval as f32 / ctx.dt_smoothed * 0.001 * p.f("fFieldFraction") + 0.5) as i64;
+    let w = ctx.weather.wind * p.f(name!("fWeatherScalar"));
+    let interval = p.i(name!("iGustIntervalMs"));
+    let mut stripes = (interval as f32 / ctx.dt_smoothed * 0.001 * p.f(name!("fFieldFraction")) + 0.5) as i64;
     if stripes <= 2 {
         stripes = 1;
     }
     if ctx.time_ms - st.last_gust_ms > interval {
-        st.gust_target = p.v3("vGustVariance") * rng.spread4().truncate();
+        st.gust_target = p.v3(name!("vGustVariance")) * rng.spread4().truncate();
         st.last_gust_ms = ctx.time_ms;
     }
-    st.gust_current += (st.gust_target - st.gust_current) * p.f("fGustChangeGain");
+    st.gust_current += (st.gust_target - st.gust_current) * p.f(name!("fGustChangeGain"));
     let n = stripes as usize;
     st.stripe = (st.stripe + 1) % n;
-    let (amp, adopt) = (p.v3("vTurbulentAmplitude"), p.f("fAdoption"));
+    let (amp, adopt) = (p.v3(name!("vTurbulentAmplitude")), p.f(name!("fAdoption")));
     let drift = (w + st.gust_current) * adopt;
     for chunk in (0..ps.len()).step_by(64) {
         let end = (chunk + 64).min(ps.len());
@@ -61,8 +62,14 @@ pub(super) fn turbulence_table() -> &'static [f32; 256] {
 }
 
 pub(super) fn turbulence(p: &View, ps: &mut [Particle], ctx: &Context, st: &mut ActionPrivate, rng: &mut Rng) {
-    let (mag, freq, noise, scale, twist, curl) =
-        (p.f("fMagnitude"), p.f("fFrequency"), p.f("fAmountNoise"), p.f("fScale"), p.f("fTwist"), p.f("fCurl"));
+    let (mag, freq, noise, scale, twist, curl) = (
+        p.f(name!("fMagnitude")),
+        p.f(name!("fFrequency")),
+        p.f(name!("fAmountNoise")),
+        p.f(name!("fScale")),
+        p.f(name!("fTwist")),
+        p.f(name!("fCurl")),
+    );
     let dt = ctx.dt;
     let k = dt * twist * freq;
     if k > 0.0 && dt > 1.0 / 6000.0 {
@@ -90,7 +97,7 @@ pub(super) fn turbulence(p: &View, ps: &mut [Particle], ctx: &Context, st: &mut 
 }
 
 pub(super) fn periodic_box(p: &View, ps: &mut [Particle]) {
-    let d = p.v3("vDimensions");
+    let d = p.v3(name!("vDimensions"));
     let h = d * 0.5;
     let wrap = |x: f32, d: f32, h: f32, inverted: bool| {
         if !inverted {
@@ -112,7 +119,7 @@ pub(super) fn periodic_box(p: &View, ps: &mut [Particle]) {
 }
 
 pub(super) fn accelerate(p: &View, ps: &mut [Particle], dt: f32) {
-    let (a, var) = (p.v3("vAcceleration"), p.v3("vAccelVariance"));
+    let (a, var) = (p.v3(name!("vAcceleration")), p.v3(name!("vAccelVariance")));
     for q in ps {
         let acc = if var == Vec3::ZERO {
             a
@@ -129,8 +136,12 @@ pub(super) fn drag(p: &View, ps: &mut [Particle], dt: f32) {
     if dt == 0.0 {
         return;
     }
-    let (c, wind, sd, power) =
-        (p.f("fDragCoefficient"), p.v3("vAmbientWind"), p.f("fSizeDependence"), p.i("iSpeedPower"));
+    let (c, wind, sd, power) = (
+        p.f(name!("fDragCoefficient")),
+        p.v3(name!("vAmbientWind")),
+        p.f(name!("fSizeDependence")),
+        p.i(name!("iSpeedPower")),
+    );
     let kmax = (1.0 / dt) * 0.99;
     for q in ps {
         let rel = wind - q.vel;
@@ -144,7 +155,7 @@ pub(super) fn drag(p: &View, ps: &mut [Particle], dt: f32) {
 }
 
 pub(super) fn speed_limit(p: &View, ps: &mut [Particle]) {
-    let (lo, hi) = (p.f("fSpeedMin"), p.f("fSpeedMax"));
+    let (lo, hi) = (p.f(name!("fSpeedMin")), p.f(name!("fSpeedMax")));
     for q in ps {
         let s = q.vel.length() + 1e-8;
         if lo > s {
@@ -156,8 +167,8 @@ pub(super) fn speed_limit(p: &View, ps: &mut [Particle]) {
 }
 
 pub(super) fn kill_age(p: &View, ps: &mut Vec<Particle>, time_ms: i32) {
-    let (t, max) = (time_ms as f32, p.i("iAgeMs") as f32);
-    match p.i("iOrdering") {
+    let (t, max) = (time_ms as f32, p.i(name!("iAgeMs")) as f32);
+    match p.i(name!("iOrdering")) {
         1 => {
             let n = ps.iter().take_while(|q| t - q.birth > max || t - q.birth < 0.0).count();
             ps.drain(..n);

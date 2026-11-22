@@ -227,8 +227,160 @@ impl Prepared {
         }
     }
 
-    fn eval(&self, x: [f32; 3]) -> [f32; 3] {
+    fn channel(&self, i: usize, x: f32) -> f32 {
         match self {
+            Prepared::Copy | Prepared::Matrix(_) => x,
+            Prepared::BrightnessContrast { b, c } => (x * b - 0.5) * c + 0.5,
+            Prepared::Levels { lo, range, mid, out_lo, out_range } => {
+                let d = (x - lo[i]).max(0.0);
+                let t = if range[i] > 0.0 { (d / range[i]).min(1.0) } else { f32::from(u8::from(d > 0.0)) };
+                out_lo[i] + out_range[i] * (mid[i] * t.log2()).exp2()
+            }
+            Prepared::ColourBalance { a, e, .. } => a[i] * (e[i] * x.log2()).exp2(),
+        }
+    }
+
+    fn combine(&self, x: &Lanes, n: &Lanes, y: &mut Lanes) {
+        match self {
+            Prepared::ColourBalance { preserve: true, .. } => {
+                for k in 0..LANES {
+                    let l0 = x[0][k] * LUMA[0] + x[1][k] * LUMA[1] + x[2][k] * LUMA[2];
+                    let l1 = n[0][k] * LUMA[0] + n[1][k] * LUMA[1] + n[2][k] * LUMA[2];
+                    let r = 1.0 / l1;
+                    for i in 0..3 {
+                        y[i][k] = if l1 > 0.0 { n[i][k] * l0 * r } else { n[i][k] };
+                    }
+                }
+            }
+            Prepared::Matrix(m) => {
+                for j in 0..3 {
+                    for k in 0..LANES {
+                        y[j][k] = x[0][k] * m[0][j] + x[1][k] * m[1][j] + x[2][k] * m[2][j];
+                    }
+                }
+            }
+            _ => *y = *n,
+        }
+    }
+
+    fn per_channel(&self) -> bool {
+        !matches!(self, Prepared::Matrix(_) | Prepared::ColourBalance { preserve: true, .. })
+    }
+}
+
+const LANES: usize = 64;
+type Lanes = [[f32; LANES]; 3];
+
+struct StageBlend {
+    mode: BlendMode,
+    op256: u32,
+    op: f32,
+}
+
+impl StageBlend {
+    fn new(mode: BlendMode, opacity: u32) -> Self {
+        let op256 = (opacity << 8) / 255;
+        StageBlend { mode, op256, op: op256 as f32 / 256.0 }
+    }
+
+    fn byte(&self, x: f32, y: f32) -> u8 {
+        match self.mode {
+            BlendMode::Normal if self.op256 == 256 => quantise(y),
+            BlendMode::Normal => quantise(x + self.op * (y - x)),
+            mode => {
+                let layer = quantise(y) as f32 * INV_255;
+                let blended = mode.apply(x, layer);
+                quantise(if self.op256 == 256 { blended } else { x + (blended - x) * self.op })
+            }
+        }
+    }
+
+    fn bytes(&self, x: &Lanes, y: &Lanes, out: &mut [[u8; LANES]; 3]) {
+        for i in 0..3 {
+            match self.mode {
+                BlendMode::Normal if self.op256 == 256 => {
+                    for k in 0..LANES {
+                        out[i][k] = quantise(y[i][k]);
+                    }
+                }
+                BlendMode::Normal => {
+                    for k in 0..LANES {
+                        out[i][k] = quantise(x[i][k] + self.op * (y[i][k] - x[i][k]));
+                    }
+                }
+                _ => {
+                    for k in 0..LANES {
+                        out[i][k] = self.byte(x[i][k], y[i][k]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stage {
+    pub label: String,
+    pub kind: LayerKind,
+    pub blend: BlendMode,
+    pub opacity: u32,
+}
+
+// PORT(choice): every texel channel is a byte, so a layer's own part of each channel (`Prepared::channel`: the powers,
+// logarithms and divisions) is computed once for each of the 256 byte values, and a layer whose channels read only
+// their own input (all but HueSaturation and a ColourBalance preserving luminosity) maps each texel through three
+// 256-byte tables of its blended result; the others combine the tabled parts in lanes of 64 texels. The same f32
+// operations in the same order as per texel, so the same bytes (checked over the whole disc's stacks, presets and
+// groups by ssx-assets' colour_cube_verify example). A layer over the 32^3 cube took 0.13-1.3 ms computed per texel on
+// the development laptop (Levels and ColourBalance the most); by the tables 14-18 us, HueSaturation 105 us and
+// ColourBalance 150 us in the lanes. A ride's frame builds its cube in the frame a Tricky's ramp moves it. The console
+// runs each layer per texel in VMX (0x83484750, 0x834863F8, 0x83484C58, 0x83483600).
+pub fn apply_stage(cube: &mut ColourCube, stage: &Stage) {
+    if stage.opacity == 0 || stage.kind == LayerKind::LoadColourCube {
+        return;
+    }
+    let f = Prepared::new(&stage.kind);
+    let blend = StageBlend::new(stage.blend, stage.opacity);
+    let x: [f32; 256] = std::array::from_fn(|b| b as f32 * INV_255);
+    let own: [[f32; 256]; 3] = std::array::from_fn(|i| std::array::from_fn(|b| f.channel(i, x[b])));
+    if f.per_channel() {
+        let out: [[u8; 256]; 3] = std::array::from_fn(|i| std::array::from_fn(|b| blend.byte(x[b], own[i][b])));
+        for t in &mut cube.texels {
+            *t = [0, 1, 2].map(|i| out[i][usize::from(t[i])]);
+        }
+    } else {
+        let (mut xs, mut ns, mut ys) = ([[0.0; LANES]; 3], [[0.0; LANES]; 3], [[0.0; LANES]; 3]);
+        let mut out = [[0; LANES]; 3];
+        for texels in cube.texels.chunks_mut(LANES) {
+            for (k, t) in texels.iter().enumerate() {
+                for i in 0..3 {
+                    let b = usize::from(t[i]);
+                    (xs[i][k], ns[i][k]) = (x[b], own[i][b]);
+                }
+            }
+            f.combine(&xs, &ns, &mut ys);
+            blend.bytes(&xs, &ys, &mut out);
+            for (k, t) in texels.iter_mut().enumerate() {
+                *t = [out[0][k], out[1][k], out[2][k]];
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stage(kind: LayerKind, blend: BlendMode, opacity: u32) -> Stage {
+        Stage { label: String::new(), kind, blend, opacity }
+    }
+
+    fn q(v: f32) -> u8 {
+        quantise(v)
+    }
+
+    fn eval_per_texel(p: &Prepared, x: [f32; 3]) -> [f32; 3] {
+        match p {
             Prepared::Copy => x,
             Prepared::BrightnessContrast { b, c } => x.map(|v| (v * b - 0.5) * c + 0.5),
             Prepared::Levels { lo, range, mid, out_lo, out_range } => [0, 1, 2].map(|i| {
@@ -248,48 +400,83 @@ impl Prepared {
             Prepared::Matrix(m) => [0, 1, 2].map(|j| x[0] * m[0][j] + x[1] * m[1][j] + x[2] * m[2][j]),
         }
     }
-}
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Stage {
-    pub label: String,
-    pub kind: LayerKind,
-    pub blend: BlendMode,
-    pub opacity: u32,
-}
-
-pub fn apply_stage(cube: &mut ColourCube, stage: &Stage) {
-    if stage.opacity == 0 || stage.kind == LayerKind::LoadColourCube {
-        return;
+    fn apply_stage_per_texel(cube: &mut ColourCube, stage: &Stage) {
+        if stage.opacity == 0 || stage.kind == LayerKind::LoadColourCube {
+            return;
+        }
+        let f = Prepared::new(&stage.kind);
+        let op256 = (stage.opacity << 8) / 255;
+        let op = op256 as f32 / 256.0;
+        for t in &mut cube.texels {
+            let x = t.map(|b| b as f32 * INV_255);
+            let y = eval_per_texel(&f, x);
+            *t = match stage.blend {
+                BlendMode::Normal if op256 == 256 => y.map(quantise),
+                BlendMode::Normal => [0, 1, 2].map(|c| quantise(x[c] + op * (y[c] - x[c]))),
+                mode => [0, 1, 2].map(|c| {
+                    let layer = quantise(y[c]) as f32 * INV_255;
+                    let blended = mode.apply(x[c], layer);
+                    quantise(if op256 == 256 { blended } else { x[c] + (blended - x[c]) * op })
+                }),
+            };
+        }
     }
-    let f = Prepared::new(&stage.kind);
-    let op256 = (stage.opacity << 8) / 255;
-    let op = op256 as f32 / 256.0;
-    for t in &mut cube.texels {
-        let x = t.map(|b| b as f32 * INV_255);
-        let y = f.eval(x);
-        *t = match stage.blend {
-            BlendMode::Normal if op256 == 256 => y.map(quantise),
-            BlendMode::Normal => [0, 1, 2].map(|c| quantise(x[c] + op * (y[c] - x[c]))),
-            mode => [0, 1, 2].map(|c| {
-                let layer = quantise(y[c]) as f32 * INV_255;
-                let blended = mode.apply(x[c], layer);
-                quantise(if op256 == 256 { blended } else { x[c] + (blended - x[c]) * op })
-            }),
+
+    #[test]
+    fn byte_tables_match_the_per_texel_stage() {
+        let kinds = [
+            LayerKind::BrightnessContrast { brightness: 48, contrast: -29 },
+            LayerKind::BrightnessContrast { brightness: -100, contrast: 100 },
+            LayerKind::Levels {
+                input_mid: [0.8, 1.0, 1.7],
+                input_min: [10, 0, 40],
+                input_max: [230, 255, 40],
+                output_min: [0, 20, 5],
+                output_max: [255, 200, 250],
+            },
+            LayerKind::Levels {
+                input_mid: [1.0; 3],
+                input_min: [0; 3],
+                input_max: [255; 3],
+                output_min: [0; 3],
+                output_max: [255; 3],
+            },
+            LayerKind::ColourBalance {
+                shadows: [15, 0, -23],
+                midtones: [2, -40, 9],
+                highlights: [8, 0, -12],
+                preserve_luminosity: false,
+            },
+            LayerKind::ColourBalance {
+                shadows: [-35, 12, 0],
+                midtones: [0, 5, 30],
+                highlights: [-8, 20, 3],
+                preserve_luminosity: true,
+            },
+            LayerKind::HueSaturation { hue: 0, saturation: 0, lightness: 0 },
+            LayerKind::HueSaturation { hue: 35, saturation: -60, lightness: 12 },
+            LayerKind::HueSaturation { hue: -170, saturation: 80, lightness: -30 },
+        ];
+        let scrambled = ColourCube {
+            texels: (0..N * N * N)
+                .map(|i| [(i * 7) as u8, (i * 13 + 5) as u8, (i * 29 + i / 256 + 11) as u8])
+                .collect(),
         };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn stage(kind: LayerKind, blend: BlendMode, opacity: u32) -> Stage {
-        Stage { label: String::new(), kind, blend, opacity }
-    }
-
-    fn q(v: f32) -> u8 {
-        quantise(v)
+        let blends = [BlendMode::Normal, BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay];
+        for base in [ColourCube::identity(), scrambled] {
+            for kind in &kinds {
+                for blend in blends {
+                    for opacity in [0, 1, 64, 127, 128, 158, 238, 254, 255] {
+                        let s = stage(kind.clone(), blend, opacity);
+                        let (mut tabled, mut texel) = (base.clone(), base.clone());
+                        apply_stage(&mut tabled, &s);
+                        apply_stage_per_texel(&mut texel, &s);
+                        assert!(tabled == texel, "{kind:?} {blend:?} {opacity}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -359,7 +546,7 @@ mod tests {
         let Prepared::ColourBalance { a, e, .. } = Prepared::new(&kind) else { panic!() };
         assert!((e[0] - 1.04f32.powf(-a[0])).abs() < 1e-6);
         let p = Prepared::ColourBalance { a: [1.2, 1.0, 0.8], e: [1.0; 3], preserve: true };
-        let y = p.eval([0.3, 0.5, 0.7]);
+        let y = eval_per_texel(&p, [0.3, 0.5, 0.7]);
         let luma = |v: [f32; 3]| v[0] * LUMA[0] + v[1] * LUMA[1] + v[2] * LUMA[2];
         assert!((luma(y) - luma([0.3, 0.5, 0.7])).abs() < 1e-6);
     }

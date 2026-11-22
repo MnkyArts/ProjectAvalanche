@@ -107,8 +107,9 @@ pub(super) fn press_script() -> Option<(bool, f32, f32)> {
     Some((nose, from, to))
 }
 
-// PORT(choice): a test switch of the port, no game behaviour: the scripted player uses the oxygen tank (R1,
-// `PlayerUpdate_Oxygen` 0x82CF8788) as a player watching the gauge would; the console has no scripted player.
+// PORT(choice): a test switch of the port, no game behaviour: the scripted player uses the oxygen tank (R1 or the
+// classic R3, `PlayerUpdate_Oxygen` 0x82CF8788) as a player watching the gauge would; the console has no scripted
+// player.
 fn oxygen_script() -> Option<(f32, f32)> {
     static LEVELS: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
     *LEVELS.get_or_init(|| {
@@ -175,7 +176,7 @@ impl Ride {
                 info!("Ride step {}: the test player turns off the slope's side (SSX_MAP_FALL_AT)", self.steps + 1);
             }
             (self.input, self.tricks, self.rewind_pad) = (input, TrickInput::default(), pad);
-            (self.r2, self.l2, self.r1) = (0.0, false, false);
+            (self.r2, self.l2, self.r1, self.r3) = (0.0, false, false, false);
             return;
         }
         if self.autoplay {
@@ -184,7 +185,7 @@ impl Ride {
                 self.autoplay_waited += 1;
                 self.autoplay_sat_out = true;
                 (self.input, self.tricks) = (Input::default(), TrickInput::default());
-                (self.r2, self.l2, self.r1) = (0.0, false, false);
+                (self.r2, self.l2, self.r1, self.r3) = (0.0, false, false, false);
                 return;
             }
             let idle = self.last_exec.as_ref().is_none_or(|e| e.rewind.state == RewindState::Idle);
@@ -196,6 +197,7 @@ impl Ride {
                 let go = time - self.course_start_at;
                 let c = p.controls(&self.state, &self.session, &self.world, time, go, idle);
                 (self.input, self.tricks, self.r1, self.r2, self.l2) = (c.input, c.tricks, c.r1, 0.0, false);
+                self.r3 = false;
                 self.rewind_pad = c.rewind;
                 for line in &p.log[self.course_logged..] {
                     info!("Ride step {}: course: {line}", self.steps + 1);
@@ -211,18 +213,19 @@ impl Ride {
             self.r2 = 0.0;
             let tank = oxygen_script().is_some_and(|(low, high)| {
                 let o = &self.state.survival;
-                !self.state.in_air() && o.oxygen_tank > 0.0 && (o.oxygen < low || self.r1 && o.oxygen < high)
+                !self.state.in_air() && o.oxygen_tank > 0.0 && (o.oxygen < low || self.oxygen_held && o.oxygen < high)
             });
             if tank != self.oxygen_held {
                 let o = &self.state.survival;
                 let what = if tank { "held" } else { "let go" };
+                let button = if self.classic { "R3" } else { "R1" };
                 info!(
-                    "Ride step {step}: SSX_RIDE_OXYGEN R1 {what} (oxygen {:.3}, tank {:.3})",
+                    "Ride step {step}: SSX_RIDE_OXYGEN {button} {what} (oxygen {:.3}, tank {:.3})",
                     o.oxygen, o.oxygen_tank
                 );
                 self.oxygen_held = tank;
             }
-            (self.l2, self.r1) = (false, self.scripted_r1() || tank);
+            (self.l2, self.r1, self.r3) = (false, self.scripted_r1() || tank && !self.classic, tank && self.classic);
             return;
         }
         let Some(fixed) = self.fixed_input else { return };
@@ -317,7 +320,7 @@ impl Ride {
         }
         self.l2 = self.grind_fixed && held;
         self.l2_hold = self.l2;
-        self.r1 = self.scripted_r1();
+        (self.r1, self.r3) = (self.scripted_r1(), false);
         (self.input, self.tricks) = (ssx_physics::harness::pad_for_intent(input), tricks);
     }
 }

@@ -4,7 +4,7 @@ mod reverb;
 
 use ssx_formats::vmx;
 
-use crate::sfx_dsp::{BLOCK, Coefs, RATE, biquad};
+use crate::sfx_dsp::{BLOCK, Coefs, RATE, biquad, wrap};
 
 pub use beat::*;
 pub use delay::*;
@@ -35,11 +35,14 @@ pub fn design_band_pass(w: f32, bw: f32) -> [f32; FIR_HALF] {
 #[derive(Clone, Debug)]
 pub struct Fir65 {
     hist: Vec<[f32; 64]>,
+    ext: Vec<f32>,
 }
+
+const FIR_LANES: usize = 32;
 
 impl Fir65 {
     pub fn new(channels: usize) -> Self {
-        Self { hist: vec![[0.0; 64]; channels] }
+        Self { hist: vec![[0.0; 64]; channels], ext: Vec::with_capacity(64 + BLOCK) }
     }
 
     pub fn clear(&mut self) {
@@ -51,16 +54,32 @@ impl Fir65 {
         for j in 0..65 {
             full[j] = h[if j <= 32 { j } else { 64 - j }];
         }
-        let hists = &mut self.hist;
+        let (hists, ext) = (&mut self.hist, &mut self.ext);
         crate::sfx_dsp::fused(
             #[inline(always)]
             |f| {
                 for (c, buf) in chans.iter_mut().enumerate() {
                     let Some(hist) = hists.get_mut(c) else { continue };
-                    let mut ext = Vec::with_capacity(64 + buf.len());
+                    ext.clear();
                     ext.extend_from_slice(hist);
                     ext.extend_from_slice(buf);
-                    for (n, y) in buf.iter_mut().enumerate() {
+                    // PORT(choice): FIR_LANES (32) outputs side by side instead of one after another (one output no
+                    // longer waits for the last one's 65 dependent multiply-adds), each from the same multiply-adds
+                    // in the same order, so every sample is the same bit for bit (sfx_ride, fe_audio, movie_audio:
+                    // identical raw floats); the console has its kernel 0x82A2B140, whose outputs these are.
+                    let (lanes, _) = buf.as_chunks_mut::<FIR_LANES>();
+                    let whole = lanes.len() * FIR_LANES;
+                    for (i, ys) in lanes.iter_mut().enumerate() {
+                        let mut acc = [0.0f32; FIR_LANES];
+                        for (j, c) in full.iter().enumerate() {
+                            let xs = &ext[i * FIR_LANES + j..][..FIR_LANES];
+                            for (s, x) in acc.iter_mut().zip(xs) {
+                                *s = crate::sfx_dsp::madd(f, *c, *x, *s);
+                            }
+                        }
+                        *ys = acc;
+                    }
+                    for (n, y) in buf.iter_mut().enumerate().skip(whole) {
                         let taps = full.iter().zip(&ext[n..n + 65]);
                         *y = taps.fold(0.0f32, |s, (c, x)| crate::sfx_dsp::madd(f, *c, *x, s));
                     }
@@ -150,12 +169,22 @@ impl FrequencyShift {
         let d = (shift / RATE) * 6.283_185_5;
         let mut ph = [self.phase, self.phase + d, d.mul_add(2.0, self.phase), d.mul_add(3.0, self.phase)];
         let step = d * 4.0;
-        for k in (0..BLOCK).step_by(4) {
-            for l in 0..4 {
-                chans[0][k + l] = i_path[k + l] * vmx::cos(ph[l]) - q_path[k + l] * vmx::sin(ph[l]);
-                ph[l] += step;
-            }
-        }
+        let out = &mut chans[0];
+        // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the series' 24 multiply-adds a
+        // sample are the instruction in line instead of calls to the runtime's `fmaf` (the same single rounding: the
+        // same samples bit for bit); the flag is not used (the multiply-adds stay fused without FMA too, as before);
+        // the console has the series 0x82559EF8 / 0x82559FC8 on its vector unit.
+        crate::sfx_dsp::fused(
+            #[inline(always)]
+            |_| {
+                for k in (0..BLOCK).step_by(4) {
+                    for l in 0..4 {
+                        out[k + l] = i_path[k + l] * vmx::cos(ph[l]) - q_path[k + l] * vmx::sin(ph[l]);
+                        ph[l] += step;
+                    }
+                }
+            },
+        );
         let end = d.mul_add(256.0, self.phase);
         let turns = (end * f32::from_bits(0x3E22_F983)) as i32 as f32;
         self.phase = (-turns).mul_add(6.283_185_5, end);
@@ -194,6 +223,51 @@ mod tests {
             };
             let win = 0.54 - 0.46 * (std::f64::consts::TAU * n as f64 / 64.0).cos();
             assert!((f64::from(v) - ideal * win).abs() < 2e-6, "tap {n}");
+        }
+    }
+
+    #[test]
+    fn fir_outputs_side_by_side_are_the_one_at_a_time_fold() {
+        let h = design_band_pass(0.9, 0.7);
+        let mut full = [0.0f32; 65];
+        for (j, t) in full.iter_mut().enumerate() {
+            *t = h[if j <= 32 { j } else { 64 - j }];
+        }
+        let mut fir = Fir65::new(2);
+        let mut hist = [[0.0f32; 64]; 2];
+        let mut seed = 0x1234_5678u32;
+        for len in [BLOCK, BLOCK, 37, BLOCK, 100] {
+            let mut chans: Vec<Vec<f32>> = (0..2)
+                .map(|_| {
+                    (0..len)
+                        .map(|_| {
+                            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                            (seed >> 8) as f32 / (1 << 23) as f32 - 1.0
+                        })
+                        .collect()
+                })
+                .collect();
+            let want: Vec<Vec<f32>> = chans
+                .iter()
+                .zip(&mut hist)
+                .map(|(x, hist)| {
+                    let ext = [&hist[..], x].concat();
+                    let y = crate::sfx_dsp::fused(|f| {
+                        (0..len)
+                            .map(|n| {
+                                let taps = full.iter().zip(&ext[n..n + 65]);
+                                taps.fold(0.0f32, |s, (c, x)| crate::sfx_dsp::madd(f, *c, *x, s))
+                            })
+                            .collect::<Vec<f32>>()
+                    });
+                    hist.copy_from_slice(&ext[ext.len() - 64..]);
+                    y
+                })
+                .collect();
+            fir.process(&h, &mut chans);
+            for (got, want) in chans.iter().zip(&want) {
+                assert!(got.iter().zip(want).all(|(a, b)| a.to_bits() == b.to_bits()), "a block of {len}");
+            }
         }
     }
 

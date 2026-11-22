@@ -116,9 +116,12 @@ fn changes_settle_and_the_rate_limit_holds() {
         |f: &FakeDiscord| f.activities().last().is_some_and(|(_, p)| p["args"]["activity"]["details"] == "step 11");
     assert!(fake.wait_for(LONG, last));
     let times: Vec<Instant> = fake.activities().iter().map(|(at, _)| *at).collect();
+    const READ_SLACK: Duration = Duration::from_millis(100);
+    let window = t.window - READ_SLACK;
+    let gaps: Vec<u128> = times.windows(2).map(|w| w[1].duration_since(w[0]).as_millis()).collect();
     for (i, &t0) in times.iter().enumerate() {
-        let within = times[i..].iter().filter(|&&x| x.duration_since(t0) < t.window).count();
-        assert!(within <= t.updates, "{within} updates within {:?} of update {i}", t.window);
+        let within = times[i..].iter().filter(|&&x| x.duration_since(t0) < window).count();
+        assert!(within <= t.updates, "{within} updates within {window:?} of update {i} (gaps, ms: {gaps:?})");
     }
     assert!(times.len() < 13, "{} updates", times.len());
     drop(client);

@@ -18,6 +18,7 @@ pub struct BigRoot(pub std::path::PathBuf);
 pub enum DropSelect {
     Index(usize),
     Preset(String),
+    Key(u32),
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -148,6 +149,9 @@ pub fn load(big_root: &Path, track: &str, select: &DropSelect) -> Result<GameLig
     let drop_index = match select {
         DropSelect::Index(i) if *i < drops.len() => *i,
         DropSelect::Index(i) => bail!("{track} has {} drops, no drop {}", drops.len(), i + 1),
+        DropSelect::Key(key) => {
+            drops.iter().position(|d| d.key == *key).with_context(|| format!("{track} has no ge_drop {key:#010x}"))?
+        }
         DropSelect::Preset(name) => {
             let want = if name.ends_with("_lighting") { name.clone() } else { format!("{name}_lighting") };
             drops.iter().position(|d| d.lighting.name == want).with_context(|| {

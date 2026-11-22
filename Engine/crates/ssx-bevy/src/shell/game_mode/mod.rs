@@ -7,12 +7,11 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::{
     App, AppExit, Camera, Camera2d, ClearColorConfig, Color, Component, DefaultPlugins, Deref, DerefMut, Entity,
-    IntoScheduleConfigs, Msaa, PluginGroup, PreUpdate, Res, ResMut, Resource, Sprite, Startup, Update, Vec2,
-    Visibility, WindowPlugin, World, default, error, info, warn,
+    FixedUpdate, IntoScheduleConfigs, Msaa, PluginGroup, PreUpdate, Res, ResMut, Resource, Sprite, Startup, Update,
+    Vec2, Visibility, WindowPlugin, World, default, error, info, warn,
 };
 use bevy::render::view::Tonemapping;
 use bevy::render::{ExtractSchedule, RenderApp};
-use bevy::winit::WinitSettings;
 use ssx_assets::career::Profile;
 use ssx_assets::career::profile::DropState;
 use ssx_assets::career::save::SaveSchema;
@@ -27,6 +26,7 @@ use crate::shell::level::{self, LevelData, ShadingArg};
 use crate::ui;
 
 mod backdrop;
+mod benchmark;
 mod check;
 mod display;
 mod exit;
@@ -35,6 +35,7 @@ mod frame;
 mod ghosts;
 mod live;
 mod maps;
+mod pace;
 mod pads;
 mod pointer;
 mod presence;
@@ -47,6 +48,7 @@ pub use check::{UiPipelinesReady, WorldCheck, report_pipelines, ride_shot_path, 
 pub use display::{DisplayCli, DisplayState, WindowSpec, alt_held, print_displays};
 use frame::{shell_input, shell_step};
 pub use live::shown_text;
+pub use pace::{FramePace, Unfocused};
 pub use pads::{PadSlots, PadState, ScriptPad, StickDpad, pad_presses, pads_frame};
 pub use save::SaveSlot;
 pub use window::{WindowHidden, hidden_frame};
@@ -86,6 +88,11 @@ pub struct GameArgs {
     pub shading: Option<ShadingArg>,
     pub no_objects: bool,
     pub wireframe: bool,
+    pub view_distance: ssx_assets::port_options::ViewDistance,
+    pub frame_limit: ssx_assets::port_options::FrameLimit,
+    pub resolution_scale: ssx_assets::port_options::ResolutionScale,
+    pub shadow_quality: ssx_assets::port_options::ShadowQuality,
+    pub post_levels: crate::render::post::PostLevels,
     pub launch: Option<(String, f64)>,
     pub launch_map: Option<(String, f64)>,
     pub launch_mode: Option<String>,
@@ -102,6 +109,7 @@ pub struct GameArgs {
     pub dlc_root: Option<PathBuf>,
     pub tuner: Option<PathBuf>,
     pub tu_root: Option<PathBuf>,
+    pub benchmark: Option<crate::shell::benchmark::SceneRun>,
 }
 
 #[derive(Clone, Debug)]
@@ -228,10 +236,10 @@ pub fn boot_ui(big_root: &Path, lang: Language, classic: bool, display: DisplayC
     }
     let ((w, h), wide) = (display.size(), display.widescreen);
     info!("UI: the movies are told a {w} × {h} display (widescreen {wide})");
-    let mut scene = ui::UiScene::new(lib, player);
+    let mut scene = ui::UiSceneState::new(lib, player);
     scene.vm = Some(vm);
     scene.playing = false;
-    Ok((game, scene))
+    Ok((game, ui::UiScene::new(scene)))
 }
 
 const MOVIE_LAYER: usize = 7;
@@ -240,6 +248,40 @@ const FE_BACKGROUND: Color = Color::BLACK;
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct GameUiRes(pub GameUi);
+
+fn take_view_distance(ui: Option<ResMut<GameUiRes>>, distance: Option<ResMut<crate::render::terrain::ViewDistance>>) {
+    use bevy::ecs::change_detection::DetectChangesMut;
+    let Some(mut ui) = ui else { return };
+    let Some(v) = ui.fe.as_mut().and_then(|fe| fe.ava.options.view_distance_request.take()) else { return };
+    if let Some(mut d) = distance {
+        d.set_if_neq(crate::render::terrain::ViewDistance(v));
+    }
+    info!("shell: the terrain's view distance {} m (the Options)", v.meters());
+}
+
+fn take_graphics(
+    ui: Option<ResMut<GameUiRes>>,
+    mut pace: ResMut<pace::FramePace>,
+    mut scale: ResMut<display::SceneScale>,
+    mut shadows: ResMut<crate::render::shadows::ShadowSettings>,
+    mut post: ResMut<crate::render::post::PostLevels>,
+) {
+    use bevy::ecs::change_detection::DetectChangesMut;
+    let Some(mut ui) = ui else { return };
+    let Some(g) = ui.fe.as_mut().and_then(|fe| fe.ava.options.graphics_request.take()) else { return };
+    let limit = pace::FramePace { limit: g.frame_limit, ..*pace };
+    pace.set_if_neq(limit);
+    if scale.scale != g.resolution_scale {
+        scale.scale = g.resolution_scale;
+    }
+    shadows.set_if_neq(crate::render::shadows::ShadowSettings(g.shadow_quality));
+    let levels = crate::render::post::PostLevels { bloom: g.bloom, fxaa: g.fxaa, ..*post };
+    post.set_if_neq(levels);
+    info!(
+        "shell: frame limit {}, resolution scale {}, shadows {}, bloom {}, FXAA {} (the Options)",
+        g.frame_limit, g.resolution_scale, g.shadow_quality, g.bloom, g.fxaa
+    );
+}
 
 #[derive(Component)]
 pub struct FrontEndCamera;
@@ -354,8 +396,12 @@ struct Shell {
 
 const LAUNCH_BOOT_WAIT: f64 = 20.0;
 
-pub fn run(a: GameArgs) -> Result<AppExit> {
+pub fn run(mut a: GameArgs) -> Result<AppExit> {
     use ssx_ui::game::fe::host::parse_script;
+    let cpu_note = crate::shell::cpu::place_threads();
+    if let Some(scene) = a.benchmark.clone() {
+        benchmark::prepare(&mut a, &scene);
+    }
     // PORT(choice): `--lang` takes any of the six text languages. The executable takes the console's (0x82563068 /
     // 0x82569608: XGetLanguage 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, else English), then in
     // the Japanese game region (XGetGameRegion 0x0101 → 0x837FB23C = 2) every language but English and Japanese becomes
@@ -382,6 +428,14 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         .tu_root
         .as_ref()
         .map(|root| ssx_assets::content::GameContent::of(&a.big_root).mount_title_update(root, &a.big_root));
+    // PORT(choice): when a mounted package brings records (Mount Eddie's objects and materials), the disc's record
+    // names (`DiscRecords::names`: every vault of the disc read and its names recovered, once a session) are worked
+    // out on a thread of their own from here on; the first level's load did it on its loading thread, where alps0101's
+    // objects, the ride's collision and the rider's looks waited 2.1 s for them (development laptop). They are read
+    // from the disc's vaults alone, so they are the same whenever they are made; the first reader that comes before
+    // they are done waits for them as before. The console reads its records by key and names none of them.
+    let content = ssx_assets::content::GameContent::of(&a.big_root);
+    let _names = std::thread::Builder::new().name("record names".into()).spawn(move || content.name_records_ahead());
     #[cfg(feature = "scripts")]
     let scripts = crate::script::ScriptPlugin {
         big_root: a.big_root.clone(),
@@ -405,7 +459,7 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         server_storage: ssx_assets::setup::app_dir().join("ScriptData").join("local-server"),
     };
     crate::render::fx_states::init(&a.big_root);
-    let (mut game, scene) = boot_ui(&a.big_root, lang, a.classic_front_end, a.window.expected_display())?;
+    let (mut game, mut scene) = boot_ui(&a.big_root, lang, a.classic_front_end, a.window.expected_display())?;
     // PORT(choice): a PC start has no launch data (the Xbox's `XamLoaderGetLaunchData`, which 0x82366560 reads and the
     // UI table's start stores as `BOOT_SkipIntro` at 0x823820D4); the option stands in for the one byte the game's
     // restart after a sign-out hands itself (1, written at 0x82366F64: no boot movie, the start screen with its intro).
@@ -415,6 +469,9 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         &a.big_root,
         Profile::new(),
     )?;
+    if let Some(s) = scene.state() {
+        s.lib.decode_ahead(ssx_ui::game::fe::notify::ride_icons(&fe.rules));
+    }
     fe.ava.options.file = Some(ssx_assets::setup::app_dir().join("settings.json"));
     ssx_ui::game::fe::ava::options::reload(&mut fe);
     fe.range_movies = a.range_movies;
@@ -428,7 +485,7 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
     let stat_names = std::sync::Arc::new(ssx_assets::career::save::modelled_stats(&schema));
     let (ghost_save, ghost_note) = ghosts::GhostSave::load(ghosts::ghosts_path(&save_path), &schema)?;
     let (save, mut profile, note) = SaveSlot::load(save_path, schema)?;
-    let mut notes = vec![note, ghost_note];
+    let mut notes = vec![cpu_note, note, ghost_note];
     notes.push(tuner_note);
     if a.boot_movie != ssx_assets::port_options::BootMovie::default() {
         notes.push(format!("options: boot movie {} (port option; the game plays it at every start)", a.boot_movie));
@@ -465,7 +522,11 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         let port = ssx_ui::game::port::PortFe::new(a.open_view.as_deref())?;
         game.enable_port_fe(mount(&a.big_root, false)?.as_ref(), port)?;
         #[cfg(feature = "net")]
-        if a.launch.is_none() && a.launch_map.is_none() && a.connect.as_ref().is_none_or(|c| c.name.is_none()) {
+        if a.launch.is_none()
+            && a.launch_map.is_none()
+            && a.benchmark.is_none()
+            && a.connect.as_ref().is_none_or(|c| c.name.is_none())
+        {
             game.arm_name_prompt();
         }
     }
@@ -497,10 +558,12 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
             })
             .set(level::render_plugin())
             .set(level::log_plugin())
+            .set(level::task_pool_plugin())
             .disable::<bevy::audio::AudioPlugin>(),
         FrameTimeDiagnosticsPlugin::default(),
         ui::UiPlugin,
         ui::globe::GlobePlugin,
+        crate::render::uploads::LevelUploadsPlugin,
     ));
     app.add_systems(Startup, report_gpu);
     app.insert_resource(crate::shell::device_loss::ShellEndsOnRenderStop::default());
@@ -546,7 +609,16 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         Some(Err(e)) => error!("globe assets: {e}"),
         None => {}
     });
-    level::register(&mut app, level::Registration { wireframe: a.wireframe, viewer_hud: a.debug_hud });
+    level::register(
+        &mut app,
+        level::Registration {
+            wireframe: a.wireframe,
+            view_distance: a.view_distance,
+            viewer_hud: a.debug_hud,
+            shadow_quality: a.shadow_quality,
+            post_levels: a.post_levels,
+        },
+    );
     crate::audio::music::register(&mut app);
     crate::audio::sfx::register(&mut app);
     fe_audio::register(&mut app);
@@ -561,10 +633,13 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         || a.rides.is_some();
     let real_focus = std::env::var("SSX_SHELL_REAL_FOCUS").is_ok_and(|v| v == "1");
     app.insert_resource(PadSlots::new(test_run, !test_run || real_focus));
-    display::register(&mut app, &a.window, !test_run, !test_run || real_focus);
+    app.init_resource::<crate::ride::rumble::RumbleTarget>();
+    display::register(&mut app, &a.window, !test_run, !test_run || real_focus, a.resolution_scale);
     app.insert_resource(scene)
         .insert_resource(ui::globe::GlobeView { assets: globe_assets, ..default() })
-        .insert_resource(WinitSettings::game())
+        .insert_resource(pace::FramePace { limit: a.frame_limit, ..default() })
+        .insert_resource(pace::FramePace { limit: a.frame_limit, ..default() }.settings())
+        .init_resource::<pace::PhaseLock>()
         .insert_resource(WindowHidden::from_env())
         .init_resource::<UiPipelinesReady>()
         .init_resource::<WorldCheck>()
@@ -661,7 +736,9 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
             #[cfg(feature = "net")]
             link: a.link.clone(),
             #[cfg(feature = "net")]
-            name_prompt_after_launch: !a.classic_front_end && (a.launch.is_some() || a.launch_map.is_some()),
+            name_prompt_after_launch: !a.classic_front_end
+                && a.benchmark.is_none()
+                && (a.launch.is_some() || a.launch_map.is_some()),
         })
         .add_systems(Startup, move |world: &mut World| {
             spawn_front_end_camera(world);
@@ -677,7 +754,16 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
         })
         .add_systems(
             PreUpdate,
-            (exit::exit_input, hidden_frame, pads_frame, shell_world, game_level::pause_frame)
+            (
+                exit::exit_input,
+                hidden_frame,
+                pace::apply_pace,
+                pace::lock_phase,
+                pads_frame,
+                pads::rumble_target,
+                shell_world,
+                game_level::pause_frame,
+            )
                 .chain()
                 .after(bevy::input::InputSystems),
         )
@@ -686,8 +772,20 @@ pub fn run(a: GameArgs) -> Result<AppExit> {
             (apply_controller_scheme, game_level::level_frame, shell_input, pointer::pointer_system, shell_step)
                 .chain()
                 .after(crate::ride::RideStepSet),
-        );
+        )
+        .add_systems(Update, (take_view_distance, take_graphics).after(shell_step));
     presence::register(&mut app, a.discord_presence);
+    if let Some(scene) = a.benchmark.clone() {
+        app.add_plugins(crate::shell::benchmark::record::RecordPlugin(scene))
+            .add_systems(
+                Update,
+                (benchmark::scene_frame, benchmark::flight_camera)
+                    .chain()
+                    .after(crate::ride::RideStepSet)
+                    .after(crate::camera::chase::follow),
+            )
+            .add_systems(FixedUpdate, benchmark::end_step.after(crate::ride::RideStepSet));
+    }
     app.sub_app_mut(RenderApp).add_systems(ExtractSchedule, report_pipelines);
     #[cfg(feature = "net")]
     if !a.classic_front_end {

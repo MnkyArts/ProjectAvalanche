@@ -18,6 +18,9 @@ pub const CUT_HERO: f32 = 16.0;
 pub const CUT_TILE: f32 = 12.0;
 pub const CUT_BUTTON: f32 = 6.0;
 pub const PAD: f32 = 24.0;
+pub const PANEL_HEAD: f32 = 64.0;
+pub const PANEL_GAP: f32 = 16.0;
+pub const DETAILS_W: f32 = 288.0;
 
 pub fn pixels_per_point(physical: Vec2) -> f32 {
     (physical.x / CANVAS.x).min(physical.y / CANVAS.y).max(0.25)
@@ -36,6 +39,9 @@ pub struct Layout {
     pub hero: Rect,
     pub tiles: [Rect; 3],
     pub footer: Rect,
+    pub body: Rect,
+    pub body_wide: Rect,
+    pub details: Rect,
 }
 
 impl Layout {
@@ -64,6 +70,8 @@ impl Layout {
             rect(l, tiles_t, l + tile_w, content_b)
         };
         let footer_t = content_b + (CANVAS.y - content_b - FOOTER_H) / 2.0;
+        let body_t = CONTENT_TOP + PANEL_HEAD + PANEL_GAP;
+        let details_l = content_r - PAD - DETAILS_W;
         Self {
             screen,
             canvas: Rect::from_min_size(Pos2::new(ox, oy), CANVAS),
@@ -76,6 +84,9 @@ impl Layout {
             hero: rect(content_l, CONTENT_TOP, content_r, hero_b),
             tiles: [tile(0), tile(1), tile(2)],
             footer: rect(MARGIN, footer_t, content_r, footer_t + FOOTER_H),
+            body: rect(content_l + PAD, body_t, details_l - PAD, content_b - PAD),
+            body_wide: rect(content_l + PAD, body_t, content_r - PAD, content_b - PAD),
+            details: rect(details_l, body_t, content_r - PAD, content_b - PAD),
         }
     }
 
@@ -115,6 +126,40 @@ mod tests {
         let mut parts = vec![("header", l.header), ("menu", l.menu), ("hero", l.hero), ("footer", l.footer)];
         parts.extend(l.tiles.iter().map(|r| ("tile", *r)));
         parts
+    }
+
+    fn panel_parts(l: &Layout) -> [(&'static str, Rect); 3] {
+        [("body", l.body), ("wide body", l.body_wide), ("details", l.details)]
+    }
+
+    #[test]
+    fn the_panel_body_and_the_details_panel() {
+        for (w, h) in WINDOWS {
+            let l = layout(w, h);
+            let pixel = 1.01 / l.ppp;
+            for (name, r) in panel_parts(&l) {
+                assert!(l.content.contains_rect(r), "{w} x {h}: {name} {r:?} leaves the panel");
+                assert!(r.width() > 0.0 && r.height() > 0.0, "{w} x {h}: {name} is empty");
+            }
+            let body = l.body.intersect(l.details);
+            assert!(body.width() <= 0.0 || body.height() <= 0.0, "{w} x {h}: the body overlaps the details panel");
+            let gap = l.details.left() - l.body.right();
+            assert!((gap - PAD).abs() <= pixel, "{w} x {h}: body to details {gap}");
+            assert!((l.content.right() - l.details.right() - PAD).abs() <= pixel, "{w} x {h}");
+            assert!((l.content.bottom() - l.body.bottom() - PAD).abs() <= pixel, "{w} x {h}");
+            assert!((l.body.left() - l.content.left() - PAD).abs() <= pixel, "{w} x {h}");
+            assert!((l.body.top() - l.content.top() - PANEL_HEAD - PANEL_GAP).abs() <= pixel, "{w} x {h}");
+            assert_eq!((l.details.top(), l.details.bottom()), (l.body.top(), l.body.bottom()), "{w} x {h}");
+            assert_eq!((l.body_wide.left(), l.body_wide.right()), (l.body.left(), l.details.right()), "{w} x {h}");
+            assert_eq!((l.body_wide.top(), l.body_wide.bottom()), (l.body.top(), l.body.bottom()), "{w} x {h}");
+            assert!(l.body.width() >= 500.0 && (l.details.width() - DETAILS_W).abs() <= pixel, "{w} x {h}");
+            for (_, r) in panel_parts(&l) {
+                for edge in [r.left(), r.right(), r.top(), r.bottom()] {
+                    let px = edge * l.ppp;
+                    assert!((px - px.round()).abs() < 0.01, "{w} x {h}: an edge at {px} px");
+                }
+            }
+        }
     }
 
     #[test]
@@ -205,6 +250,9 @@ mod tests {
         assert_eq!(l.entries[1], rect(48.0, 240.0, 304.0, 312.0));
         assert_eq!(l.exit, rect(48.0, 608.0, 304.0, 656.0));
         assert_eq!(l.footer, rect(48.0, 672.0, 1232.0, 704.0));
+        assert_eq!(l.body, rect(360.0, 248.0, 896.0, 632.0));
+        assert_eq!(l.body_wide, rect(360.0, 248.0, 1208.0, 632.0));
+        assert_eq!(l.details, rect(920.0, 248.0, 1208.0, 632.0));
         for r in parts(&l).into_iter().map(|(_, r)| r).chain(l.entries) {
             assert!([r.left(), r.right(), r.top(), r.bottom()].iter().all(|v| v % 8.0 == 0.0), "{r:?}");
         }

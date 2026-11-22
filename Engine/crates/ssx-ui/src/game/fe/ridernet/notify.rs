@@ -118,19 +118,19 @@ pub fn post_badge(fe: &mut FrontEnd, loc: &mut Localization, b: &ssx_assets::car
     fe.notifications.push(n);
 }
 
+pub const GEOTAG_ICON: &str = "assets\\notificationIcons\\notification_geotag.dds";
+
+pub fn ride_icons(rules: &ssx_assets::career::profile::Rules) -> Vec<String> {
+    rules.badge_texts.values().map(|b| b.icon.clone()).chain([GEOTAG_ICON.to_string()]).collect()
+}
+
 pub fn post_geotag(fe: &mut FrontEnd, loc: &mut Localization, value: i64, collected: usize, total: usize) {
     let title = loc.text("TXT_NOTIFY_GEOTAG_COLLECTED_TITLE");
     let money = loc.currency(value, true);
     let count = loc.int(collected as i64);
     let of = loc.int(total as i64);
     let message = loc.format("TXT_NOTIFY_GEOTAG_OFFLINE_COLLECTED_BODY", &[&money, &count, &of]);
-    let n = Notification {
-        kind: KIND_GEOTAG,
-        id: 0,
-        title,
-        message,
-        icon: "assets\\notificationIcons\\notification_geotag.dds".into(),
-    };
+    let n = Notification { kind: KIND_GEOTAG, id: 0, title, message, icon: GEOTAG_ICON.into() };
     fe.note(format!("notification: geotag collected ({value} credits, {collected} of {total})"));
     fe.notifications.push(n);
 }

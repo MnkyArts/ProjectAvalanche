@@ -40,38 +40,56 @@ pub fn filled_uniform<T: ShaderType + WriteInto>(
 pub struct QueuedUniform<T> {
     buffer: Option<Buffer>,
     bytes: Vec<u8>,
+    written: Vec<u8>,
     value: PhantomData<fn(&T)>,
 }
 
 impl<T> Default for QueuedUniform<T> {
     fn default() -> Self {
-        QueuedUniform { buffer: None, bytes: Vec::new(), value: PhantomData }
+        QueuedUniform { buffer: None, bytes: Vec::new(), written: Vec::new(), value: PhantomData }
     }
 }
 
 impl<T: ShaderType + WriteInto> QueuedUniform<T> {
-    pub fn write(&mut self, device: &RenderDevice, queue: &RenderQueue, label: &'static str, value: &T) {
+    pub fn write(&mut self, device: &RenderDevice, queue: &RenderQueue, label: &'static str, value: &T) -> bool {
         let mut encoded = encase::UniformBuffer::new(std::mem::take(&mut self.bytes));
         encoded.write(value).expect("encase writes a uniform into a growing Vec");
         self.bytes = encoded.into_inner();
         let padded = padded_contents(&self.bytes);
         let size = padded.len() as u64;
-        let buffer = match &self.buffer {
-            Some(b) if b.size() == size => b,
-            _ => self.buffer.insert(device.create_buffer(&BufferDescriptor {
-                label: Some(label),
-                size,
-                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
+        let (buffer, made) = match &self.buffer {
+            Some(b) if b.size() == size => (b, false),
+            _ => {
+                let made = device.create_buffer(&BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                (&*self.buffer.insert(made), true)
+            }
         };
-        if !padded.is_empty() {
-            queue.write_buffer(buffer, 0, &padded);
+        // PORT(choice): a value whose bytes are the buffer's already is not written again (the buffer is this
+        // struct's own and only `write` writes it, so it holds the bytes of its last write): every `write_buffer` is a
+        // staging buffer of wgpu's, made and mapped under its allocator's lock, its copy recorded under the queue's
+        // lock and the staging buffer destroyed after the frame's submission (wgpu 30.0.2 `Queue::write_buffer`;
+        // 35 a frame on Mount Eddie, 40 µs each at the median while the prepare systems write in parallel, traced).
+        // The shaders read the same bytes. wgpu's queue is the port's renderer; the console had none.
+        if padded.is_empty() || (!made && *padded == *self.written) {
+            return false;
         }
+        queue.write_buffer(buffer, 0, &padded);
+        self.written.clear();
+        self.written.extend_from_slice(&padded);
+        true
     }
 
     pub fn binding(&self) -> Option<BindingResource<'_>> {
         self.buffer.as_ref().map(|b| b.as_entire_binding())
+    }
+
+    pub fn buffer(&self) -> Option<&Buffer> {
+        self.buffer.as_ref()
     }
 }
 
@@ -103,5 +121,37 @@ mod tests {
         assert_eq!(&*padded_contents(&[7]), &[7, 0, 0, 0]);
         let indices: Vec<u8> = [1u16, 2, 3].iter().flat_map(|i| i.to_le_bytes()).collect();
         assert_eq!(padded_contents(&indices).len(), 8);
+    }
+
+    fn device_and_queue() -> (RenderDevice, RenderQueue) {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::NOOP,
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: Default::default(),
+            display: None,
+            backend_options: wgpu::BackendOptions {
+                noop: wgpu::NoopBackendOptions { enable: true, ..Default::default() },
+                ..Default::default()
+            },
+        });
+        let adapter = bevy::tasks::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .expect("noop adapter");
+        let (device, queue) =
+            bevy::tasks::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("noop device");
+        (RenderDevice::from(device), RenderQueue::new(queue))
+    }
+
+    #[test]
+    fn a_uniform_is_written_when_its_bytes_differ_from_the_buffers() {
+        let (device, queue) = device_and_queue();
+        let mut uniform = QueuedUniform::<bevy::math::Vec4>::default();
+        let a = bevy::math::Vec4::new(1.0, 2.0, 3.0, 4.0);
+        assert!(uniform.write(&device, &queue, "test", &a), "the first write makes and fills the buffer");
+        let buffer = uniform.buffer().expect("made").clone();
+        assert!(!uniform.write(&device, &queue, "test", &a), "the same bytes: not written again");
+        assert!(uniform.write(&device, &queue, "test", &(a * 2.0)), "other bytes: written");
+        assert!(uniform.write(&device, &queue, "test", &a), "back to the first value: written");
+        assert!(!uniform.write(&device, &queue, "test", &a));
+        assert_eq!(uniform.buffer().map(|b| b.id()), Some(buffer.id()), "one buffer for one size");
     }
 }

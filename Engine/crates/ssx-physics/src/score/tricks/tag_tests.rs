@@ -350,3 +350,29 @@ fn a_left_exit_before_its_first_update_still_lowers_the_trigger() {
     assert_eq!(left(1, true), None, "already written at its own first update");
     assert_eq!(left(0, false), None, "dropped by the blend: exited, never entered");
 }
+
+#[test]
+fn leaving_state_riding_calls_on_bail_exit() {
+    let mut s = TrickState::default();
+    s.begin_step();
+    s.riding_node_update(2.0);
+    assert!(!s.script_tags().any(), "the entry calls nothing");
+    s.begin_step();
+    s.riding_node_update(2.0);
+    assert!(!s.script_tags().any(), "nor the node's updates");
+    s.begin_step();
+    s.leave_riding_node();
+    assert!(s.riding_tags.is_none());
+    assert!(s.script_tags().bail_exit, "the take's exit: this step's run");
+    s.begin_step();
+    s.riding_node_update(2.0);
+    s.leave_riding_node();
+    assert!(!s.script_tags().bail_exit);
+    s.begin_step();
+    assert!(s.script_tags().bail_exit, "the set updated in that step exits in the next run");
+    s.begin_step();
+    s.riding_node_update(2.0);
+    s.fresh_ride();
+    s.leave_riding_node();
+    assert!(!s.script_tags().any());
+}

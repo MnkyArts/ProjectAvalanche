@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrackAudioInfo {
     pub region: String,
+    pub dd_region: Option<String>,
     pub ambience_index: i32,
     pub reverb_large: String,
     pub reverb_small: String,
@@ -15,6 +16,7 @@ impl TrackAudioInfo {
     pub fn generic() -> Self {
         Self {
             region: "Generic".into(),
+            dd_region: None,
             ambience_index: 9,
             reverb_large: "africa_int_lg".into(),
             reverb_small: "africa_int_sm".into(),
@@ -91,6 +93,7 @@ pub fn track_audio_info(big_root: &Path, track: &str) -> Result<TrackAudioInfo> 
         };
         Ok(TrackAudioInfo {
             region: text(&r, 0x882D_7954)?,
+            dd_region: r.iter().find(|f| f.key == 0x6A28_B46E).and_then(|f| single_text(&f.data)),
             ambience_index,
             reverb_large: text(&p, 0xCF15_CB9A)?,
             reverb_small: text(&p, 0xB5BE_FF86)?,
@@ -192,6 +195,7 @@ pub fn riding_banks(
     big_root: &Path,
     info: &TrackAudioInfo,
     rider: &RiderAudioInfo,
+    nis_descr: Option<&str>,
     below: &mut dyn FnMut(&str, u32) -> u32,
 ) -> Result<Vec<String>> {
     let by_descr = |t: &str, d: &str| -> Result<String> {
@@ -213,7 +217,7 @@ pub fn riding_banks(
     let fixed = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let mut v = fixed(&["board_ice", "board_packed", "board_powder", "board_rock", "grind_sweetner"]);
     v.extend(fixed(&["collisions", "ant_tags", "foley_common"]));
-    v.push(by_descr("SfxAntTagsNisBank", "ExploreDrop")?);
+    v.push(nis_bank(big_root, nis_descr)?);
     v.push(by_descr("SfxGearCharacterFoleyBank", &rider.foley)?);
     v.push("boost_awesome".into());
     v.push(hotswap);
@@ -223,4 +227,65 @@ pub fn riding_banks(
     v.push(by_descr("SfxTrickSignatureBank", &rider.signature)?);
     v.push(by_descr("SfxEnvironmentWindBank", &info.region)?);
     Ok(v)
+}
+
+pub fn dd_nis_descr(block: &speech::launch::LaunchBlock, info: &TrackAudioInfo, language: &str) -> Option<String> {
+    let w = &block.campaign;
+    if !(w.dd && block.dd_hold) {
+        return None;
+    }
+    let region = if w.chapter == w.chapters { "Final" } else { info.dd_region.as_deref()? };
+    Some(format!("{region},{language}"))
+}
+
+fn nis_bank(big_root: &Path, descr: Option<&str>) -> Result<String> {
+    const BANK: &str = "SfxAntTagsNisBank";
+    const STREAM: &str = "SfxAntTagsNisStream";
+    let banks = audio_assets(big_root, BANK)?;
+    let of = |all: &[(String, String)], d: &str| all.iter().find(|(x, _)| x == d).map(|(_, s)| s.clone());
+    if let Some(d) = descr
+        && let Some(bank) = of(&banks, d)
+    {
+        let stream = of(&audio_assets(big_root, STREAM)?, d).with_context(|| format!("no {STREAM} \"{d}\""))?;
+        anyhow::ensure!(stream == bank, "{STREAM} \"{d}\" is {stream}, not the bank's {bank}");
+        return Ok(bank);
+    }
+    of(&banks, "ExploreDrop").with_context(|| format!("no {BANK} \"ExploreDrop\""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::speech::launch::{CampaignWords, GEAR_TYPES, LaunchBlock, NO_GEAR};
+    use super::*;
+
+    fn words(chapter: i32, dd: bool) -> CampaignWords {
+        CampaignWords {
+            chapter,
+            chapters: 11,
+            drops: 6,
+            drop: 6,
+            dd,
+            before_dd: false,
+            completed: false,
+            region_intro: false,
+            completions: 0,
+            failures: 0,
+        }
+    }
+
+    #[test]
+    fn a_deadly_descent_with_its_rider_takes_its_regions_nis_bank() {
+        let (zoe, elise) = (0x405D_C1D5, 0x1234);
+        let info = TrackAudioInfo { dd_region: Some("Rockies".into()), ..TrackAudioInfo::generic() };
+        let block = |chapter, dd, rider| {
+            LaunchBlock::new(words(chapter, dd), [false; 7], [0; GEAR_TYPES], rider, Some((zoe, NO_GEAR)))
+        };
+        assert_eq!(dd_nis_descr(&block(2, true, zoe), &info, "English").as_deref(), Some("Rockies,English"));
+        assert_eq!(dd_nis_descr(&block(2, true, zoe), &info, "German").as_deref(), Some("Rockies,German"));
+        assert_eq!(dd_nis_descr(&block(11, true, zoe), &info, "French").as_deref(), Some("Final,French"));
+        assert_eq!(dd_nis_descr(&block(2, true, elise), &info, "English"), None, "another rider: +0x21 clear");
+        assert_eq!(dd_nis_descr(&block(2, false, zoe), &info, "English"), None, "not a Deadly Descent");
+        let none = TrackAudioInfo::generic();
+        assert_eq!(dd_nis_descr(&block(2, true, zoe), &none, "English"), None, "a range info without the text");
+    }
 }

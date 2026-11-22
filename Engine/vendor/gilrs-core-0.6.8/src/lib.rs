@@ -11,6 +11,9 @@ use std::time::SystemTime;
 
 mod platform;
 pub mod utils;
+// Project Avalanche patch T25: how the Windows.Gaming.Input backend reads a controller (its tests run everywhere).
+#[cfg(any(all(target_os = "windows", feature = "wgi"), test))]
+mod wgi_reading;
 
 /// True, if Y axis of sticks commonly points downwards.
 pub const IS_Y_AXIS_REVERSED: bool = platform::IS_Y_AXIS_REVERSED;

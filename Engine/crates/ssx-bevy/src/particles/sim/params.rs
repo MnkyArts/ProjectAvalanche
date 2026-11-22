@@ -33,10 +33,161 @@ impl std::hash::Hasher for NameHasher {
 
 type NameMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<NameHasher>>;
 
-#[derive(Clone, Debug, Default)]
+// PORT(choice): every object resolves these 90 names once, when its definition is compiled, to its own parameter, its
+// class's default or nothing; a read by such a name is then an array index, where it was an FNV-1a hash of the name
+// and a hash-map probe on every read (16 to 19 reads per emitted particle in the emitters, about 30 per draw). A read
+// gives the same bits as the read by the name's string (`found_names_read_as_their_strings`). The console's actions
+// read their parameters through slots by the class's index (`GetParamDef`, action vtable slot 4), not by name.
+pub const PARAM_NAMES: [&str; 90] = [
+    "bActive",
+    "bDepthSort",
+    "bEmitRatePerCenter",
+    "bEmitRatePerFrame",
+    "bFollowCamera",
+    "bHalfSizeRender",
+    "bInject",
+    "bModuloPosition",
+    "bRespectExternalTrigger",
+    "bStretchPerCamera",
+    "bStretchPerParticle",
+    "bToneMapRender",
+    "bUseGlobalLighting",
+    "fAdoption",
+    "fAgeWarp",
+    "fAmountNoise",
+    "fAngularVelocityAdoption",
+    "fAngularVelocityAdoptionSpread",
+    "fCurl",
+    "fDragCoefficient",
+    "fFieldFraction",
+    "fFrequency",
+    "fGustChangeGain",
+    "fLevelOfDetail",
+    "fLightFalloff",
+    "fLightRadius",
+    "fMagnitude",
+    "fMassDependenceOnSize",
+    "fMassMean",
+    "fMassSpread",
+    "fRadialVelocityMean",
+    "fRadialVelocitySpread",
+    "fRadius",
+    "fScale",
+    "fSizeDependence",
+    "fSizeMean",
+    "fSizeSpread",
+    "fSpeedMax",
+    "fSpeedMin",
+    "fStretchSpeedMin",
+    "fStretchSpeedScale",
+    "fTwist",
+    "fVelocityAdoption",
+    "fVelocityAdoptionSpread",
+    "fWeatherScalar",
+    "fZFeatherDist",
+    "fZFeatherFalloff",
+    "fZFeatherHeight",
+    "fZFeatherOffset",
+    "iAgeMs",
+    "iAgeSpreadMs",
+    "iCullBehavior",
+    "iEmitCycles",
+    "iEmitDelayMs",
+    "iEmitDelayVarianceMs",
+    "iEmitDurationMs",
+    "iEmitRate",
+    "iGustIntervalMs",
+    "iInstancing",
+    "iNumParticlesMax",
+    "iObeyLocator",
+    "iOrdering",
+    "iPeriodicBoxNum",
+    "iRenderLayer",
+    "iSpace",
+    "iSpeedPower",
+    "iSubFrameTechnique",
+    "iType",
+    "iZeroVelocity",
+    "rKillAge",
+    "vAccelVariance",
+    "vAcceleration",
+    "vAmbientWind",
+    "vAngularVelocityMean",
+    "vAngularVelocitySpread",
+    "vCenter",
+    "vColorMult",
+    "vColorRamp",
+    "vDimensions",
+    "vGustVariance",
+    "vHemisphereShape",
+    "vInnerOuterSkew",
+    "vLightColor",
+    "vLightPosition",
+    "vOrientationMean",
+    "vOrientationSpread",
+    "vStretchVelocity",
+    "vTurbulentAmplitude",
+    "vVelocityMean",
+    "vVelocitySpread",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Name(usize);
+
+pub const fn param_name(name: &str) -> Name {
+    let mut i = 0;
+    while i < PARAM_NAMES.len() {
+        let (a, b) = (PARAM_NAMES[i].as_bytes(), name.as_bytes());
+        if a.len() == b.len() {
+            let mut j = 0;
+            while j < a.len() && a[j] == b[j] {
+                j += 1;
+            }
+            if j == a.len() {
+                return Name(i);
+            }
+        }
+        i += 1;
+    }
+    panic!("not in PARAM_NAMES")
+}
+
+macro_rules! name {
+    ($name:literal) => {
+        const { $crate::particles::sim::params::param_name($name) }
+    };
+}
+pub(crate) use name;
+
+#[derive(Clone, Copy, Debug)]
+pub enum Found {
+    Def(usize),
+    Default(Vec4),
+    Absent,
+}
+
+pub trait Key: Copy {
+    fn find(self, params: &Params) -> Found;
+}
+
+impl Key for Name {
+    fn find(self, params: &Params) -> Found {
+        params.known[self.0]
+    }
+}
+
+impl Key for &str {
+    fn find(self, params: &Params) -> Found {
+        params.find(self)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Params {
-    pub(super) map: NameMap<String, ParamDef>,
+    map: NameMap<String, usize>,
+    pub(super) defs: Vec<ParamDef>,
     defaults: NameMap<&'static str, Vec4>,
+    known: Box<[Found]>,
 }
 
 fn lanes(v: &Value, previous: Vec4) -> Vec4 {
@@ -101,7 +252,25 @@ impl Params {
                 def.states.push((*state, v));
             }
         }
-        Params { map, defaults }
+        let (mut by_name, mut defs) = (NameMap::default(), Vec::with_capacity(map.len()));
+        for (name, def) in map {
+            by_name.insert(name, defs.len());
+            defs.push(def);
+        }
+        let mut params = Params { map: by_name, defs, defaults, known: Box::default() };
+        params.known = PARAM_NAMES.iter().map(|n| params.find(n)).collect();
+        params
+    }
+
+    pub(super) fn find(&self, name: &str) -> Found {
+        match self.map.get(name) {
+            Some(&i) => Found::Def(i),
+            None => self.defaults.get(name).map_or(Found::Absent, |v| Found::Default(*v)),
+        }
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&str, &ParamDef)> {
+        self.map.iter().map(|(n, &i)| (n.as_str(), &self.defs[i]))
     }
 }
 
@@ -109,6 +278,8 @@ impl Params {
 pub struct Weights([f32; 16]);
 
 impl Weights {
+    pub const NONE: Weights = Weights([0.0; 16]);
+
     pub fn from_list(list: &[(u8, f32)]) -> Self {
         let mut w = [0.0; 16];
         for &(s, x) in list {
@@ -131,13 +302,14 @@ impl<'a> View<'a> {
         View { params, w }
     }
 
-    pub fn v(&self, name: &str, i: usize) -> Vec4 {
-        match self.params.map.get(name) {
-            Some(def) => self.blended(def, i),
-            None => self.params.defaults.get(name).copied().unwrap_or(Vec4::ZERO),
+    pub fn v(&self, name: impl Key, i: usize) -> Vec4 {
+        match name.find(self.params) {
+            Found::Def(d) => self.blended(&self.params.defs[d], i),
+            Found::Default(v) => v,
+            Found::Absent => Vec4::ZERO,
         }
     }
-    fn blended(&self, def: &ParamDef, i: usize) -> Vec4 {
+    pub(super) fn blended(&self, def: &ParamDef, i: usize) -> Vec4 {
         let base = def.base[i.min(def.base.len() - 1)];
         if i != 0 || def.states.is_empty() {
             return base;
@@ -150,30 +322,36 @@ impl<'a> View<'a> {
         }
         base * (1.0 - sum_w) + acc
     }
-    pub fn v3(&self, name: &str) -> Vec3 {
+    pub fn v3(&self, name: impl Key) -> Vec3 {
         self.v(name, 0).truncate()
     }
-    pub fn f(&self, name: &str) -> f32 {
+    pub fn f(&self, name: impl Key) -> f32 {
         self.v(name, 0).x
     }
-    pub fn i(&self, name: &str) -> i32 {
-        match self.params.map.get(name) {
-            Some(def) if !def.states.is_empty() => (self.blended(def, 0).x + 0.5).trunc() as i32,
-            Some(def) => self.blended(def, 0).x as i32,
-            None => self.params.defaults.get(name).map_or(0.0, |v| v.x) as i32,
+    pub fn i(&self, name: impl Key) -> i32 {
+        match name.find(self.params) {
+            Found::Def(d) if !self.params.defs[d].states.is_empty() => {
+                (self.blended(&self.params.defs[d], 0).x + 0.5).trunc() as i32
+            }
+            Found::Def(d) => self.blended(&self.params.defs[d], 0).x as i32,
+            Found::Default(v) => v.x as i32,
+            Found::Absent => 0,
         }
     }
-    pub fn b(&self, name: &str) -> bool {
+    pub fn b(&self, name: impl Key) -> bool {
         self.v(name, 0).x > 0.5
     }
-    pub fn count(&self, name: &str) -> usize {
-        self.params.map.get(name).map_or(1, |d| d.base.len())
+    pub fn count(&self, name: impl Key) -> usize {
+        match name.find(self.params) {
+            Found::Def(d) => self.params.defs[d].base.len(),
+            Found::Default(_) | Found::Absent => 1,
+        }
     }
-    pub fn text(&self, name: &str) -> Option<&'a str> {
-        self.params.map.get(name).and_then(|d| d.text.as_deref())
-    }
-    pub fn names(&self) -> impl Iterator<Item = &'a str> {
-        self.params.map.keys().map(String::as_str)
+    pub fn text(&self, name: impl Key) -> Option<&'a str> {
+        match name.find(self.params) {
+            Found::Def(d) => self.params.defs[d].text.as_deref(),
+            Found::Default(_) | Found::Absent => None,
+        }
     }
     pub fn built_in(&self, name: &str) -> bool {
         self.params.defaults.contains_key(name)

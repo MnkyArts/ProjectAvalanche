@@ -138,8 +138,8 @@ pub fn letters(activation: f32, super_awesome: bool) -> u32 {
     if super_awesome {
         return 6;
     }
-    let n = (activation * 6.0).round();
-    if (0.0..7.0).contains(&n) { n as u32 } else { 6 }
+    let n = (activation * 6.0).floor() as i64 as u32;
+    if n <= 6 { n } else { 6 }
 }
 
 impl Component for Scoring {
@@ -749,5 +749,10 @@ mod tests {
         assert_eq!(letters(0.5, false), 3);
         assert_eq!(letters(0.2, true), 6);
         assert_eq!(letters(1.0, false), 6);
+        assert_eq!(letters(11.0 / 12.0, false), 5);
+        assert_eq!(letters(0.99, false), 5);
+        assert_eq!(letters(0.16, false), 0);
+        assert_eq!(letters(-0.1, false), 6);
+        assert_eq!(letters(f32::NAN, false), 0);
     }
 }

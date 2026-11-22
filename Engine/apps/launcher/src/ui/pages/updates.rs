@@ -6,18 +6,16 @@ use crate::ui::theme::{self, Face, size};
 use crate::ui::widgets::{self, Kind};
 use crate::update::{Update, current_version};
 
+pub const INTRO: &str = "The launcher asks GitHub for the project's latest release when it starts. An update is \
+     downloaded from the project's own releases, checked against the SHA-256 GitHub publishes, and unpacked beside this \
+     launcher; settings, saves and game data stay where they are.";
+
 impl Launcher {
     pub fn update_section(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Project Avalanche").font(Face::Title.id(size::TITLE)).color(theme::TEXT));
             ui.label(RichText::new(footer::version()).color(theme::TEXT_DIM));
         });
-        widgets::paragraph(
-            ui,
-            "The launcher asks GitHub for the project's latest release when it starts. An update is downloaded from \
-             the project's own releases, checked against the SHA-256 GitHub publishes, and unpacked beside this \
-             launcher; settings, saves and game data stay where they are.",
-        );
         ui.add_space(8.0);
         let mut repair = false;
         if !self.program_missing.is_empty() {
@@ -176,7 +174,7 @@ fn install_blocker(busy: Busy) -> Option<&'static str> {
     if busy.started {
         Some("Close the game or tool the launcher started first: the update replaces its program.")
     } else if busy.server {
-        Some("Stop the server on the Host page first: the update replaces its program.")
+        Some("Stop the server first (Online, Host): the update replaces its program.")
     } else if busy.setup {
         Some("Wait for the game data's setup to end: closing the launcher would stop it.")
     } else if busy.install {

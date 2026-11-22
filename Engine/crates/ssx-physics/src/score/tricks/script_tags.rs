@@ -4,11 +4,12 @@ pub struct ScriptCalls {
     pub grab_exit: bool,
     pub grab_reset: bool,
     pub ground_trick_reset: bool,
+    pub bail_exit: bool,
 }
 
 impl ScriptCalls {
     pub fn any(&self) -> bool {
-        self.air_trick_enter || self.grab_exit || self.grab_reset || self.ground_trick_reset
+        self.air_trick_enter || self.grab_exit || self.grab_reset || self.ground_trick_reset || self.bail_exit
     }
 
     fn add(&mut self, f: Script) {
@@ -17,6 +18,7 @@ impl ScriptCalls {
             Script::GrabExit => self.grab_exit = true,
             Script::GrabReset => self.grab_reset = true,
             Script::GroundTrickReset => self.ground_trick_reset = true,
+            Script::BailExit => self.bail_exit = true,
         }
     }
 }
@@ -27,6 +29,7 @@ pub enum Script {
     GrabExit,
     GrabReset,
     GroundTrickReset,
+    BailExit,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -1,9 +1,9 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 use ssx_assets::setup::{self, Cancelled, DiscCheck, Progress, Summary};
@@ -96,6 +96,65 @@ const LOG_LINES: usize = 2000;
 
 pub const GAME_LOG: &str = "game.log";
 pub const VIEWER_LOG: &str = "asset-viewer.log";
+pub const BENCHMARK_LOG: &str = "benchmark.log";
+
+const MAX_REPORT_TEXT: u64 = 64 * 1024;
+
+#[derive(Debug, Default)]
+pub struct BenchmarkRun {
+    pub started: Option<SystemTime>,
+    pub looked: bool,
+    pub report: Option<(PathBuf, String)>,
+}
+
+pub fn newest_report(dir: &Path, since: SystemTime) -> Option<(PathBuf, String)> {
+    let (_, path) = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "txt"))
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            let at = meta.modified().ok()?;
+            (meta.is_file() && meta.len() <= MAX_REPORT_TEXT && at >= since).then(|| (at, e.path()))
+        })
+        .max_by_key(|(at, _)| *at)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path).ok()?.take(MAX_REPORT_TEXT + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_REPORT_TEXT {
+        return None;
+    }
+    Some((path, String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Program {
+    #[default]
+    Game,
+    Viewer,
+    Benchmark,
+}
+
+impl Program {
+    pub fn is_game(self) -> bool {
+        matches!(self, Program::Game | Program::Benchmark)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Program::Game => "Game",
+            Program::Viewer => "Viewer",
+            Program::Benchmark => "Benchmark",
+        }
+    }
+
+    pub fn log(self) -> &'static str {
+        match self {
+            Program::Game => GAME_LOG,
+            Program::Viewer => VIEWER_LOG,
+            Program::Benchmark => BENCHMARK_LOG,
+        }
+    }
+}
 
 pub struct Viewer {
     pub log: Arc<Mutex<Vec<String>>>,
@@ -225,6 +284,30 @@ mod tests {
 
     use super::{GAME_LOG, VIEWER_LOG, Viewer, child_start};
     use crate::command::Invocation;
+
+    #[test]
+    fn the_benchmarks_report_is_the_newest_text_since_the_start() {
+        use std::time::SystemTime;
+        let dir = std::env::temp_dir().join(format!("launcher-benchmark-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the test's folder");
+        let since = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(super::newest_report(&dir, since), None);
+        let write = |name: &str, text: &[u8], age: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, text).expect("a report");
+            let at = SystemTime::now() - Duration::from_secs(age);
+            std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(at)).expect("its time");
+        };
+        write("old.txt", b"before the start", 600);
+        write("a.txt", b"first", 30);
+        write("b.txt", b"second", 10);
+        write("b.json", b"{}", 1);
+        write("big.txt", &vec![b'x'; super::MAX_REPORT_TEXT as usize + 1], 0);
+        let (path, text) = super::newest_report(&dir, since).expect("a report");
+        assert_eq!((path.file_name().and_then(|n| n.to_str()), text.as_str()), (Some("b.txt"), "second"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn strips_colours() {

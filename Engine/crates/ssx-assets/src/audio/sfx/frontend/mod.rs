@@ -1,4 +1,5 @@
 mod fe_music;
+mod hud_pause;
 mod post;
 
 use std::path::Path;
@@ -11,6 +12,7 @@ use super::settings::{AudioSettings, FE_MUSIC_PICKS};
 use crate::career::random::{GameRandom, Source};
 use crate::music::PathfinderMusic;
 pub use fe_music::*;
+pub use hud_pause::*;
 pub use post::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

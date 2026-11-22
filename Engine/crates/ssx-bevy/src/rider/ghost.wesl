@@ -7,6 +7,9 @@ struct GhostParams {
     ghost_color: vec4<f32>,
     ghost_base_color: vec4<f32>,
     shading: vec4<f32>,
+}
+
+struct GhostFrame {
     tint: vec4<f32>,
     hologlitch: vec4<f32>,
 }
@@ -14,6 +17,7 @@ struct GhostParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: GhostParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var normal_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var normal_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<storage, read> frame: GhostFrame;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -38,15 +42,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let col = c * stripe;
     let luma = dot(col, vec3(0.299, 0.587, 0.114));
     let nz = (view.view_from_world * vec4(n, 0.0)).z;
-    let hb = params.hologlitch.y;
+    let hb = frame.hologlitch.y;
     var keep = 1.0;
     var glitch = 0.0;
     if hb > 0.0 {
         keep = select(0.0, 1.0, 0.4 + nz - 1.4 * hb > 0.0);
         glitch = select(0.0, 1.0, 1.4 * hb > 0.3 + nz);
     }
-    let rgb = col * (1.0 - glitch) * params.tint.rgb * params.shading.x;
-    let a = params.tint.a * luma * keep;
+    let rgb = col * (1.0 - glitch) * frame.tint.rgb * params.shading.x;
+    let a = frame.tint.a * luma * keep;
     if params.shading.w > 0.5 {
         return vec4(sqrt(abs(rgb)), a);
     }

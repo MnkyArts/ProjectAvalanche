@@ -22,6 +22,31 @@ impl Animator {
         floats: &[String],
     ) -> anyhow::Result<Self> {
         let (graph, root_id) = Graph::load(db, root)?;
+        Self::of_graph(db, graph, root_id, rig, bind, floats)
+    }
+
+    pub fn new_looping(
+        db: &crate::anim_db::AssetDb,
+        root: &str,
+        looping: crate::anim_graph::LoopFields,
+        rig: &ssx_formats::crsf::SceneGraph,
+        bind: Vec<crate::character::Srt>,
+        floats: &[String],
+    ) -> anyhow::Result<Self> {
+        let (mut graph, subject) = Graph::load(db, root)?;
+        let id = graph.ctrls.len();
+        graph.ctrls.push((format!("{root} (Looping)"), looping.ctrl(Some(subject))));
+        Self::of_graph(db, graph, id, rig, bind, floats)
+    }
+
+    fn of_graph(
+        db: &crate::anim_db::AssetDb,
+        graph: Graph,
+        root_id: CtrlId,
+        rig: &ssx_formats::crsf::SceneGraph,
+        bind: Vec<crate::character::Srt>,
+        floats: &[String],
+    ) -> anyhow::Result<Self> {
         let (clips, clip_index, problems) = crate::rig_anim::load_clips_db(db, rig, &graph.clip_guids())?;
         let (_, all) = db
             .streams
@@ -112,10 +137,15 @@ impl Animator {
         self.gs.audio_tags.clear();
         self.gs.drivers.clear();
         self.gs.queries.clear();
+        self.gs.pins.clear();
     }
 
     pub fn take_driver_events(&mut self) -> Vec<DriverEvent> {
         std::mem::take(&mut self.gs.drivers)
+    }
+
+    pub fn take_pin_events(&mut self) -> Vec<PinEvent> {
+        std::mem::take(&mut self.gs.pins)
     }
 
     pub fn take_queued_queries(&mut self) -> Vec<String> {

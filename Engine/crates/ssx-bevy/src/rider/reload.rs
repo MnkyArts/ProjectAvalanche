@@ -11,9 +11,8 @@ use ssx_assets::content::characters::dress::dress;
 use ssx_assets::content::characters::ride::package_items;
 use ssx_content::Kind;
 
-use super::material::{CharacterLightUniform, CharacterMaterial, RiderShading};
+use super::material::{CharacterMaterial, RiderShading};
 use super::skin::{GearLight, PartAssets, Redress, RiderRig, SkinnedPart, load_parts, spawn_parts};
-use crate::render::lighting::GameLighting;
 use crate::render::lighting::game::GameLightAssets;
 use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::ObjectMaterial;
@@ -57,7 +56,6 @@ pub(super) struct Stores<'w> {
     characters: ResMut<'w, Assets<CharacterMaterial>>,
     bindposes: ResMut<'w, Assets<SkinnedMeshInverseBindposes>>,
     light: Option<Res<'w, GameLightAssets>>,
-    lighting: Option<Res<'w, GameLighting>>,
 }
 
 pub(super) fn follow(
@@ -112,13 +110,10 @@ fn put_on(
     for e in rig.part_entities.drain(..) {
         commands.entity(e).despawn();
     }
-    let rider_light =
-        s.lighting.as_deref().map_or_else(CharacterLightUniform::viewer_default, CharacterLightUniform::from_preset);
     let mut assets = PartAssets {
         meshes: &mut s.meshes,
         images: &mut s.images,
         light,
-        rider_light: &rider_light,
         objects: &mut s.objects,
         foreground: &mut s.foreground,
         characters: &mut s.characters,

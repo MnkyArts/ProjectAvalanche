@@ -7,6 +7,7 @@ use bevy::render::renderer::{RenderAdapterInfo, RenderDevice, RenderGraph, Rende
 use bevy::render::view::prepare_windows;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 
+use crate::render::swap_chain::NextFrameImages;
 use crate::render::terrain::TrackStats;
 use crate::ride::Ride;
 use crate::shell::game_level::LevelGame;
@@ -39,7 +40,7 @@ enum LosePoint {
 impl LosePoint {
     fn name(self) -> &'static str {
         match self {
-            LosePoint::Acquire => "before the frame's swap-chain acquire",
+            LosePoint::Acquire => "before the swap-chain acquire",
             LosePoint::Prepare => "after the frame's acquire, before its prepare systems",
             LosePoint::Submit => "after the frame's submit",
         }
@@ -79,6 +80,9 @@ pub fn plugin(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
     render.insert_resource(LoseAt { at, point, due: None, done: false }).add_systems(ExtractSchedule, extract_lose_at);
     match point {
+        LosePoint::Acquire if crate::render::swap_chain::installed(render) => {
+            render.add_systems(NextFrameImages, lose_device.before(prepare_windows));
+        }
         LosePoint::Acquire => {
             render.add_systems(Render, lose_device.in_set(RenderSystems::PrepareViews).before(prepare_windows));
         }

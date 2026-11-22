@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::{Image, warn};
 use bevy::render::render_resource::{
-    Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
 use ssx_assets::track_lights::text as text_texture;
 use ssx_content::texture::Want;
@@ -60,7 +60,24 @@ pub(super) fn texture_array(big_root: &std::path::Path, sources: &[Projected]) -
         warn!("projected texture sampler: {e:#}; clamp + trilinear");
         clamp_trilinear()
     });
-    crate::render::terrain::textures::array_texture(&layers, crate::render::terrain::textures::Texels::Linear, sampler)
+    let image = crate::render::terrain::textures::array_texture(
+        &layers,
+        crate::render::terrain::textures::Texels::Linear,
+        sampler,
+    )?;
+    Ok(own_texture(image))
+}
+
+// PORT(choice): the array's descriptor leaves out COPY_DST (wgpu 30's `create_texture_with_data` adds it for its own
+// upload), so each level's array is a new texture: bevy_render 0.20's `GpuImage::prepare_asset` writes a replacement
+// with an equal descriptor and COPY_DST into the old texture, level 0 only and at level 0's layer stride — on Mount
+// Eddie's second drop (the same 11 layers of 256² with 9 levels) each layer's level 0 took other layers' texels and the
+// smaller levels kept the first load's, so near projections showed other markings (#113, #114). The console has no
+// array: each box light binds its own texture (`DynamicLight_ProjectedTexture`, handle 0x838F74F8 registered by
+// 0x829C6268, set from the light's +0x50 at 0x829C6F30-0x829C6F78), every level of it.
+fn own_texture(mut image: Image) -> Image {
+    image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING;
+    image
 }
 
 fn text_layer(levels: Vec<ssx_assets::texture::Image>) -> crate::render::terrain::textures::MipChain {
@@ -102,5 +119,25 @@ pub(super) fn blank_array() -> Image {
     image.texture_view_descriptor =
         Some(TextureViewDescriptor { dimension: Some(TextureViewDimension::D2Array), ..Default::default() });
     image.sampler = clamp_trilinear();
-    image
+    own_texture(image)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::terrain::textures::{MipChain, Texels, array_texture};
+
+    #[test]
+    fn the_handles_arrays_are_new_textures_with_every_level() {
+        let level =
+            |w: u32, v: u8| ssx_assets::texture::Image { width: w, height: w, rgba: vec![v; (w * w * 4) as usize] };
+        let chain = |v: u8| MipChain::from_levels(vec![level(4, v), level(2, v), level(1, v)]);
+        let (a, b) = (chain(1), chain(2));
+        let image = own_texture(array_texture(&[&a, &b], Texels::Linear, clamp_trilinear()).unwrap());
+        assert!(!image.texture_descriptor.usage.contains(TextureUsages::COPY_DST));
+        assert!(image.texture_descriptor.usage.contains(TextureUsages::TEXTURE_BINDING));
+        assert_eq!(image.data.as_ref().map(Vec::len), Some(2 * (16 + 4 + 1) * 4));
+        assert_eq!(image.texture_descriptor.mip_level_count, 3);
+        assert!(!blank_array().texture_descriptor.usage.contains(TextureUsages::COPY_DST));
+    }
 }

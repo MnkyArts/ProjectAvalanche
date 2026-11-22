@@ -6,6 +6,7 @@ pub mod movie;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
@@ -18,6 +19,8 @@ use ssx_ui::library::{ImageId, Library};
 use ssx_ui::render::{Command, DrawItem, RenderList, Renderer, ScaleMode};
 use ssx_ui::shape::{GradientKind, GradientPaint, Paint};
 
+use crate::frame_task::FrameTask;
+
 pub const GRADIENT_ROWS: usize = 256;
 pub const DRAW_FLOATS: usize = 32;
 
@@ -28,8 +31,7 @@ pub struct UiPassSystems;
 #[extract_app(RenderApp)]
 pub struct UiCamera;
 
-#[derive(Resource)]
-pub struct UiScene {
+pub struct UiSceneState {
     pub lib: Library,
     pub player: Player,
     pub vm: Option<ssx_ui::avm1::Vm>,
@@ -44,9 +46,9 @@ pub struct UiScene {
     opaque: ssx_ui::render::cover::OpaqueBitmaps,
 }
 
-impl UiScene {
+impl UiSceneState {
     pub fn new(lib: Library, player: Player) -> Self {
-        UiScene {
+        UiSceneState {
             lib,
             player,
             vm: None,
@@ -61,6 +63,30 @@ impl UiScene {
             opaque: Default::default(),
         }
     }
+}
+
+#[derive(Resource)]
+pub struct UiScene(FrameTask<UiSceneState, Built>);
+
+impl UiScene {
+    pub fn new(state: UiSceneState) -> Self {
+        UiScene(FrameTask::new(state))
+    }
+
+    pub fn state(&mut self) -> Option<&mut UiSceneState> {
+        self.0.settle()
+    }
+}
+
+struct Built {
+    frame: Option<UiFrame>,
+    overlay_cpu: Option<std::time::Duration>,
+}
+
+struct OverlayInput {
+    draws: Vec<ssx_ui::render::overlay::OverlayDraw>,
+    font: String,
+    images: Vec<Arc<ImageData>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -320,7 +346,8 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((ExtractResourcePlugin::<UiFrame>::default(), ExtractComponentPlugin::<UiCamera>::default()))
             .init_resource::<UiFrame>()
-            .add_systems(PostUpdate, build_frame);
+            .add_systems(PostUpdate, build_frame)
+            .add_systems(Last, finish_frame);
         gpu::build(app);
         fade::build(app);
     }
@@ -330,28 +357,42 @@ fn build_frame(
     time: Res<Time>,
     scene: Option<ResMut<UiScene>>,
     cameras: Query<&Camera, With<UiCamera>>,
-    mut frame: ResMut<UiFrame>,
-    overlay: Option<ResMut<UiOverlay>>,
+    overlay: Option<Res<UiOverlay>>,
 ) {
     let Some(mut scene) = scene else { return };
     let Some(size) = cameras.iter().find_map(|c| c.physical_viewport_size()) else { return };
+    let overlay = overlay.as_deref().filter(|o| !o.draws.is_empty()).map(|o| OverlayInput {
+        draws: o.draws.clone(),
+        font: o.font.clone(),
+        images: o.images.clone(),
+    });
+    let dt = time.delta_secs_f64();
+    // PORT(choice): the build (the timelines' advance when playing, the render list, its flattening) runs as a task
+    // of Bevy's compute pool beside the frame's later systems, and `finish_frame` joins it in `Last`, before the
+    // frame's extract: the same work in the same order on the same player, so the same frame. Run in the system it
+    // held PostUpdate's first command sync and every system after it (the racers, the transforms, the visibility) for
+    // its 1.5–2 ms on every frame. Bevy's schedule and its command syncs are the port's engine; the console had
+    // neither.
+    scene.0.spawn(move |s| build(s, size, dt, overlay));
+}
+
+fn build(s: &mut UiSceneState, size: UVec2, dt: f64, overlay: Option<OverlayInput>) -> Built {
     let t0 = std::time::Instant::now();
-    let scene = &mut *scene;
-    if scene.playing {
-        match scene.vm.as_mut() {
-            Some(vm) => drop(vm.advance(&mut scene.lib, &mut scene.player, time.delta_secs_f64())),
-            None => drop(scene.player.tick(&scene.lib, time.delta_secs_f64())),
+    if s.playing {
+        match s.vm.as_mut() {
+            Some(vm) => drop(vm.advance(&mut s.lib, &mut s.player, dt)),
+            None => drop(s.player.tick(&s.lib, dt)),
         }
     }
-    if scene.window_hidden {
-        scene.last_cpu = t0.elapsed();
-        return;
+    if s.window_hidden {
+        s.last_cpu = t0.elapsed();
+        return Built { frame: None, overlay_cpu: None };
     }
-    let mut list = if scene.hidden {
+    let mut list = if s.hidden {
         RenderList { viewport: (size.x, size.y), ..Default::default() }
     } else {
-        let list = scene.renderer.build(&scene.lib, &scene.player, (size.x, size.y), scene.scale_mode);
-        for note in scene.renderer.take_refused() {
+        let list = s.renderer.build(&s.lib, &s.player, (size.x, size.y), s.scale_mode);
+        for note in s.renderer.take_refused() {
             warn!("ui: a shape not drawn: {note}");
         }
         list
@@ -363,31 +404,54 @@ fn build_frame(
     // PORT(choice): a colour or gradient backdrop over the whole stage (the pause's and the results' dimmers) reaches
     // the window's edges, so the side is dimmed as the stage is; the game drew nothing beside its stage.
     let beside = list.shows_beside_stage();
-    let hidden_beside = beside && list.covers_stage(&scene.lib, &mut scene.opaque);
+    let hidden_beside = beside && list.covers_stage(&s.lib, &mut s.opaque);
     if beside {
         list.extend_backdrops();
     }
-    let mut overlay = overlay;
-    let extra = match overlay.as_deref_mut() {
-        Some(o) if !scene.hidden && !o.draws.is_empty() => {
+    let mut overlay_cpu = None;
+    let extra = match overlay {
+        Some(o) if !s.hidden => {
             let t = std::time::Instant::now();
             let viewport = (size.x, size.y);
-            let stage = ssx_ui::render::overlay::stage_transform(viewport, scene.scale_mode);
-            let base = scene.lib.images().len();
-            let more = scene.renderer.overlay(&scene.lib, &o.font, &o.draws, stage, viewport, base);
+            let stage = ssx_ui::render::overlay::stage_transform(viewport, s.scale_mode);
+            let base = s.lib.images().len();
+            let more = s.renderer.overlay(&s.lib, &o.font, &o.draws, stage, viewport, base);
             list.commands.extend(more);
-            o.cpu = t.elapsed();
-            o.images.clone()
+            overlay_cpu = Some(t.elapsed());
+            o.images
         }
         _ => Vec::new(),
     };
-    let atlas = &scene.renderer.glyphs.atlas;
-    if scene.glyph_atlas.as_ref().is_none_or(|a| a.generation != atlas.generation) {
-        scene.glyph_atlas = Some(Arc::new(atlas.clone()));
+    let atlas = &s.renderer.glyphs.atlas;
+    if s.glyph_atlas.as_ref().is_none_or(|a| a.generation != atlas.generation) {
+        s.glyph_atlas = Some(Arc::new(atlas.clone()));
     }
-    *frame = flatten(&scene.lib, &list, scene.glyph_atlas.clone(), &extra);
-    frame.clear = scene.clear.or(hidden_beside.then_some([0.0; 3]));
-    scene.last_cpu = t0.elapsed();
+    let mut frame = flatten(&s.lib, &list, s.glyph_atlas.clone(), &extra);
+    frame.clear = s.clear.or(hidden_beside.then_some([0.0; 3]));
+    s.last_cpu = t0.elapsed();
+    Built { frame: Some(frame), overlay_cpu }
+}
+
+// PORT(choice): it runs on the main thread (`NonSendMarker`), as the other frame tasks' joins do: a compute thread
+// blocked on the build could be the one the build waits for; the console had no task pool.
+fn finish_frame(
+    _main_thread: NonSendMarker,
+    scene: Option<ResMut<UiScene>>,
+    mut frame: ResMut<UiFrame>,
+    overlay: Option<ResMut<UiOverlay>>,
+) {
+    let Some(mut scene) = scene else { return };
+    if !scene.0.pending() {
+        return;
+    }
+    scene.0.settle();
+    let Some(built) = scene.0.take_done() else { return };
+    if let (Some(mut o), Some(cpu)) = (overlay, built.overlay_cpu) {
+        o.cpu = cpu;
+    }
+    if let Some(f) = built.frame {
+        *frame = f;
+    }
 }
 
 #[cfg(test)]

@@ -4,10 +4,11 @@ use anyhow::{Context, Result};
 use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::{
-    App, Assets, Camera, Camera3d, ChildOf, Commands, Entity, GlobalTransform, Handle, Image, IntoScheduleConfigs,
-    Mat4, Mesh, Mesh3d, MeshMaterial3d, Name, PostUpdate, Quat, Query, Res, ResMut, Resource, Time, Transform, Vec3,
-    Vec4, Visibility, With, World, info, resource_exists, warn,
+    App, Assets, Camera, Camera3d, ChildOf, Commands, Entity, FixedUpdate, GlobalTransform, Handle, Image,
+    IntoScheduleConfigs, Mat4, Mesh, Mesh3d, MeshMaterial3d, Name, PostUpdate, Quat, Query, Res, ResMut, Resource,
+    Time, Transform, Update, Vec3, Vec4, Visibility, With, World, info, resource_exists, warn,
 };
+use bevy::render::storage::ShaderBuffer;
 use ssx_assets::anim_db::AssetDb;
 use ssx_assets::content::characters::budget::RiderLooks;
 use ssx_assets::content::characters::dress::LookChoice;
@@ -21,8 +22,8 @@ use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::ObjectMaterial;
 use crate::render::objects::{LoadedPart, MaterialHandle, part_from_mesh};
 use crate::rider::anim::{JointRecord, world_records};
-use crate::rider::ghosts::{GhostMaterial, Hologram};
-use crate::rider::material::{CharacterLightUniform, CharacterMaterial};
+use crate::rider::ghosts::{GhostFrame, GhostMaterial, Hologram};
+use crate::rider::material::{CharacterMaterial, RacerFrame};
 
 struct BotPart {
     label: String,
@@ -45,6 +46,7 @@ pub(super) struct LoadedBot {
     racer_type: u32,
     hologram: Option<Hologram>,
     tint: u32,
+    board: Option<LoadedPart>,
 }
 
 #[derive(Resource)]
@@ -82,11 +84,12 @@ pub(super) struct BotVisual {
     idle_at: Option<(Vec3, Quat)>,
     axes: Vec<(usize, usize, usize)>,
     trigger_step: Option<u64>,
-    materials: Vec<Handle<CharacterMaterial>>,
-    ghost_materials: Vec<Handle<GhostMaterial>>,
+    frame: Option<RacerFrame>,
+    ghost: Option<GhostFrame>,
     racer_type: u32,
     tint: u32,
     fade: HoloFade,
+    holo: Vec4,
     alpha: f32,
 }
 
@@ -129,6 +132,59 @@ impl HoloFade {
 
 const RACER_POOL: usize = 4;
 
+// PORT(choice): one simulation step, 1/SIM_HZ s, per update; the console fades by the time its racers manager's
+// stopwatch measured since the previous update (`FUN_82FEE260`, read at 0x82501BC8 and restarted from the time base at
+// 0x82501BD8…0x82501BE8; `fmadds` with +0x4C at 0x82501D8C), one update per simulation step, so the step's period while
+// the console keeps its rate. The port's fixed steps run in catch-up batches inside one rendered frame, where a
+// measured interval would not be the simulated one.
+const FADE_STEP_S: f32 = 1.0 / ssx_physics::SIM_HZ;
+
+impl BotVisual {
+    fn fade_update(&mut self, d2: f32, racers: usize, rng: &mut dyn ssx_assets::career::random::GameRandom) {
+        self.holo = self.fade.update(self.racer_type, FADE_STEP_S, d2, racers, |max| rng.range_f(0.0, max));
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FadeClock {
+    steps: u64,
+    paused: u64,
+}
+
+impl FadeClock {
+    fn advance(&mut self, steps: u64, paused: u64) -> u64 {
+        let new = if steps >= self.steps { steps - self.steps } else { steps };
+        let new = new + paused.saturating_sub(self.paused);
+        *self = FadeClock { steps, paused };
+        new
+    }
+}
+
+// PORT(choice): no update while the port holds its ride before the level is up (the port loads asynchronously and
+// takes the ride's first step when its level is there); the console's `FSGameSimulationBE_Step` 0x823D2DF0 runs the
+// fades from its level-start branch too (+0x21 = 1, 0x823D2F70), which polls the game mode's ready query (0x8239A550 →
+// 0x8247E0F8, whose readiness spawns the racers: `Racers_SpawnEntities` 0x82503940) at the simulation's rate for as long
+// as the console's loading takes.
+fn fade_step(
+    ride: Option<Res<crate::ride::Ride>>,
+    paused: Option<Res<crate::ride::PausedFrames>>,
+    bots: Option<ResMut<Bots>>,
+) {
+    let (Some(ride), Some(mut bots)) = (ride, bots) else { return };
+    let Some(race) = ride.session.bots.as_ref() else { return };
+    let phases = bots.faded.advance(ride.steps, paused.map_or(0, |p| p.0));
+    let racers = race.bots.len() + bots.live.drawn();
+    let Bots { list, rng, live, .. } = &mut *bots;
+    for _ in 0..phases {
+        for (v, b) in list.iter_mut().zip(&race.bots) {
+            if matches!(v.racer_type, 0 | 2) && !b.removed {
+                v.fade_update(b.position.distance_squared(ride.state.traj), racers, rng);
+            }
+        }
+        live.fade_step(ride.state.traj, racers, rng);
+    }
+}
+
 #[derive(Resource)]
 pub struct Bots {
     list: Vec<BotVisual>,
@@ -137,6 +193,7 @@ pub struct Bots {
     nis_db: Option<(String, std::sync::Arc<AssetDb>)>,
     floats: Vec<String>,
     rng: ssx_assets::career::random::GlobalRandom,
+    faded: FadeClock,
     board_mesh: Option<(Handle<Mesh>, Handle<CharacterMaterial>)>,
     pub live: live::LiveVisuals,
     vault_track: Option<String>,
@@ -164,6 +221,22 @@ fn follow_bot(
 
 pub type Loaded = PendingBots;
 
+impl PendingBots {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for bot in &mut self.bots {
+            for p in bot.lods.iter_mut().flatten() {
+                p.part.queue_images(uploads, images);
+            }
+            if let Some(b) = bot.board.as_mut() {
+                b.queue_images(uploads, images);
+            }
+        }
+        if let Some(b) = self.board.as_mut() {
+            b.queue_images(uploads, images);
+        }
+    }
+}
+
 #[derive(bevy::ecs::schedule::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RacersDrawSet;
 
@@ -182,6 +255,8 @@ pub fn register(app: &mut App) {
                 .before(bevy::transform::TransformSystems::Propagate)
                 .before(crate::render::lighting::local::DynamicLightsUpload),
         )
+        .add_systems(FixedUpdate, fade_step.after(crate::ride::RideStepSet).run_if(resource_exists::<Bots>))
+        .add_systems(Update, fade_step.after(crate::ride::RideStepSet).run_if(resource_exists::<Bots>))
         .add_systems(
             PostUpdate,
             follow_bot
@@ -267,19 +342,24 @@ fn load(
         (before, vec![LookChoice::Disc; names.len()])
     };
     let mut characters = names.into_iter().zip(looks);
-    let mut bots = Vec::new();
-    for (r, gear_flags) in requests {
+    let jobs: Vec<_> = requests
+        .iter()
+        .map(|(r, gear_flags)| (r, *gear_flags, (r.racer_type != HOLOGRAM_RACER_TYPE).then(|| characters.next())))
+        .collect();
+    let src = RacerSources { root, track: Some(track), db: &db, floats: &floats };
+    let built = crate::load_pool::ordered("bots", &jobs, |(r, gear_flags, look)| {
         let slot = slots.slot(usize::try_from(r.start_slot).unwrap_or(0));
-        let src = RacerSources { root, track: Some(track), db: &db, floats: &floats };
-        if r.racer_type == HOLOGRAM_RACER_TYPE {
-            bots.push(load_hologram_racer(&src, *gear_flags, slot, r.tint)?);
-            continue;
+        match look {
+            None => load_hologram_racer(&src, *gear_flags, slot, r.tint),
+            Some(look) => {
+                let Some((name, look)) = look else { anyhow::bail!("a racer's look") };
+                let mut bot = load_racer_as(&src, name, *gear_flags, slot, r.racer_type, look, None)?;
+                bot.tint = r.tint;
+                Ok(bot)
+            }
         }
-        let (name, look) = characters.next().context("a racer's look")?;
-        let mut bot = load_racer_as(&src, name, *gear_flags, slot, r.racer_type, &look, None)?;
-        bot.tint = r.tint;
-        bots.push(bot);
-    }
+    });
+    let bots = built.into_iter().collect::<Result<Vec<_>>>()?;
     let board =
         crate::rider::visual::load_board(root, Some(track)).ok().map(crate::rider::visual::LoadedBoard::into_part);
     Ok(PendingBots { bots, board, floats, riders, vault_track: Some(track.to_string()) })
@@ -364,6 +444,7 @@ fn load_hologram_racer(
         racer_type: HOLOGRAM_RACER_TYPE,
         hologram: Some(hologram),
         tint,
+        board: None,
     })
 }
 
@@ -381,6 +462,22 @@ pub(super) fn load_racer_as(
     for p in &model.problems {
         info!("bot {name} model: {p}");
     }
+    let board = match &model.board {
+        Some(b) => match crate::rider::visual::board_part(root, &b.geom, &b.material) {
+            Ok(board) => {
+                info!("bot {name}: board {} ({})", b.mesh_name, board.source);
+                Some(board.into_part())
+            }
+            Err(e) => {
+                warn!("bot {name}: its board {} is not drawn (the level's is): {e:#}", b.mesh_name);
+                None
+            }
+        },
+        None => {
+            info!("bot {name}: its game object reaches no board (the level's is drawn)");
+            None
+        }
+    };
     let content = ssx_assets::content::GameContent::of(root);
     let package = match look {
         LookChoice::Disc => None,
@@ -534,6 +631,7 @@ pub(super) fn load_racer_as(
         racer_type,
         hologram: None,
         tint: ssx_physics::session::bots::BOT_TINT,
+        board,
     })
 }
 
@@ -551,27 +649,22 @@ pub(super) struct RacerSpawner<'w, 's> {
     characters: ResMut<'w, Assets<CharacterMaterial>>,
     ghosts: ResMut<'w, Assets<GhostMaterial>>,
     bindposes: ResMut<'w, Assets<SkinnedMeshInverseBindposes>>,
+    buffers: ResMut<'w, Assets<ShaderBuffer>>,
     light: Res<'w, GameLightAssets>,
-    lighting: Option<Res<'w, GameLighting>>,
     post: Option<Res<'w, crate::render::post::PostSettings>>,
 }
 
 impl RacerSpawner<'_, '_> {
-    fn rider_light(&self) -> CharacterLightUniform {
-        self.lighting.as_deref().map_or_else(CharacterLightUniform::viewer_default, CharacterLightUniform::from_preset)
-    }
-
     fn board(&mut self, part: LoadedPart) -> (Handle<Mesh>, Handle<CharacterMaterial>) {
-        let rider_light = self.rider_light();
-        part.add_character(&mut self.meshes, &mut self.images, &self.light, &rider_light, &mut self.characters)
+        part.add_character(&mut self.meshes, &mut self.images, &self.light, &mut self.characters)
     }
 
     pub(super) fn spawn_racer(
         &mut self,
         board_mesh: Option<&(Handle<Mesh>, Handle<CharacterMaterial>)>,
-        b: LoadedBot,
+        mut b: LoadedBot,
     ) -> BotVisual {
-        let rider_light = self.rider_light();
+        let own_board = b.board.take().map(|p| self.board(p));
         let commands = &mut self.commands;
         let root =
             commands.spawn((Name::new(format!("bot {}", b.name)), Transform::default(), Visibility::Hidden)).id();
@@ -589,13 +682,14 @@ impl RacerSpawner<'_, '_> {
             })
             .collect();
         let mut lods = Vec::new();
-        let mut materials = Vec::new();
-        let mut ghost_materials = Vec::new();
+        let frame = b.hologram.is_none().then(|| RacerFrame::new(&mut self.buffers));
+        let mut ghost = None;
         if let Some(h) = &b.hologram {
             let ldr = self.post.is_some();
             let normal = h.normal_handle(&mut self.images);
-            let material = self.ghosts.add(GhostMaterial { params: h.params(b.tint, ldr), normal, ldr });
-            ghost_materials.push(material.clone());
+            let g = GhostFrame::new(Vec4::from_array(ssx_assets::ghosts::tint_rgba(b.tint)), &mut self.buffers);
+            let material = self.ghosts.add(GhostMaterial { params: h.params(ldr), normal, frame: g.handle(), ldr });
+            ghost = Some(g);
             for (k, parts) in h.model.lod_parts.iter().enumerate() {
                 let lod = commands
                     .spawn((
@@ -644,14 +738,13 @@ impl RacerSpawner<'_, '_> {
                     ChildOf(lod),
                 );
                 if p.part.is_character() {
-                    let (mesh, material) = p.part.add_character(
-                        &mut self.meshes,
-                        &mut self.images,
-                        &self.light,
-                        &rider_light,
-                        &mut self.characters,
-                    );
-                    materials.push(material.clone());
+                    let (mesh, material) =
+                        p.part.add_character(&mut self.meshes, &mut self.images, &self.light, &mut self.characters);
+                    if let Some(f) = &frame
+                        && let Some(mut m) = self.characters.get_mut(&material)
+                    {
+                        f.bind(&mut m);
+                    }
                     commands.spawn((bundle, Mesh3d(mesh), MeshMaterial3d(material)));
                     continue;
                 }
@@ -669,10 +762,16 @@ impl RacerSpawner<'_, '_> {
                 };
             }
         }
-        let board = board_mesh.filter(|_| b.hologram.is_none()).map(|(mesh, material)| {
-            let material =
-                self.characters.get(material).cloned().map_or_else(|| material.clone(), |m| self.characters.add(m));
-            materials.push(material.clone());
+        let board = own_board.as_ref().or(board_mesh).filter(|_| b.hologram.is_none()).map(|(mesh, material)| {
+            let material = self.characters.get(material).cloned().map_or_else(
+                || material.clone(),
+                |mut m| {
+                    if let Some(f) = &frame {
+                        f.bind(&mut m);
+                    }
+                    self.characters.add(m)
+                },
+            );
             commands
                 .spawn((
                     Name::new(format!("bot {} snowboard", b.name)),
@@ -702,17 +801,18 @@ impl RacerSpawner<'_, '_> {
             idle_at: None,
             axes: b.axes,
             trigger_step: None,
-            materials,
-            ghost_materials,
+            frame,
+            ghost,
             racer_type: b.racer_type,
             tint: b.tint,
             fade: HoloFade::default(),
+            holo: Vec4::ZERO,
             alpha: 0.0,
         }
     }
 }
 
-fn spawn(mut pending: ResMut<PendingBots>, mut spawner: RacerSpawner) {
+fn spawn(mut pending: ResMut<PendingBots>, mut spawner: RacerSpawner, paused: Option<Res<crate::ride::PausedFrames>>) {
     // TODO(guess): `dynamicAOMult` stays 1 (the racer's `AoGroundContactTrack` needs interface 0x57EF8508, creator 0x82928AB0); settle: the `ghost_<character>` animatable's QueryInterface (0x82AC0440 / 0x82ACA240).
     let board_mesh = pending.board.take().map(|p| spawner.board(p));
     let list: Vec<BotVisual> =
@@ -729,6 +829,7 @@ fn spawn(mut pending: ResMut<PendingBots>, mut spawner: RacerSpawner) {
         nis_db: None,
         floats,
         rng,
+        faded: FadeClock { steps: 0, paused: paused.map_or(0, |p| p.0) },
         board_mesh,
         live: live::LiveVisuals::with_riders(riders),
         vault_track,
@@ -753,7 +854,7 @@ fn update(
     let facts = FrameFacts { view, night, steps: ride.steps };
     let dt_ticks = if ride.hold { 0.0 } else { (time.delta_secs() * 60.0).min(4.0) };
     let lag = (ride.steps as f32 / ssx_physics::SIM_HZ - ride.render_time).max(0.0);
-    let Bots { list, boards, trajectories, nis_db, floats, rng, live, .. } = &mut *bots;
+    let Bots { list, boards, trajectories, nis_db, floats, live, .. } = &mut *bots;
     let intro = ride.state.start.as_ref().and_then(|l| l.intro.as_ref());
     let ghost = intro.and_then(|i| i.ghost().map(|g| (i, g)));
     if let Some((i, _)) = ghost
@@ -771,7 +872,6 @@ fn update(
             Err(e) => warn!("bots: the NIS {} for its Ghost1: {e:#}", i.assets.nis.binding),
         }
     }
-    let racers = race.bots.len() + live.drawn();
     let inputs = RacerAlphaInputs {
         world_render_disabled: ride.world_hidden,
         outro_active: intro.is_some_and(|i| i.outro_active()),
@@ -780,8 +880,7 @@ fn update(
     for (k, v) in list.iter_mut().enumerate() {
         let Some(b) = race.bots.get(k) else { continue };
         if matches!(v.racer_type, 0 | 2) && !b.removed {
-            let d2 = b.position.distance_squared(ride.state.traj);
-            draw.holo(v, dt_ticks / 60.0, d2, racers, rng);
+            draw.holo(v);
         }
         let fade = if matches!(v.racer_type, 0 | 2) { v.fade.alpha } else { 1.0 };
         let in_nis = k == 0 && ghost.is_some();
@@ -845,7 +944,7 @@ fn update(
         let lamp_on = night && v.gear_flags & 1 != 0 && race.running;
         (boards[k], trajectories[k]) = draw.place(&format!("bot {k}"), v, &records, facts, lamp_on, shown);
     }
-    live.update(race, &ride, live::LiveFrame { facts, dt_ticks, racers, inputs }, rng, &mut draw);
+    live.update(race, &ride, live::LiveFrame { facts, dt_ticks, inputs }, &mut draw);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

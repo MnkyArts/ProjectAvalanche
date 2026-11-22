@@ -42,6 +42,7 @@ impl EventManager {
                 if !i.rewinding {
                     self.progress_and_finish(i, &mut out);
                 }
+                self.hud_feed.fed(self.state);
             }
             EventState::DelayedFinish => {
                 let ev = timer.countdown(i.dt_s);
@@ -49,9 +50,13 @@ impl EventManager {
                 if ev == DeathTimerEvent::EventEnds {
                     self.end_on_death(i, &mut out);
                 }
+                self.hud_feed.fed(self.state);
                 self.after_finish(i, &mut out);
             }
-            EventState::Finished | EventState::LoopOutro => self.after_finish(i, &mut out),
+            EventState::Finished | EventState::LoopOutro => {
+                self.hud_feed.fed(self.state);
+                self.after_finish(i, &mut out);
+            }
             _ => {}
         }
         if !self.waiting {

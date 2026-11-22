@@ -82,6 +82,29 @@ fn the_triangle_rejection_changes_no_query() {
 }
 
 #[test]
+fn the_cluster_cull_tests_the_bare_segment() {
+    let (lo, hi) = (Vec3::new(1.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0));
+    let pierces = |start: Vec3, len: f32| SegmentCull::new(start, start + Vec3::X * len).pierces(lo, hi);
+    assert!(pierces(Vec3::ZERO, 1.5) && !pierces(Vec3::ZERO, 0.99));
+    assert!(pierces(Vec3::new(0.95, 0.0, 0.0), 0.01) && !pierces(Vec3::new(0.85, 0.0, 0.0), 0.01));
+    assert!(pierces(Vec3::new(0.0, 1.0, 0.0), 3.0) && !pierces(Vec3::new(0.0, 1.001, 0.0), 3.0));
+    let far = |y: f32| SegmentCull::new(Vec3::new(1000.0, y, 0.0), Vec3::new(1003.0, y, 0.0));
+    let (lo, hi) = (Vec3::new(1001.0, 990.0, -1.0), Vec3::new(1002.0, 1000.0, 1.0));
+    assert!(far(1000.0005).pierces(lo, hi) && !far(1000.002).pierces(lo, hi));
+}
+
+#[test]
+fn a_sphere_beside_a_clusters_box_never_reaches_its_triangles() {
+    let mut w = CollisionWorld::default();
+    crate::testutil::add_floor(&mut w, [-5.0, 5.0], [-5.0, 5.0], 0.0, 0);
+    w.finish();
+    let beside = SegmentQuery::sphere(Vec3::new(-6.0, 0.25, 0.0), Vec3::new(6.0, 0.05, 0.0), 0.3, 0);
+    assert_eq!(w.segment_query(&beside), None);
+    let into = SegmentQuery::sphere(Vec3::new(-6.0, 0.2, 0.0), Vec3::new(6.0, -0.2, 0.0), 0.3, 0);
+    assert!(w.segment_query(&into).is_some_and(|h| h.t < 6.0));
+}
+
+#[test]
 fn class_mask_skips_excluded_classes() {
     use crate::testutil::add_floor;
     let mut w = CollisionWorld::default();
@@ -100,13 +123,19 @@ fn class_mask_skips_excluded_classes() {
 
 #[test]
 fn sphere_cast_face_edge_vertex_and_overlap() {
-    let w = plane(10.0, 0.0);
-    let h = w.sphere_cast(Vec3::new(0.0, 3.0, 0.0), -Vec3::Y, 10.0, 0.5).expect("face");
+    let flat = plane(10.0, 0.0);
+    let h = flat.sphere_cast(Vec3::new(0.0, 3.0, 0.0), -Vec3::Y, 10.0, 0.5).expect("face");
     assert!((h.t - 2.5).abs() < 1e-5 && h.normal.distance(Vec3::Y) < 1e-5 && h.point.y.abs() < 1e-5);
     assert!((h.contact_normal - Vec3::Y).length() < 1e-5);
-    let two = |o: Vec3, d: Vec3| {
+    let two_in = |w: &CollisionWorld, o: Vec3, d: Vec3| {
         w.segment_query(&SegmentQuery { start: o, end: o + d * 10.0, radius: 0.5, two_sided: true, class_mask: 0 })
     };
+    assert!(two_in(&flat, Vec3::new(13.0, 0.3, 0.0), -Vec3::X).is_none());
+    assert!(flat.sphere_cast(Vec3::new(10.3, 2.0, 0.0), -Vec3::Y, 10.0, 0.5).is_none());
+    assert!(flat.sphere_cast(Vec3::new(0.0, -0.2, 0.0), -Vec3::Y, 1.0, 0.5).is_none());
+    let mut w = plane(10.0, 0.0);
+    w.set_cluster_entry_box(Vec3::new(-11.0, -1.0, -11.0), Vec3::new(11.0, 1.0, 11.0));
+    let two = |o: Vec3, d: Vec3| two_in(&w, o, d);
     assert!(w.sphere_cast(Vec3::new(13.0, 0.3, 0.0), -Vec3::X, 10.0, 0.5).is_none());
     let h = two(Vec3::new(13.0, 0.3, 0.0), -Vec3::X).expect("edge");
     assert!((h.t - 2.6).abs() < 1e-4, "{}", h.t);

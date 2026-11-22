@@ -83,6 +83,7 @@ impl Session {
         if self.pads_released {
             s.grind.release_l2();
             s.wingsuit.pad_r1 = false;
+            s.survival.oxygen_pad = crate::survival::OxygenPad::default();
         }
         let was_alive = s.death.is_alive();
         let in_gameplay = s.gameplay.is_some();
@@ -105,12 +106,15 @@ impl Session {
                 rewind: Some(r),
                 flow: self.flow,
                 avalanche: Some(&mut self.avalanche),
+                workers: self.workers.as_deref(),
             };
             let ev = step_with_trigger(s, w, input, tricks, r2, dt, x);
             (ev.rider_dead, ev.race_start)
         } else {
-            s.attachment = None;
+            (s.attachment, s.pin) = (None, None);
             let dt = r.delta_ticks;
+            let ground_valid = s.contact.is_some();
+            s.rumble.landing(&w.tuning.queries.landing_rumble, s.bln_in_air(), ground_valid, s.ground_normal, dt);
             let prev_vel = self.avalanche.inputs.vel;
             let i = crate::rider::avalanche_inputs(s, &s.spray, prev_vel, false, dt);
             self.avalanche.dispatch(&w.tuning.avalanche, i, &w.collision);

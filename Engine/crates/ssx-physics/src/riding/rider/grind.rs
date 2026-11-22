@@ -373,7 +373,6 @@ pub fn carving_ctor(gc: &mut state::GrindCarving, c: &CollisionWorld, ground: Op
 }
 
 pub struct DispatchState<'a> {
-    pub c: &'a CollisionWorld,
     pub r: &'a crate::character::ResolvedCharacterProperties,
     pub traj: Vec3,
     pub velocity: Vec3,
@@ -384,7 +383,7 @@ pub struct DispatchState<'a> {
     pub dt: f32,
 }
 
-pub fn dispatch(g: &mut GrindRider, d: &DispatchState) -> Arc<surface_analysis::SurfaceAnalysis> {
+pub fn dispatch(g: &mut GrindRider, d: &DispatchState) -> surface_analysis::SaJob {
     let gs = &g.steering;
     let i = surface_analysis::DispatchInputs {
         traj: d.traj,
@@ -403,5 +402,5 @@ pub fn dispatch(g: &mut GrindRider, d: &DispatchState) -> Arc<surface_analysis::
         g_air: d.r.g_air.y.abs(),
         dt: d.dt,
     };
-    Arc::new(g.feature.dispatch(d.c, &i))
+    g.feature.prepare(&i)
 }

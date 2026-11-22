@@ -287,7 +287,8 @@ mod tests {
         let manifest: BTreeSet<String> =
             value("family").iter().zip(value("version")).map(|(f, v)| format!("{f} {v}")).collect();
         let vendored: BTreeSet<String> = list.vendored.iter().map(|p| format!("{} {}", p.name, p.version)).collect();
-        assert_eq!(vendored, manifest, "{stale}");
+        assert!(manifest.is_subset(&vendored), "{stale}");
+        assert!(vendored.iter().any(|k| k.starts_with("FidelityFX Super Resolution 1 ")), "{stale}");
         for key in &vendored {
             assert!(notices.contains(&format!("\n--- {key} ---\n")), "{key} has no notice: {stale}");
         }

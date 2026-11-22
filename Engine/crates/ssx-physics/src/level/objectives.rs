@@ -280,7 +280,8 @@ pub struct LevelObjectives {
     pub nis_starts: BTreeMap<(String, String), Option<(glam::Vec3, glam::Quat)>>,
     pub nis_built: BTreeSet<String>,
     pub unapplied: std::collections::BTreeSet<String>,
-    pub postfx: BTreeMap<String, (f32, f32)>,
+    pub level_batch: Vec<(String, Vec<u8>)>,
+    pub level_load: LoadWorld,
 }
 
 impl LevelObjectives {
@@ -292,6 +293,7 @@ impl LevelObjectives {
         root: Option<&Path>,
         permanent_flags: &[u32],
     ) -> Self {
+        let level_load = LoadWorld { effects: Vec::new(), ..load.clone() };
         let mut runner = Runner { level_active: true, log: keep_log.then(Vec::new), ..Runner::default() };
         for &hash in permanent_flags {
             runner.flags.set_permanent_hash(hash, true);
@@ -327,8 +329,20 @@ impl LevelObjectives {
             nis_starts,
             nis_built,
             unapplied: Default::default(),
-            postfx: BTreeMap::new(),
+            level_batch: batch.to_vec(),
+            level_load,
         }
+    }
+
+    pub fn restart_level(&mut self) {
+        let mut world = LoadWorld::default();
+        self.runner.restart_set(SetId::Level, &mut world);
+        self.runner.unload_level(&mut world);
+        self.effects.append(&mut world.effects);
+        let runner = std::mem::take(&mut self.runner);
+        let (runner, lw, _) = load_batch(runner, SetId::Level, &self.level_batch, self.level_load.clone(), None);
+        self.runner = runner;
+        self.effects.extend(lw.effects);
     }
 }
 
@@ -394,7 +408,7 @@ pub struct SessionWorld<'a> {
     pub tutorial: Option<&'a mut crate::session::tutorial::Tutorial>,
     pub unapplied: &'a mut std::collections::BTreeSet<String>,
     pub nis: &'a crate::nis_events::NisEvents,
-    pub postfx: &'a mut BTreeMap<String, (f32, f32)>,
+    pub postfx: &'a mut ssx_assets::postfx_state::PostFxService,
     pub backwards: bool,
     pub stats: &'a mut crate::stats::StatsStore,
     pub ui_flags: &'a BTreeMap<u16, bool>,
@@ -586,12 +600,8 @@ impl ObjectiveWorld for SessionWorld<'_> {
                     self.heli.generation += 1;
                 }
             }
-            Effect::PostFxStart { name, start, end } => {
-                self.postfx.insert(name.text.to_string(), (*start, *end));
-            }
-            Effect::PostFxStop { name, .. } => {
-                self.postfx.remove(&*name.text);
-            }
+            Effect::PostFxStart { name, start, end } => self.postfx.start(&name.text, *start, *end),
+            Effect::PostFxStop { name, blend } => self.postfx.stop(&name.text, *blend),
             Effect::AudioSetPresentationType(t) => *self.presentation = *t,
             Effect::SetStatsWriteable(b) => self.stats.writeable = *b,
             Effect::AwardTrackBonus { bonus, .. } => self.stats.award(&bonus.text, 0),

@@ -3,9 +3,9 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
-use crate::render::lighting::game::GameLightUniform;
 use crate::render::shadows::{ShadowPassKey, specialize_shadow_pass};
 
 const SHADER_PATH: &str = "embedded://ssx_bevy/render/objects/foreground.wesl";
@@ -35,8 +35,8 @@ pub struct ForegroundExtension {
     #[texture(104)]
     #[sampler(105)]
     pub green: Handle<Image>,
-    #[uniform(106)]
-    pub light: GameLightUniform,
+    #[storage(106, read_only)]
+    pub light: Handle<ShaderBuffer>,
     #[texture(107)]
     pub occlusion: Handle<Image>,
     #[texture(108)]

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::ecs::system::NonSendMarker;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, VertexAttributeValues};
 use bevy::prelude::*;
@@ -20,9 +21,11 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use ssx_formats::subd::SubdFile;
 use ssx_physics::surface::SNOW_COVERAGE;
 
+use crate::frame_task::FrameTask;
 use crate::render::snow_tracks::model::{
     Caster, CasterTransforms, Changes, MAX_TILES, Noise, TEXELS, TILE_WORLD, TileSystem, UNTOUCHED, disp_map,
 };
+use crate::render::uploads::{LevelImage, LevelUploads};
 use crate::ride::Ride;
 use crate::rider::visual::RiderRoot;
 
@@ -64,13 +67,24 @@ struct History {
 
 #[derive(Resource)]
 pub struct SnowTracks {
-    tiles: TileSystem,
-    noise: Vec<f32>,
+    sim: FrameTask<TrackSim, Passes>,
+    lookup_width: u32,
     history: Option<History>,
     ticks: u64,
     pub update_ms: f32,
     pub fragments: usize,
     frames: u64,
+}
+
+struct TrackSim {
+    tiles: TileSystem,
+    noise: Vec<f32>,
+}
+
+struct Passes {
+    fragments: Option<usize>,
+    system_ms: f32,
+    task_ms: f32,
 }
 
 pub fn drop_world_box<'a>(files: impl IntoIterator<Item = &'a SubdFile>) -> (Vec3, Vec3) {
@@ -85,10 +99,43 @@ pub fn drop_world_box<'a>(files: impl IntoIterator<Item = &'a SubdFile>) -> (Vec
 
 impl SnowTracks {
     pub fn set_noise(&mut self, noise: Noise) {
-        self.noise = noise.tile_sum();
+        if let Some(sim) = self.sim.settle() {
+            sim.noise = noise.tile_sum();
+        }
     }
 
     pub fn new(min: Vec3, max: Vec3, noise: Noise, images: &mut Assets<Image>) -> (SnowTracks, SnowTrackTextures) {
+        SnowTracks::from_ahead(TracksAhead::build(min, max, &noise), images)
+    }
+
+    pub fn from_ahead(ahead: TracksAhead, images: &mut Assets<Image>) -> (SnowTracks, SnowTrackTextures) {
+        let TracksAhead { tiles, noise, lookup, array, params, lookup_width } = ahead;
+        let textures =
+            SnowTrackTextures { lookup: lookup.into_handle(images), tiles: array.into_handle(images), params };
+        let tracks = SnowTracks {
+            sim: FrameTask::new(TrackSim { tiles, noise }),
+            lookup_width,
+            history: None,
+            ticks: 0,
+            update_ms: 0.0,
+            fragments: 0,
+            frames: 0,
+        };
+        (tracks, textures)
+    }
+}
+
+pub struct TracksAhead {
+    tiles: TileSystem,
+    noise: Vec<f32>,
+    lookup: LevelImage,
+    array: LevelImage,
+    params: SnowTrackParams,
+    lookup_width: u32,
+}
+
+impl TracksAhead {
+    pub fn build(min: Vec3, max: Vec3, noise: &Noise) -> TracksAhead {
         let tiles = TileSystem::new(min, max);
         let (w, h) = (tiles.size.x as u32, tiles.size.y as u32);
         let mut lookup = Image::new(
@@ -120,17 +167,19 @@ impl SnowTracks {
             tile: Vec4::new(1.0 / TILE_WORLD, tiles.offset.x as f32, tiles.offset.y as f32, 0.0),
             size: Vec4::new(w as f32, h as f32, 0.0, 0.0),
         };
-        let textures = SnowTrackTextures { lookup: images.add(lookup), tiles: images.add(array), params };
-        let tracks = SnowTracks {
+        TracksAhead {
             tiles,
             noise: noise.tile_sum(),
-            history: None,
-            ticks: 0,
-            update_ms: 0.0,
-            fragments: 0,
-            frames: 0,
-        };
-        (tracks, textures)
+            lookup: LevelImage::built(lookup, None),
+            array: LevelImage::built(array, None),
+            params,
+            lookup_width: w,
+        }
+    }
+
+    pub fn queue(&mut self, uploads: &mut LevelUploads, images: &mut Assets<Image>) {
+        self.lookup.queue(uploads, images);
+        self.array.queue(uploads, images);
     }
 }
 
@@ -142,7 +191,8 @@ impl Plugin for SnowTracksPlugin {
         if std::env::var("SSX_SNOW_TRACKS").is_ok_and(|v| v == "off") {
             return;
         }
-        app.add_systems(PostUpdate, update.after(bevy::transform::TransformSystems::Propagate));
+        app.add_systems(PostUpdate, update.after(bevy::transform::TransformSystems::Propagate))
+            .add_systems(Last, finish);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(Render, upload.in_set(RenderSystems::PrepareResources));
         }
@@ -153,7 +203,7 @@ pub fn gpu_resource(textures: &SnowTrackTextures, tracks: &SnowTracks) -> SnowTr
     SnowTrackGpu {
         lookup: textures.lookup.clone(),
         tiles: textures.tiles.clone(),
-        lookup_width: tracks.tiles.size.x as u32,
+        lookup_width: tracks.lookup_width,
         uploads: Arc::new(Mutex::new(Vec::new())),
     }
 }
@@ -212,34 +262,59 @@ fn update(
         return;
     }
     let caster = tracks.history.filter(|h| h.active && !h.caster.contact.is_nan()).map(|h| h.caster);
-    let disp = caster.map(|c| {
-        let t = CasterTransforms::new(&c);
+    let triangles = caster.map(|_| {
         let (mut positions, mut tris) = (Vec::new(), Vec::new());
         for root in &roots {
             rider_triangles(root, &children, &parts, &joints, &meshes, &bindposes, &mut positions, &mut tris);
         }
-        let (vel, fragments) = crate::render::snow_tracks::raster::draw(&positions, &tris, &t);
-        tracks.fragments = fragments;
-        disp_map(&vel)
+        (positions, tris)
     });
-    let mut changes = Changes::default();
-    let SnowTracks { tiles, noise, .. } = &mut *tracks;
-    for _ in 0..n {
-        tiles.begin_frame(&mut changes);
-        if let (Some(c), Some(d)) = (caster, &disp) {
-            tiles.update(&c, d, noise, &mut changes);
+    let uploads = gpu.uploads.clone();
+    let system_ms = start.elapsed().as_secs_f32() * 1000.0;
+    // PORT(choice): the frame's displacement passes (`VelDispMap` and `DispMap` from the rider's triangles, the tiles'
+    // passes, the texel copies queued) run as a task of Bevy's compute pool beside the frame's other systems, joined by
+    // `finish` in `Last`: the same work in the same order on the same tiles. Run in the system they held PostUpdate's
+    // later systems and command syncs behind them; the console ran them in its `DisplacementRenderObj`.
+    tracks.sim.spawn(move |sim| {
+        let start = Instant::now();
+        let disp = caster.zip(triangles.as_ref()).map(|(c, (positions, tris))| {
+            let t = CasterTransforms::new(&c);
+            let (vel, fragments) = crate::render::snow_tracks::raster::draw(positions, tris, &t);
+            (disp_map(&vel), fragments)
+        });
+        let mut changes = Changes::default();
+        let TrackSim { tiles, noise } = sim;
+        for _ in 0..n {
+            tiles.begin_frame(&mut changes);
+            if let (Some(c), Some((d, _))) = (caster, &disp) {
+                tiles.update(&c, d, noise, &mut changes);
+            }
         }
+        queue_uploads(tiles, &changes, &uploads);
+        Passes { fragments: disp.map(|(_, f)| f), system_ms, task_ms: start.elapsed().as_secs_f32() * 1000.0 }
+    });
+}
+
+// PORT(choice): it runs on the main thread (`NonSendMarker`): a compute thread blocked on the passes could be the one
+// they wait for; the console had no task pool.
+fn finish(_main_thread: NonSendMarker, tracks: Option<ResMut<SnowTracks>>) {
+    let Some(mut tracks) = tracks else { return };
+    if !tracks.sim.pending() {
+        return;
     }
-    queue_uploads(tiles, &changes, &gpu);
-    let ms = start.elapsed().as_secs_f32() * 1000.0;
+    let tracks = &mut *tracks;
+    let Some(slices) = tracks.sim.settle().map(|s| s.tiles.slices_in_use()) else { return };
+    let Some(passes) = tracks.sim.take_done() else { return };
+    if let Some(f) = passes.fragments {
+        tracks.fragments = f;
+    }
+    let ms = passes.system_ms + passes.task_ms;
     tracks.update_ms = if tracks.update_ms == 0.0 { ms } else { tracks.update_ms + 0.05 * (ms - tracks.update_ms) };
     tracks.frames += 1;
     if tracks.frames.is_multiple_of(300) {
         info!(
             "snow tracks: {:.2} ms/frame (smoothed), {} VelDispMap fragments, {} slices in use",
-            tracks.update_ms,
-            tracks.fragments,
-            tracks.tiles.slices_in_use()
+            tracks.update_ms, tracks.fragments, slices
         );
     }
 }
@@ -311,11 +386,11 @@ fn skinned(
     )
 }
 
-fn queue_uploads(tiles: &TileSystem, changes: &Changes, gpu: &SnowTrackGpu) {
+fn queue_uploads(tiles: &TileSystem, changes: &Changes, uploads: &Mutex<Vec<Upload>>) {
     if changes.lookup.is_empty() && changes.slices.is_empty() {
         return;
     }
-    let Ok(mut q) = gpu.uploads.lock() else { return };
+    let Ok(mut q) = uploads.lock() else { return };
     q.extend(changes.lookup.iter().map(|&(index, value)| Upload::Lookup { index, value }));
     for &(slice, r) in &changes.slices {
         let mut bytes = Vec::with_capacity((r.x1 - r.x0) * (r.y1 - r.y0) * 4);

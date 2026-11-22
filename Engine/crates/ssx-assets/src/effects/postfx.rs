@@ -87,6 +87,7 @@ pub struct CubeBuild {
     pub cube: ColourCube,
     pub stages: Vec<String>,
     pub needs_second_lut: bool,
+    pub strip: bool,
 }
 
 fn values(d: &FieldData) -> Vec<&Value> {
@@ -192,53 +193,84 @@ fn stacks(db: &Db, big_root: &Path) -> Result<Vec<ColourStack>> {
     Ok(out)
 }
 
+pub const TRACK_STACK: u32 = 0;
+
 pub fn build_cube(stacks: &[ColourStack], blends: &[ColourCubeBlend]) -> Result<CubeBuild> {
+    build_cube_from(stacks, blends, None)
+}
+
+pub fn build_cube_from(
+    stacks: &[ColourStack],
+    blends: &[ColourCubeBlend],
+    track: Option<&ColourCube>,
+) -> Result<CubeBuild> {
+    check_blends(stacks, blends)?;
+    let mut cube = track.cloned().unwrap_or_else(ColourCube::identity);
+    let mut stages = Vec::new();
+    for stack in stacks.iter().filter(|s| track.is_none() || s.index != TRACK_STACK) {
+        run_stack(&mut cube, stack, blends, &mut stages)?;
+    }
+    let needs_second_lut = blends.iter().any(|b| b.mode != 0 && b.weight > 0.0);
+    Ok(CubeBuild { cube, stages, needs_second_lut, strip: false })
+}
+
+pub fn track_stack_cube(stacks: &[ColourStack], blends: &[ColourCubeBlend]) -> Result<ColourCube> {
+    check_blends(stacks, blends)?;
+    let mut cube = ColourCube::identity();
+    for stack in stacks.iter().filter(|s| s.index == TRACK_STACK) {
+        run_stack(&mut cube, stack, blends, &mut Vec::new())?;
+    }
+    Ok(cube)
+}
+
+fn check_blends(stacks: &[ColourStack], blends: &[ColourCubeBlend]) -> Result<()> {
     for b in blends {
-        let stack = stacks.iter().find(|s| s.index == b.stack).with_context(|| format!("no stack {}", b.stack))?;
-        if !stack.xml.groups.iter().any(|g| g.name == b.group) {
-            bail!("stack {} has no group {:?}", stack.xml.name, b.group);
-        }
+        stacks.iter().find(|s| s.index == b.stack).with_context(|| format!("no stack {}", b.stack))?;
         if b.mode > 2 {
             bail!("ColourCubeBlend mode {} (expected 0..2)", b.mode);
         }
     }
-    let mut cube = ColourCube::identity();
-    let mut stages = Vec::new();
-    for stack in stacks {
-        for group in &stack.xml.groups {
-            let blend = blends.iter().find(|b| b.stack == stack.index && b.group == group.name && b.mode != 2);
-            let (enabled, opacity) = match blend {
-                Some(b) => {
-                    let o = ((b.weight * 255.0) as i32).clamp(0, 255) as u32;
-                    (o > 0, o)
-                }
-                None => (group.enabled, group.opacity),
-            };
-            for layer in group.layers.iter().filter(|l| enabled && l.enabled) {
-                let opacity = layer.opacity * opacity / 255;
-                if opacity == 0 {
-                    continue;
-                }
-                let kind = LayerKind::parse(layer).with_context(|| format!("{}/{}", stack.xml.name, group.name))?;
-                let blend = BlendMode::parse(&layer.blend_mode).with_context(|| {
-                    format!(
-                        "{}/{}/{}: blend mode {} is not decoded",
-                        stack.xml.name, group.name, layer.name, layer.blend_mode
-                    )
-                })?;
-                let label = format!(
-                    "{}/{}/{} ({}, {}, {opacity})",
-                    stack.xml.name, group.name, layer.name, layer.type_name, layer.blend_mode
-                );
-                if kind != LayerKind::LoadColourCube {
-                    apply_stage(&mut cube, &Stage { label: label.clone(), kind, blend, opacity });
-                    stages.push(label);
-                }
+    Ok(())
+}
+
+fn run_stack(
+    cube: &mut ColourCube,
+    stack: &ColourStack,
+    blends: &[ColourCubeBlend],
+    stages: &mut Vec<String>,
+) -> Result<()> {
+    for group in &stack.xml.groups {
+        let blend = blends.iter().find(|b| b.stack == stack.index && b.group == group.name && b.mode != 2);
+        let (enabled, opacity) = match blend {
+            Some(b) => {
+                let o = ((b.weight * 255.0) as i32).clamp(0, 255) as u32;
+                (o > 0, o)
+            }
+            None => (group.enabled, group.opacity),
+        };
+        for layer in group.layers.iter().filter(|l| enabled && l.enabled) {
+            let opacity = layer.opacity * opacity / 255;
+            if opacity == 0 {
+                continue;
+            }
+            let kind = LayerKind::parse(layer).with_context(|| format!("{}/{}", stack.xml.name, group.name))?;
+            let blend = BlendMode::parse(&layer.blend_mode).with_context(|| {
+                format!(
+                    "{}/{}/{}: blend mode {} is not decoded",
+                    stack.xml.name, group.name, layer.name, layer.blend_mode
+                )
+            })?;
+            let label = format!(
+                "{}/{}/{} ({}, {}, {opacity})",
+                stack.xml.name, group.name, layer.name, layer.type_name, layer.blend_mode
+            );
+            if kind != LayerKind::LoadColourCube {
+                apply_stage(cube, &Stage { label: label.clone(), kind, blend, opacity });
+                stages.push(label);
             }
         }
     }
-    let needs_second_lut = blends.iter().any(|b| b.mode != 0 && b.weight > 0.0);
-    Ok(CubeBuild { cube, stages, needs_second_lut })
+    Ok(())
 }
 
 pub fn load_presets(big_root: &Path, names: &[&str]) -> Result<Vec<(PostFxPreset, CubeBuild)>> {
@@ -297,6 +329,10 @@ pub fn load_preset_routed(big_root: &Path, key: u32) -> Result<PostFxPreset> {
 
 pub fn build_cube_for(big_root: &Path, blends: &[ColourCubeBlend]) -> Result<CubeBuild> {
     crate::vault_db::with_career_db(big_root, |db| build_cube(&stacks(db, big_root)?, blends))
+}
+
+pub fn load_stacks(big_root: &Path) -> Result<Vec<ColourStack>> {
+    crate::vault_db::with_career_db(big_root, |db| stacks(db, big_root))
 }
 
 pub fn stack_groups(big_root: &Path) -> Result<Vec<(u32, String, Vec<String>)>> {
@@ -462,7 +498,12 @@ mod tests {
         let full = build_cube(&stacks, &[blend]).unwrap();
         assert!(full.stages[0].ends_with("255)"), "{:?}", full.stages);
         assert!(!full.needs_second_lut);
-        let bad = ColourCubeBlend { stack: 0, mode: 0, group: "missing".into(), weight: 1.0 };
+        let missing = ColourCubeBlend { stack: 0, mode: 0, group: "missing".into(), weight: 1.0 };
+        assert_eq!(build_cube(&stacks, &[missing]).unwrap().cube, ColourCube::identity());
+        let bad = ColourCubeBlend { stack: 3, mode: 0, group: "g".into(), weight: 1.0 };
         assert!(build_cube(&stacks, &[bad]).is_err());
+        let blend = ColourCubeBlend { stack: 0, mode: 0, group: "g".into(), weight: 1.0 };
+        let over = build_cube_from(&stacks, &[blend], Some(&none.cube)).unwrap();
+        assert_eq!((over.cube, over.stages.len()), (ColourCube::identity(), 0));
     }
 }

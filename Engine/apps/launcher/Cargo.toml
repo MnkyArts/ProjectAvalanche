@@ -19,6 +19,7 @@ ssx-files.workspace = true
 ssx-core.workspace = true
 anyhow.workspace = true
 eframe.workspace = true
+gilrs.workspace = true
 rfd.workspace = true
 trash.workspace = true
 serde.workspace = true

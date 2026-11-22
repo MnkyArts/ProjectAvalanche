@@ -230,12 +230,12 @@ impl Wait {
             Wait::ObjectiveComplete(n) => (cx.complete)(n.hash) == Some(true),
             Wait::PostedEvent { event, entity } => cx.events.posted(event, entity.as_ref()),
             Wait::RemainingDistance { entity, distance } => cx
-                .ask(&format!("{entity} remaining distance"), |w| w.racer(entity, RacerQuery::RemainingDistance))
+                .ask_with(|| format!("{entity} remaining distance"), |w| w.racer(entity, RacerQuery::RemainingDistance))
                 .is_some_and(|r| r < *distance),
-            Wait::TriggerByName(n) => cx.ask(&format!("touching {n}"), |w| w.touching_name(n)).unwrap_or(false),
+            Wait::TriggerByName(n) => cx.ask_with(|| format!("touching {n}"), |w| w.touching_name(n)).unwrap_or(false),
             Wait::TriggerByGroup(m) => {
                 let m = *m;
-                cx.ask(&format!("touching group mask {m:#x}"), |w| w.touching_group(m)).unwrap_or(false)
+                cx.ask_with(|| format!("touching group mask {m:#x}"), |w| w.touching_group(m)).unwrap_or(false)
             }
             Wait::Equipped { held, .. } => *held,
             Wait::WorldEntityValue { a, cmp, b } => match (b.eval(cx), a.eval(cx)) {
@@ -252,7 +252,7 @@ impl Wait {
             Wait::ObjectiveMessage(m) => m.test(cx, dt),
             Wait::BadgeSet { badge, kind, value } => {
                 let k = *kind;
-                cx.ask(&format!("badge {badge}"), |w| w.badge_set(badge, k)) == Some(*value)
+                cx.ask_with(|| format!("badge {badge}"), |w| w.badge_set(badge, k)) == Some(*value)
             }
             Wait::Stat(s) => s.test(cx),
         }
@@ -317,11 +317,11 @@ impl ObjectiveMessageWait {
 }
 
 fn stat_kind(cx: &mut Ctx, key: &StatKey) -> u8 {
-    let what = match &key.location {
+    let what = || match &key.location {
         Some(l) => format!("stat {} @ {l}", key.name),
         None => format!("stat {}", key.name),
     };
-    match cx.ask(&what, |w| w.stat(key)) {
+    match cx.ask_with(what, |w| w.stat(key)) {
         Some(StatValue::Int(_)) => 0,
         Some(StatValue::Float(_)) => 1,
         None => 2,

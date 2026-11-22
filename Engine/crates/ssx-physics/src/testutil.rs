@@ -229,6 +229,17 @@ pub fn tuning() -> Tuning {
         uber_crash_traj_angle_max_delta: 0.1,
         carving_spray_filter_responsiveness: 0.2,
         ice_axe: crate::ice_axe::IceAxeTuning::default(),
+        surface_rumble: [0, 1].map(|_| {
+            Curve::new(vec![
+                [0.0, 0.0],
+                [0.124_355_7, 0.025_104_5],
+                [0.392_544_6, 0.359_832_5],
+                [0.557_353_3, 1.0],
+                [0.706_430_4, 1.0],
+                [0.836_03, 1.0],
+                [0.925_925_9, 1.0],
+            ])
+        }),
     };
     let queries = QueryTuning {
         cos_surface_is_horizontal_angle_threshold: 0.707_106_77,
@@ -276,6 +287,15 @@ pub fn tuning() -> Tuning {
         min_impact_speed_threshold: 0.075,
         max_impact_speed_threshold: 0.4,
         cos_angle_from_upright_for_impact_on_landing: -4.371_139e-8,
+        landing_rumble: crate::rider::LandingRumbleTuning {
+            min_speed: 0.2,
+            max_speed: 1.0,
+            min_weight: 0.4,
+            max_weight: 0.7,
+            min_time: 15.0,
+            max_time: 30.0,
+            time_curve: Curve::new(vec![[0.0, 0.0], [0.1, 1.0], [0.8, 0.5], [1.0, 0.0]]),
+        },
     };
     Tuning {
         cp_min: max.clone(),
@@ -381,6 +401,15 @@ pub fn avalanche() -> crate::avalanche::AvalancheTuning {
         delay_reentry: 60.0,
         reentry_multiplier: c(&[[0.0, 10.0], [75.4619, 4.093_125_3], [127.585_075, 2.496_673], [240.0, 1.0]]),
         tumble_damage_multiplier: 2.0,
+        rumble: [0, 1].map(|_| {
+            c(&[
+                [0.0, 0.0],
+                [0.478_559_8, 0.037_656_8],
+                [1.914_239_2, 0.196_652_7],
+                [2.936_488_2, 0.514_644_3],
+                [3.5, 1.0],
+            ])
+        }),
     };
     crate::avalanche::AvalancheTuning {
         surface_epsilon: 0.01,

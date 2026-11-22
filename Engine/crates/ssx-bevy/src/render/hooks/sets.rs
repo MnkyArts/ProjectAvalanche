@@ -98,9 +98,11 @@ pub fn kinds_of(module: &str) -> Option<&'static [Kind]> {
     let rel = module.strip_prefix(&format!("{CRATE}/")).expect("a crate module");
     Some(match rel {
         "render/lighting/game_vertex.wesl" => &[Kind::MainVertex],
+        "render/terrain/proxy_vertex.wesl" => &[Kind::MainVertex],
         "render/terrain/terrain.wesl"
         | "render/objects/object.wesl"
         | "render/objects/foreground.wesl"
+        | "render/terrain/proxy.wesl"
         | "ride/heli_translucent.wesl"
         | "rider/character.wesl"
         | "rider/ghost.wesl"
@@ -160,7 +162,6 @@ pub fn base_defs(kind: Kind, binding_arrays: bool) -> Vec<ShaderDefVal> {
             flag("PREPASS_PIPELINE"),
             flag("VERTEX_OUTPUT_INSTANCE_INDEX"),
             flag("DEPTH_PREPASS"),
-            flag("NORMAL_PREPASS"),
             flag("VIEW_PROJECTION_NONSTANDARD"),
             uint("MATERIAL_BIND_GROUP", 3),
             uint("SSX_LIGHT_BINDING", 100),
@@ -369,12 +370,12 @@ pub fn module_model(path: &str, kind: Kind, mut flags: BTreeSet<String>) -> Modu
             "NORMAL_PREPASS_OR_DEFERRED_PREPASS",
             "MOTION_VECTOR_PREPASS_OR_DEFERRED_PREPASS",
             "PREPASS_FRAGMENT",
-            "NORMAL_PREPASS",
             "MOTION_VECTOR_PREPASS",
             "UNCLIPPED_DEPTH_ORTHO_EMULATION",
         ] {
             flags.remove(derived);
         }
+        flags.insert("NORMAL_PREPASS".to_string());
     }
     let contract: Vec<String> = mesh_contract(path).iter().map(|c| c.to_string()).collect();
     for c in &contract {
@@ -394,8 +395,14 @@ pub fn combination(module: &Module, binding_arrays: bool, bits: u64, compressed:
         }
     }
     if module.kind == Kind::CameraPrepass {
-        on.insert("NORMAL_PREPASS_OR_DEFERRED_PREPASS");
-        on.insert("PREPASS_FRAGMENT");
+        let normal = on.contains("NORMAL_PREPASS");
+        if !normal && (on.contains("VERTEX_NORMALS") || on.contains("VERTEX_TANGENTS")) {
+            return None;
+        }
+        if normal {
+            on.insert("NORMAL_PREPASS_OR_DEFERRED_PREPASS");
+            on.insert("PREPASS_FRAGMENT");
+        }
     }
     if module.kind == Kind::ShadowPrepass {
         let normal = on.contains("NORMAL_PREPASS");
@@ -411,6 +418,11 @@ pub fn combination(module: &Module, binding_arrays: bool, bits: u64, compressed:
         if normal || on.contains("MOTION_VECTOR_PREPASS") || on.contains("UNCLIPPED_DEPTH_ORTHO_EMULATION") {
             on.insert("PREPASS_FRAGMENT");
         }
+    }
+    let produced =
+        |flag: &str, mesh: &str| !on.contains(flag) || (on.contains("MOTION_VECTOR_PREPASS") && on.contains(mesh));
+    if !produced("HAS_PREVIOUS_SKIN", "SKINNED") || !produced("HAS_PREVIOUS_MORPH", "MORPH_TARGETS") {
+        return None;
     }
     if on.contains("VERTEX_UVS_A") || on.contains("VERTEX_UVS_B") {
         on.insert("VERTEX_UVS");

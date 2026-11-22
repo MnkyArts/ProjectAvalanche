@@ -2,6 +2,7 @@ mod blocklist;
 mod common;
 mod data_guard;
 mod discovery;
+mod frames;
 mod http;
 mod ipv6;
 mod join;

@@ -2,15 +2,16 @@ use crate::render::reload::Recipe;
 use std::path::Path;
 
 use anyhow::{Result, ensure};
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{RenderAssetUsages, uuid_handle};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::{
     App, Assets, Commands, FixedUpdate, Handle, Image, IntoScheduleConfigs, Plugin, Reflect, Res, ResMut, Resource,
-    StandardMaterial, Update, Vec3, Vec4, warn,
+    Update, Vec3, Vec4, World, warn,
 };
 use bevy::render::render_resource::{
     Extent3d, ShaderType, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::load_shader_library;
 
 use crate::render::lighting::GameLighting;
@@ -112,6 +113,72 @@ impl GameLightUniform {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+struct RimFillUniform {
+    rim_color: Vec4,
+    rim: Vec4,
+    rim_dir: Vec4,
+    fill_color: Vec4,
+    fill_dir: Vec4,
+}
+
+impl RimFillUniform {
+    fn from_preset(l: &GameLighting) -> Self {
+        let (f, v) = (|n: &str| l.f(n), |n: &str| l.v(n));
+        RimFillUniform {
+            rim_color: v("rimColor").truncate().extend(f("rimIntensity")),
+            rim: Vec4::new(f("rimFalloff"), f("rimSpread"), f("rimOffsetFalloff"), f("rimOffsetAmount")),
+            rim_dir: l.rim_offset_dir.extend(f("rimMaxShadowAttenuation")),
+            fill_color: v("fillColor").truncate().extend(f("fillIntensity")),
+            fill_dir: l.fill.extend(f("fillMaxShadowAttenuation")),
+        }
+    }
+
+    fn viewer_default() -> Self {
+        RimFillUniform {
+            rim_dir: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            fill_dir: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+struct LevelLightUniform {
+    light: GameLightUniform,
+    rim_fill: RimFillUniform,
+}
+
+impl LevelLightUniform {
+    fn of(lighting: Option<&GameLighting>) -> Self {
+        let Some(l) = lighting else {
+            return LevelLightUniform {
+                light: GameLightUniform::viewer_default(),
+                rim_fill: RimFillUniform::viewer_default(),
+            };
+        };
+        LevelLightUniform { light: GameLightUniform::from_preset(l), rim_fill: RimFillUniform::from_preset(l) }
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut out = bevy::render::render_resource::encase::StorageBuffer::new(Vec::new());
+        if let Err(e) = out.write(self) {
+            warn!("level light constants: {e}");
+        }
+        out.into_inner()
+    }
+}
+
+// PORT(choice): the level's light constants of the frame for the materials that do not bind the local lights' buffer
+// (the background mountains, the terrain proxy, the helicopter's translucent parts) and the characters' rim and fill
+// terms are one storage buffer every such material binds (Bevy's `ShaderBuffer`: a change of the same size is written
+// into the GPU buffer in place, the materials' bind groups stay); a lighting cross-fade writes its 256 bytes once a
+// frame. Before, each material kept its own uniform and every frame of a fade changed all of them, so Bevy prepared
+// every one again (a new uniform buffer and bind group each). The console kept these values once, as the shader
+// parameters of the "lighting" scope that every effect reads (`StaticLightingUpdater_ctor` 0x82FE6EB0 registers them
+// through `ShaderParamScope_RegisterParameter` 0x82A90978).
+pub const LEVEL_LIGHT: Handle<ShaderBuffer> = uuid_handle!("2aec93a1-ab3f-4a77-827b-dbde04327d43");
+
 pub fn missing_fields(l: &GameLighting) -> Vec<&'static str> {
     let floats = FLOAT_FIELDS.into_iter().filter(|n| l.preset.float(n).is_none());
     floats.chain(VECTOR_FIELDS.into_iter().filter(|n| l.preset.vector(n).is_none())).collect()
@@ -152,63 +219,52 @@ impl Plugin for GameLightingPlugin {
     fn build(&self, app: &mut App) {
         use crate::render::lighting::fade::{self, LightingFadeSet};
         load_shader_library!(app, "game_lighting.wesl");
+        load_shader_library!(app, "game_position.wesl");
+        load_shader_library!(app, "prepass_output.wesl");
         bevy::asset::embedded_asset!(app, "game_vertex.wesl");
         app.add_systems(crate::shell::level::LevelPreStartup, setup_light_assets);
         crate::shell::level::scoped::<GameLightAssets>(app);
+        crate::shell::level::scoped::<PendingReflection>(app);
         app.add_systems(FixedUpdate, fade::read_ride.after(crate::ride::RideStepSet))
             .add_systems(
                 Update,
                 (fade::read_ride, fade::frame).chain().after(crate::ride::RideStepSet).in_set(LightingFadeSet),
             )
-            .add_systems(
-                Update,
-                (
-                    follow_uniform,
-                    (
-                        follow_light::<crate::render::objects::foreground::ForegroundExtension>,
-                        follow_light::<crate::ride::helicopter::HeliTranslucentExtension>,
-                    ),
-                )
-                    .chain()
-                    .after(LightingFadeSet)
-                    .run_if(fade::faded),
-            );
+            .add_systems(Update, follow_lighting.after(LightingFadeSet).run_if(fade::faded));
     }
 }
 
-pub trait GameLit: bevy::pbr::MaterialExtension {
-    fn light_mut(&mut self) -> &mut GameLightUniform;
-}
-
-macro_rules! game_lit {
-    ($($extension:ty),+) => {
-        $(impl GameLit for $extension {
-            fn light_mut(&mut self) -> &mut GameLightUniform {
-                &mut self.light
-            }
-        })+
-    };
-}
-game_lit!(crate::render::objects::foreground::ForegroundExtension, crate::ride::helicopter::HeliTranslucentExtension);
-
-fn follow_uniform(lighting: Res<GameLighting>, mut assets: ResMut<GameLightAssets>) {
-    assets.uniform = GameLightUniform::from_preset(&lighting);
-}
-
-fn follow_light<E: GameLit>(
-    assets: Res<GameLightAssets>,
-    materials: Option<ResMut<Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>>>,
+fn follow_lighting(
+    lighting: Res<GameLighting>,
+    assets: Option<ResMut<GameLightAssets>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    let Some(mut materials) = materials else { return };
-    for (_, m) in materials.iter_mut() {
-        *m.extension.light_mut() = assets.uniform;
+    if let Some(mut assets) = assets {
+        assets.uniform = GameLightUniform::from_preset(&lighting);
+    }
+    write_level_light(&mut buffers, &LevelLightUniform::of(Some(&lighting)));
+}
+
+fn write_level_light(buffers: &mut Assets<ShaderBuffer>, level: &LevelLightUniform) {
+    let bytes = level.bytes();
+    if let Some(mut buffer) = buffers.get_mut(&LEVEL_LIGHT) {
+        buffer.clear();
+        buffer.extend_from_slice(&bytes);
+        return;
+    }
+    if let Err(e) = buffers.insert(LEVEL_LIGHT.id(), ShaderBuffer::new(bytes, RenderAssetUsages::default())) {
+        warn!("level light constants: {e}");
     }
 }
 
 pub fn refresh_light_assets(world: &mut bevy::prelude::World) {
     let Some(lighting) = world.get_resource::<GameLighting>() else { return };
     let uniform = GameLightUniform::from_preset(lighting);
+    let level = LevelLightUniform::of(Some(lighting));
     let cube = reflection_image(lighting);
+    if let Some(mut buffers) = world.get_resource_mut::<Assets<ShaderBuffer>>() {
+        write_level_light(&mut buffers, &level);
+    }
     let Some(mut assets) = world.get_resource_mut::<GameLightAssets>() else { return };
     assets.uniform = uniform;
     let handle = assets.reflect_cube.clone();
@@ -231,7 +287,62 @@ fn reflection_image(l: &GameLighting) -> Option<Image> {
     decode_cube(root, id).inspect_err(|e| warn!("reflection cube: {e:#}")).ok()
 }
 
-fn setup_light_assets(mut commands: Commands, lighting: Option<Res<GameLighting>>, mut images: ResMut<Assets<Image>>) {
+pub struct LoadedReflection {
+    cube: crate::render::uploads::LevelImage,
+    note: String,
+}
+
+impl LoadedReflection {
+    pub fn queue_image(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        self.cube.queue(uploads, images);
+    }
+}
+
+#[derive(Resource)]
+struct PendingReflection(Option<LoadedReflection>);
+
+pub fn insert_reflection(world: &mut World, loaded: LoadedReflection) {
+    world.insert_resource(PendingReflection(Some(loaded)));
+}
+
+// PORT(choice): the level's reflection cube is decoded on its loading thread beside the local lights, not in the
+// level's startup on the game thread, where the light assets took 6-33 ms of the spawn frame (alps0101, the heli
+// drop, Mount Eddie; development laptop, `trace_chrome`). It reads the same texture after the session's content
+// policy is set; the console's loading is not decoded.
+pub fn load_reflection(l: &GameLighting) -> LoadedReflection {
+    let black_cube = || solid_cube([0, 0, 0, 255]);
+    let sky_cube = match &l.level.sky {
+        ssx_assets::content::level::LevelSky::Cubemap { id, sky, .. } if sky.def.reflection => {
+            sky.cube.as_ref().map(|c| (id.clone(), crate::render::sky::package::reflection_faces(c, &sky.def)))
+        }
+        _ => None,
+    };
+    let ((cube, recipe), note) = match (&l.reflect_cube, sky_cube) {
+        (_, Some((id, (size, mips, faces)))) => ((cube_image(size, mips, faces), None), format!("the sky {id}")),
+        (Some((big_root, id)), None) => match decode_cube(big_root, id) {
+            Ok(image) => {
+                let (root, cube_id) = (big_root.clone(), id.clone());
+                let recipe = Recipe::new(vec![id.clone()], move || decode_cube(&root, &cube_id));
+                ((image, Some(recipe)), stem(id))
+            }
+            Err(e) => {
+                warn!("reflection cube: {e:#}");
+                ((black_cube(), None), format!("{} undecodable (no reflection)", stem(id)))
+            }
+        },
+        (None, None) => ((black_cube(), None), "none (no reflection)".to_string()),
+    };
+    LoadedReflection { cube: crate::render::uploads::LevelImage::built(cube, recipe), note }
+}
+
+fn setup_light_assets(
+    mut commands: Commands,
+    lighting: Option<Res<GameLighting>>,
+    pending: Option<ResMut<PendingReflection>>,
+    mut images: ResMut<Assets<Image>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
+) {
+    write_level_light(&mut buffers, &LevelLightUniform::of(lighting.as_deref()));
     let black_cube = || solid_cube([0, 0, 0, 255]);
     let (uniform, cube, summary) = match lighting.as_deref() {
         Some(l) => {
@@ -239,41 +350,20 @@ fn setup_light_assets(mut commands: Commands, lighting: Option<Res<GameLighting>
             if !missing.is_empty() {
                 warn!("{}: lighting fields missing, read as 0: {missing:?}", l.preset.name);
             }
-            let sky_cube = match &l.level.sky {
-                ssx_assets::content::level::LevelSky::Cubemap { id, sky, .. } if sky.def.reflection => {
-                    sky.cube.as_ref().map(|c| (id.clone(), crate::render::sky::package::reflection_faces(c, &sky.def)))
-                }
-                _ => None,
-            };
-            let (cube, cube_note) = match (&l.reflect_cube, sky_cube) {
-                (_, Some((id, (size, mips, faces)))) => {
-                    ((cube_image(size, mips, faces), None), format!("the sky {id}"))
-                }
-                (Some((big_root, id)), None) => match decode_cube(big_root, id) {
-                    Ok(image) => {
-                        let (root, cube_id) = (big_root.clone(), id.clone());
-                        let recipe = Recipe::new(vec![id.clone()], move || decode_cube(&root, &cube_id));
-                        ((image, Some(recipe)), stem(id))
-                    }
-                    Err(e) => {
-                        warn!("reflection cube: {e:#}");
-                        ((black_cube(), None), format!("{} undecodable (no reflection)", stem(id)))
-                    }
-                },
-                (None, None) => ((black_cube(), None), "none (no reflection)".to_string()),
-            };
+            let loaded = pending.and_then(|mut p| p.0.take()).unwrap_or_else(|| load_reflection(l));
+            let (cube, cube_note) = (loaded.cube, loaded.note);
             let unset = if missing.is_empty() { String::new() } else { format!(" | unset (0): {}", missing.join(" ")) };
             (GameLightUniform::from_preset(l), cube, format!("reflectCubeTexture {cube_note}{unset}"))
         }
         None => (
             GameLightUniform::viewer_default(),
-            (black_cube(), None),
+            crate::render::uploads::LevelImage::built(black_cube(), None),
             "no lighting preset: VIEWER DEFAULT key light, no fog/sparkle/reflection".to_string(),
         ),
     };
     commands.insert_resource(GameLightAssets {
         uniform,
-        reflect_cube: crate::render::reload::add(&mut images, cube.0, cube.1),
+        reflect_cube: cube.into_handle(&mut images),
         white: images.add(solid_2d([255; 4], TextureFormat::Rgba8Unorm)),
         flat_normal: images.add(solid_2d([128, 128, 0, 0], TextureFormat::Rg8Unorm)),
         neutral_rgb: images.add(solid_2d([128, 128, 128, 255], TextureFormat::Rgba8Unorm)),

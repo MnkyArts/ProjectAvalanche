@@ -2,10 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use bevy::prelude::{UVec2, info, warn};
+use bevy::prelude::{UVec2, Vec4, info, warn};
 use ssx_assets::particles::{self, BASE_SNOW_SPRAY, LOD_SNOW_SPRAY};
 
-use super::{ParticleTexture, ParticleWorld, SlotEffect, Spray, SunSlot, TrailSlot, rider, tombstone};
+use super::{
+    ParticleState, ParticleTexture, ParticleWorld, Scope, SlotEffect, Spray, SunSlot, TrailSlot, rider, tombstone,
+};
 use crate::particles::sim::{EffectInstance, Rng, SetArena};
 use crate::particles::spray::SnowSprayDriver;
 use crate::particles::track::{DefCache, TrackEffects};
@@ -18,17 +20,19 @@ pub(super) fn build(
     ride: Option<&Ride>,
     lighting: Option<&crate::render::lighting::GameLighting>,
     avalanche: Option<&crate::render::avalanche::AvalancheScene>,
-) -> ParticleWorld {
+    scope: Scope,
+) -> ParticleState {
     let t0 = std::time::Instant::now();
-    let mut world = ParticleWorld {
+    let all = scope == Scope::All;
+    let mut world = ParticleState {
         spray: None,
         bot_sprays: Vec::new(),
         live_sprays: Default::default(),
         sun: None,
         rider: None,
-        rider_tried: false,
+        rider_tried: !all,
         heli: None,
-        heli_tried: false,
+        heli_tried: !all,
         defs: DefCache::default(),
         texture_names: Vec::new(),
         trails: Vec::new(),
@@ -38,6 +42,7 @@ pub(super) fn build(
         weather: WeatherManager::default(),
         arena: SetArena::default(),
         rng: Rng::default(),
+        snapshots: Default::default(),
         clock: 0.0,
         last_render_time: 0.0,
         frame: 0,
@@ -45,20 +50,27 @@ pub(super) fn build(
         last_step: 0,
         pending: 0.0,
         textures: Default::default(),
-        registry: Default::default(),
-        registry_snapshot: None,
+        registry: [Vec4::ZERO; crate::particles::sim::REGISTRY_NAMES.len()],
+        unported: Default::default(),
         light: None,
         level: lighting.map(|l| l.level.clone()),
+        switches: super::Switches::from_env(),
     };
     let (mut defs, mut names) = (DefCache::default(), Vec::new());
-    match build_spray(root, &mut world.arena, &mut defs, &mut names, BASE_SNOW_SPRAY, false) {
-        _ if crate::render::post::env_is("SSX_SNOW_SPRAY", "off") => {
-            info!("particles: no snow spray (SSX_SNOW_SPRAY=off)")
+    if !all {
+        info!(
+            "particles: Particles off: tombstones, geotag bursts, avalanche trails, course markers, death-pit clouds"
+        );
+    } else {
+        match build_spray(root, &mut world.arena, &mut defs, &mut names, BASE_SNOW_SPRAY, false) {
+            _ if crate::render::post::env_is("SSX_SNOW_SPRAY", "off") => {
+                info!("particles: no snow spray (SSX_SNOW_SPRAY=off)")
+            }
+            Ok(s) => world.spray = Some(s),
+            Err(e) => warn!("particles: snow spray unavailable: {e:#}"),
         }
-        Ok(s) => world.spray = Some(s),
-        Err(e) => warn!("particles: snow spray unavailable: {e:#}"),
     }
-    for _ in ride.as_ref().and_then(|r| r.session.bots.as_ref()).map_or(&[][..], |b| &b.bots[..]) {
+    for _ in ride.as_ref().and_then(|r| r.session.bots.as_ref()).filter(|_| all).map_or(&[][..], |b| &b.bots[..]) {
         match build_spray(root, &mut world.arena, &mut defs, &mut names, LOD_SNOW_SPRAY, true) {
             Ok(s) => world.bot_sprays.push(s),
             Err(e) => {
@@ -73,7 +85,7 @@ pub(super) fn build(
     }
     // PORT(choice): a live racer has the bots' `lod_snowspray` (every `BotSnowboarderRef`'s component) because it is
     // drawn as a bot (racer kind 1 or 2); a port feature: the original has no live racers.
-    if ride.is_some_and(|r| r.live.is_some()) && !crate::render::post::env_is("SSX_SNOW_SPRAY", "off") {
+    if all && ride.is_some_and(|r| r.live.is_some()) && !crate::render::post::env_is("SSX_SNOW_SPRAY", "off") {
         let built = particles::load_snow_spray_files(root, LOD_SNOW_SPRAY).and_then(|loaded| {
             let spray = spray_of(&loaded.set, root, &mut world.arena, &mut defs, &mut names, true)?;
             Ok((loaded.set, spray))
@@ -93,7 +105,7 @@ pub(super) fn build(
         if track.is_none() {
             info!("particles: a map's new track: no track effects, tombstones or track lights");
         }
-        match track.map(|t| TrackEffects::load(root, t, drop, &mut world.arena, &mut defs, &mut names)) {
+        match track.map(|t| TrackEffects::load(root, t, drop, scope, &mut world.arena, &mut defs, &mut names)) {
             None => {}
             Some(_) if crate::render::post::env_is("SSX_TRACK_FX", "off") => {
                 info!("particles: no track effects (SSX_TRACK_FX=off)")
@@ -112,7 +124,7 @@ pub(super) fn build(
         if let Some(m) = ride.and_then(|r| r.map.as_ref()).filter(|m| !m.placed.is_empty())
             && !crate::render::post::env_is("SSX_TRACK_FX", "off")
         {
-            match world.track.add_map(root, &m.placed, &mut world.arena, &mut defs, &mut names) {
+            match world.track.add_map(root, &m.placed, scope, &mut world.arena, &mut defs, &mut names) {
                 Ok(n) => info!("particles: {n} effect slots of the map's {} placed disc objects", m.placed.len()),
                 Err(e) => warn!("particles: the map's placed objects' effects unavailable: {e:#}"),
             }
@@ -131,7 +143,7 @@ pub(super) fn build(
             Some(Ok(light)) => world.light = Some(light),
             Some(Err(e)) => warn!("particles: track lights unavailable: {e:#}"),
         }
-        let sun = l.sun_drawn() && !crate::render::post::env_is("SSX_SUN", "off");
+        let sun = all && l.sun_drawn() && !crate::render::post::env_is("SSX_SUN", "off");
         if let Some(node) = l.preset.sun_node.as_ref().filter(|_| sun) {
             match defs.node(root, node) {
                 Ok((def, _)) => {
@@ -261,19 +273,30 @@ fn load_texture(
 }
 
 pub(super) fn load_rider_effects(
-    w: &mut ParticleWorld,
+    w: &mut ParticleState,
     root: &std::path::Path,
     track: Option<&str>,
     rig: &RiderRig,
     ride: &Ride,
 ) {
+    let (_, graph, _) = rig.anim.posed();
+    load_rider_effects_of(w, root, track, &rig.summary, &ride.loadout, graph);
+}
+
+pub(super) fn load_rider_effects_of(
+    w: &mut ParticleState,
+    root: &std::path::Path,
+    track: Option<&str>,
+    summary: &str,
+    loadout: &ssx_assets::character::Loadout,
+    graph: &ssx_formats::crsf::SceneGraph,
+) {
     w.rider_tried = true;
     if crate::render::post::env_is("SSX_RIDER_FX", "off") {
         return;
     }
-    let name = rig.summary.split_whitespace().next().unwrap_or(ssx_assets::character::DEFAULT_CHARACTER);
-    let loadout = ride.loadout.clone();
-    let (_, graph, _) = rig.anim.posed();
+    let name = summary.split_whitespace().next().unwrap_or(ssx_assets::character::DEFAULT_CHARACTER);
+    let loadout = loadout.clone();
     let mut names = std::mem::take(&mut w.texture_names);
     let before = names.len();
     match rider::RiderEffects::load(root, track, name, &loadout, graph, &mut w.arena, &mut w.defs, &mut names) {
@@ -296,15 +319,24 @@ pub(super) fn load_rider_effects(
 }
 
 pub(super) fn load_heli_effects(
-    w: &mut ParticleWorld,
+    w: &mut ParticleState,
     root: &std::path::Path,
     heli: &crate::ride::helicopter::HeliVisual,
+) {
+    load_heli_effects_of(w, root, &heli.particle_nodes, heli.rig());
+}
+
+pub(super) fn load_heli_effects_of(
+    w: &mut ParticleState,
+    root: &std::path::Path,
+    particle_nodes: &[ssx_assets::particles::ParticleNode],
+    rig: &ssx_formats::crsf::SceneGraph,
 ) {
     w.heli_tried = true;
     let mut names = std::mem::take(&mut w.texture_names);
     let before = names.len();
-    let nodes = heli.particle_nodes.iter().map(|n| ("heli".to_owned(), n.clone()));
-    match rider::RiderEffects::from_nodes(root, nodes, heli.rig(), &mut w.arena, &mut w.defs, &mut names) {
+    let nodes = particle_nodes.iter().map(|n| ("heli".to_owned(), n.clone()));
+    match rider::RiderEffects::from_nodes(root, nodes, rig, &mut w.arena, &mut w.defs, &mut names) {
         Ok(r) => {
             let unbound: Vec<&str> =
                 r.slots.iter().filter(|s| s.joint.is_none()).map(|s| s.node.joint_name.as_str()).collect();
@@ -322,10 +354,11 @@ pub(super) fn load_heli_effects(
 }
 
 pub(crate) fn reload_textures(
-    w: &mut ParticleWorld,
+    world: &mut ParticleWorld,
     root: &std::path::Path,
     touched: impl Fn(&ssx_content::ContentId) -> bool,
 ) -> usize {
+    let Some(w) = world.0.settle() else { return 0 };
     let mut n = 0;
     let all: Vec<ParticleTexture> = w
         .textures
@@ -351,7 +384,7 @@ pub(crate) fn reload_textures(
     n
 }
 
-pub(super) fn load_new_textures(w: &mut ParticleWorld, root: &std::path::Path, before: usize) {
+pub(super) fn load_new_textures(w: &mut ParticleState, root: &std::path::Path, before: usize) {
     if w.texture_names.len() <= before {
         return;
     }

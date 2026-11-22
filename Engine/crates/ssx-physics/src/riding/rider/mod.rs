@@ -51,12 +51,14 @@ pub mod wingsuit_flow;
 mod carving;
 mod graph_io;
 mod ride;
+mod rumble;
 mod spq;
 mod step;
 
 pub use carving::*;
 use graph_io::*;
 use ride::*;
+pub use rumble::{CarvingRumbleInputs, LandingRumbleTuning, PadRumble, RumbleSources};
 pub use spq::*;
 pub use step::*;
 
@@ -241,12 +243,14 @@ pub struct RiderState {
     pub get_going: Option<GetGoing>,
     pub heli_trick: Option<heli_trick::HeliTrick>,
     pub attachment: Option<crate::driver::AttachmentDriver>,
+    pub pin: Option<crate::driver::PinTrajectoryDriver>,
     pub target_animatable: Option<crate::query::Animatable>,
     pub queued_queries: Vec<crate::query::QueryTask>,
     pub heli: crate::helicopter::interaction::RiderHeliStates,
     pub heli_interaction_allowed: bool,
     pub ground_ray_query_enabled: bool,
     pub janked_pin: Option<(Vec3, Quat)>,
+    pub rumble: PadRumble,
     pub grind: grind::GrindRider,
     pub death: DeathState,
     pub start: Option<LevelStart>,
@@ -434,12 +438,14 @@ impl RiderState {
             get_going: None,
             heli_trick: None,
             attachment: None,
+            pin: None,
             target_animatable: None,
             queued_queries: Vec::new(),
             heli: crate::helicopter::interaction::RiderHeliStates::default(),
             heli_interaction_allowed: true,
             ground_ray_query_enabled: true,
             janked_pin: None,
+            rumble: PadRumble::default(),
             grind: grind::GrindRider::default(),
             death: DeathState::default(),
             start: None,
@@ -515,6 +521,12 @@ impl RiderState {
         self.avalanche.switches = from.avalanche.switches;
         self.heli_interaction_allowed = from.heli_interaction_allowed;
         self.ground_ray_query_enabled = from.ground_ray_query_enabled;
+        self.rumble = from.rumble;
+    }
+
+    pub fn hold_standard_r1(&mut self, held: bool) {
+        self.wingsuit.pad_r1 = held;
+        self.survival.oxygen_pad.use_oxygen = held;
     }
 
     pub fn carry_controller_state(&mut self, from: &Self) {

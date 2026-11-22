@@ -178,6 +178,7 @@ pub struct CarvingAvalancheTuning {
     pub delay_reentry: f32,
     pub reentry_multiplier: Curve,
     pub tumble_damage_multiplier: f32,
+    pub rumble: [Curve; 2],
 }
 
 impl CarvingAvalancheTuning {
@@ -199,6 +200,7 @@ impl CarvingAvalancheTuning {
             delay_reentry: a.f32("AvalancheDelayReEntryTimer")?,
             reentry_multiplier: a.curve("AvalancheReEntryValueThresholdMultiplierCurve")?,
             tumble_damage_multiplier,
+            rumble: [a.curve("AvalancheRumbleMotor0Curve")?, a.curve("AvalancheRumbleMotor1Curve")?],
         })
     }
 }

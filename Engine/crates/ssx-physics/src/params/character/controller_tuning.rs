@@ -81,6 +81,7 @@ pub struct CarvingTuning {
     pub uber_crash_traj_angle_max_delta: f32,
     pub carving_spray_filter_responsiveness: f32,
     pub ice_axe: crate::ice_axe::IceAxeTuning,
+    pub surface_rumble: [Curve; 2],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -181,6 +182,7 @@ impl CarvingTuning {
             uber_crash_traj_angle_max_delta: a.f32("UberCrashTrajAngleMaxDelta")?,
             carving_spray_filter_responsiveness: a.f32("CarvingSprayFilterResponsiveness")?,
             ice_axe: crate::ice_axe::IceAxeTuning::load(&a.asset("IceAxeProperties")?)?,
+            surface_rumble: [a.curve("SurfaceRumbleMotor0Curve")?, a.curve("SurfaceRumbleMotor1Curve")?],
         })
     }
 }
@@ -225,6 +227,7 @@ pub struct QueryTuning {
     pub min_impact_speed_threshold: f32,
     pub max_impact_speed_threshold: f32,
     pub cos_angle_from_upright_for_impact_on_landing: f32,
+    pub landing_rumble: crate::rider::LandingRumbleTuning,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -308,6 +311,15 @@ impl Tuning {
             min_impact_speed_threshold: q.f32("MinImpactSpeedThreshold")?,
             max_impact_speed_threshold: q.f32("MaxImpactSpeedThreshold")?,
             cos_angle_from_upright_for_impact_on_landing: q.f32("CosAngleFromUprightForImpactOnLanding")?,
+            landing_rumble: crate::rider::LandingRumbleTuning {
+                min_speed: q.f32("MinLandingSpeedForRumble")?,
+                max_speed: q.f32("MaxLandingSpeedForRumble")?,
+                min_weight: q.f32("MinLandingRumbleWeight")?,
+                max_weight: q.f32("MaxLandingRumbleWeight")?,
+                min_time: q.f32("MinLandingRumbleTime")?,
+                max_time: q.f32("MaxLandingRumbleTime")?,
+                time_curve: q.curve("LandingRumbleTimeCurveAsset")?,
+            },
         };
         let p = bundle.view("PlayerUpdateSceneOp", "PlayerUpdateSceneOpAsset")?;
         let player = PlayerTuning {

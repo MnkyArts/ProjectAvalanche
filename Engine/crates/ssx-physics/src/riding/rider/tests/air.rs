@@ -295,6 +295,28 @@ fn uber_crash_recovers_after_a_stop_and_a_hop() {
 }
 
 #[test]
+fn a_dead_rider_stays_down_after_an_uber_crash() {
+    let w = world(plane(3000.0, 0.0));
+    let mut s = moving(&w, Vec3::new(0.0, 1.0, -2000.0), Vec3::Z, 30.0 / KMH_PER_M_PER_TICK);
+    s.landing = crate::landing::LandingState { uber_crash: true, ..Default::default() };
+    s.uber_trigger = true;
+    s.tricks.ticks_since_sig_held = 100.0;
+    s.survival.health = 0.0;
+    let mut getting_up = None;
+    for i in 0..400 {
+        step(&mut s, &w, &Input { steer: 1.0, ..Input::default() }, DT_TICKS);
+        assert!(!matches!(s.landing.uber_recovery, UberRecovery::Hop(_)), "no hop (step {i})");
+        if getting_up.is_none() && matches!(s.landing.uber_recovery, UberRecovery::GettingUp(_)) {
+            getting_up = Some(i);
+            assert!(s.board_particle.stay_dead, "the dead loops picked");
+        }
+    }
+    let up = getting_up.expect("the slide ends with a stop request");
+    assert!((400 - up) as f32 * DT_TICKS > 2.0 * 110.0, "long past the get-up's tick 110: from step {up}");
+    assert!(s.landing.uber_crash && s.board_particle.enabled && s.state == RideState::Riding);
+}
+
+#[test]
 fn a_held_signature_crashes_twice_more_on_the_recovery_hops() {
     let w = world(plane(3000.0, 0.0));
     let mut s = moving(&w, Vec3::new(0.0, 1.0, -2000.0), Vec3::Z, 30.0 / KMH_PER_M_PER_TICK);

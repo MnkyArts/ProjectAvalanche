@@ -359,6 +359,7 @@ impl Controller for PassInst {
         gs.audio_tags.append(&mut local.audio_tags);
         gs.drivers.append(&mut local.drivers);
         gs.queries.append(&mut local.queries);
+        gs.pins.append(&mut local.pins);
     }
     fn pose(&self, env: &Env, gs: &GameState, out: &mut AnimPose) {
         if let Some(s) = &self.sub {
@@ -455,6 +456,7 @@ mod tests {
             game_tags: Vec::new(),
             drivers: Vec::new(),
             queries: Vec::new(),
+            pins: Vec::new(),
         };
         g.ctrls.push(("seq".into(), seq));
         let rig = crate::anim_pose::PoseRig::new(&ssx_formats::crsf::SceneGraph { nodes: Vec::new() }, &[], &[]);
@@ -507,6 +509,7 @@ mod tests {
             game_tags: Vec::new(),
             drivers: Vec::new(),
             queries: Vec::new(),
+            pins: Vec::new(),
         };
         g.ctrls.push(("seq".into(), seq));
         let rig = crate::anim_pose::PoseRig::new(&ssx_formats::crsf::SceneGraph { nodes: Vec::new() }, &[], &[]);
@@ -544,6 +547,7 @@ mod tests {
             game_tags: Vec::new(),
             drivers: Vec::new(),
             queries: Vec::new(),
+            pins: Vec::new(),
         };
         g.ctrls.push(("seq".into(), seq));
         let node = |n: &str| ssx_formats::crsf::SceneNode {

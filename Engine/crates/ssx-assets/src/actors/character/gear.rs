@@ -15,21 +15,28 @@ pub fn equipped_parts(
     loadout: &Loadout,
     rig: &SceneGraph,
 ) -> Result<(EquippedSlots, Vec<String>)> {
-    let (equipped, lamp_accessory) = equipment_refs(big_root, name, loadout)?;
+    let equipment = equipment_refs(big_root, name, loadout)?;
     let mut problems = Vec::new();
     let mut walked: Vec<(String, Option<Outfit>)> = Vec::new();
     crate::vault_db::with_level_db(big_root, track, |db| {
-        for g in &GEAR_SLOTS {
-            let slot = g.field.to_lowercase();
-            match slot_after_loadout(g, equipped.get(&g.item).copied()) {
+        let after: Vec<(String, SlotAfterLoadout)> = GEAR_SLOTS
+            .iter()
+            .map(|g| (g.field.to_lowercase(), slot_after_loadout(g, equipment.refs.get(&g.item).copied())))
+            .collect();
+        let mut copies = Outfit::new(String::new());
+        if let Some(id) = equipment.board_id {
+            let roots: Vec<(u32, u32)> = after
+                .iter()
+                .filter_map(|(_, a)| if let SlotAfterLoadout::Equipped(c, k) = *a { Some((c, k)) } else { None })
+                .collect();
+            override_board_id(db, &roots, id, &mut copies)?;
+            problems.append(&mut copies.left_out);
+        }
+        for (slot, a) in after {
+            match a {
                 SlotAfterLoadout::Equipped(c, k) => {
-                    let mut out = Outfit {
-                        chain: String::new(),
-                        meshes: Vec::new(),
-                        left_out: Vec::new(),
-                        snowboard: None,
-                        light_nodes: Vec::new(),
-                    };
+                    let mut out = Outfit::new(String::new());
+                    out.overrides = copies.overrides.clone();
                     collect(db, &slot, c, k, &mut out)?;
                     walked.push((slot, Some(out)));
                 }
@@ -59,7 +66,7 @@ pub fn equipped_parts(
         }
         let (parts, _) = disc_parts(rig, loaded, &mut problems)?;
         let mut lights = o.light_nodes;
-        if lamp_accessory && slot == "headlamp" {
+        if equipment.lamp_accessory && slot == "headlamp" {
             scale_head_lamp(&mut lights, loadout.head_lamp_stats);
         }
         out.push((slot, SlotParts::Equipped(parts, lights)));
@@ -88,7 +95,9 @@ pub fn mesh_part(
     slot: &str,
     rig: &SceneGraph,
 ) -> Result<CharacterPart> {
-    let m = crate::vault_db::with_level_db(big_root, track, |db| mesh_ref(db, slot, fnv1(mesh_name)))?;
+    let m = crate::vault_db::with_level_db(big_root, track, |db| {
+        mesh_ref(db, crate::vault_db::FieldOverrides::none(), slot, fnv1(mesh_name))
+    })?;
     let (geom, crsf, mesh, file) = load_mesh_files(big_root, &m)?;
     let mut problems = Vec::new();
     let (mut parts, _) = disc_parts(rig, vec![(m, geom, crsf, mesh, file)], &mut problems)?;

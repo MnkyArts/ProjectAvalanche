@@ -48,28 +48,74 @@ fn fetch(base: u32, w: u32, h: u32, uv: vec2<f32>) -> f32 {
     return mix(a, b, f.y);
 }
 
-@compute @workgroup_size(256, 1, 1)
-fn reduce(@builtin(local_invocation_index) li: u32) {
-    var w = u.sizes.z;
-    var h = u.sizes.w;
-    var base = 0u;
-    loop {
-        if (w == 1u && h == 1u) {
+struct Level {
+    base: u32,
+    w: u32,
+    h: u32,
+}
+
+fn chain_level_next(l: Level) -> Level {
+    return Level(l.base + l.w * l.h, max(l.w / 2u, 1u), max(l.h / 2u, 1u));
+}
+
+fn chain_level(k: u32) -> Level {
+    var l = Level(0u, u.sizes.z, u.sizes.w);
+    for (var j = 0u; j < k; j++) {
+        if (l.w == 1u && l.h == 1u) {
             break;
         }
-        let nw = max(w / 2u, 1u);
-        let nh = max(h / 2u, 1u);
-        let next = base + w * h;
-        for (var i = li; i < nw * nh; i += 256u) {
-            let uv = (vec2<f32>(f32(i % nw), f32(i / nw)) + 0.5) / vec2<f32>(f32(nw), f32(nh));
-            adapted[next + i] = store16(fetch(base, w, h, uv));
+        l = chain_level_next(l);
+    }
+    return l;
+}
+
+fn chain_texel(l: Level, i: u32) {
+    let nw = max(l.w / 2u, 1u);
+    let nh = max(l.h / 2u, 1u);
+    let uv = (vec2<f32>(f32(i % nw), f32(i / nw)) + 0.5) / vec2<f32>(f32(nw), f32(nh));
+    adapted[l.base + l.w * l.h + i] = store16(fetch(l.base, l.w, l.h, uv));
+}
+
+// PORT(choice): the chain's first PARALLEL_LEVELS levels (94 % of its texels: 240 × 135 and 120 × 67 of 43 055 at
+// 1920 × 1080) are made by dispatches of many workgroups, one texel an invocation (`reduce_level`), and only the rest
+// by the single workgroup of `reduce`, which made every level before (127 rounds of its 256 invocations for level 1
+// at 1080p). Every texel is the same function of the level before it, so the same values in any order. The console
+// made each level with a BlitL16 draw.
+const PARALLEL_LEVELS: u32 = 2u;
+
+fn reduce_level(k: u32, i: u32) {
+    let l = chain_level(k);
+    if ((l.w == 1u && l.h == 1u) || i >= max(l.w / 2u, 1u) * max(l.h / 2u, 1u)) {
+        return;
+    }
+    chain_texel(l, i);
+}
+
+@compute @workgroup_size(256, 1, 1)
+fn reduce_level1(@builtin(global_invocation_id) id: vec3<u32>) {
+    reduce_level(0u, id.x);
+}
+
+@compute @workgroup_size(256, 1, 1)
+fn reduce_level2(@builtin(global_invocation_id) id: vec3<u32>) {
+    reduce_level(1u, id.x);
+}
+
+@compute @workgroup_size(256, 1, 1)
+fn reduce(@builtin(local_invocation_index) li: u32) {
+    var l = chain_level(PARALLEL_LEVELS);
+    loop {
+        if (l.w == 1u && l.h == 1u) {
+            break;
+        }
+        for (var i = li; i < max(l.w / 2u, 1u) * max(l.h / 2u, 1u); i += 256u) {
+            chain_texel(l, i);
         }
         storageBarrier();
         workgroupBarrier();
-        base = next;
-        w = nw;
-        h = nh;
+        l = chain_level_next(l);
     }
+    let base = l.base;
     if (li == 0u) {
         let m = DEC * adapted[base];
         let lavg = exp2(m);

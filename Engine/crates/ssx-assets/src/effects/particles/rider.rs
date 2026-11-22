@@ -42,7 +42,7 @@ pub fn rider_particle_nodes(
     name: &str,
     loadout: &Loadout,
 ) -> Result<Vec<RiderNode>> {
-    let (equipped, _) = crate::character::equipment_refs(big_root, name, loadout)?;
+    let equipped = crate::character::equipment_refs(big_root, name, loadout)?.refs;
     crate::vault_db::with_level_db(big_root, track, |db| {
         let boarder = boarder_of(db, name)?;
         let mut out = Vec::new();

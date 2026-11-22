@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ssx_formats::lynx::{Action, Effect, Param};
 
 use super::Params;
+use super::draw::RenderConsts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -61,6 +62,7 @@ pub struct ActionDef {
     pub class: String,
     pub instance_name: Option<String>,
     pub params: Params,
+    pub render: Option<Arc<RenderConsts>>,
 }
 
 impl ActionDef {
@@ -68,7 +70,7 @@ impl ActionDef {
         if self.kind != Kind::Render {
             return None;
         }
-        self.params.map.get("sTexture").and_then(|d| d.text.as_deref())
+        super::View::new(&self.params, &super::Weights::NONE).text("sTexture")
     }
 }
 
@@ -105,10 +107,14 @@ impl EffectDef {
 
 pub(super) fn compile_action(a: &Action) -> ActionDef {
     let states: Vec<(u8, &[Param])> = a.states.iter().map(|s| (state_number(&s.id), s.params.as_slice())).collect();
+    let kind = Kind::of(&a.class_name);
+    let params = Params::new(&a.class_name, &a.params, &states);
+    let render = (kind == Kind::Render).then(|| Arc::new(RenderConsts::of(&params)));
     ActionDef {
-        kind: Kind::of(&a.class_name),
+        kind,
         class: a.class_name.clone(),
         instance_name: a.instance_name.clone().or_else(|| a.name.clone()),
-        params: Params::new(&a.class_name, &a.params, &states),
+        params,
+        render,
     }
 }

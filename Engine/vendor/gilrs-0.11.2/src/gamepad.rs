@@ -14,6 +14,7 @@ use crate::{
         server::{self, FfMessage, Message},
         Error as FfError,
     },
+    ignore::{self, Ignored},
     mapping::{Mapping, MappingData, MappingDb},
     utils, MappingError,
 };
@@ -143,6 +144,8 @@ pub struct Gilrs {
     axis_to_btn_released: f32,
     pub(crate) update_state: bool,
     pub(crate) gamepads_data: Vec<GamepadData>,
+    // Project Avalanche patch T26: the gamepads SDL would not open (`crate::ignore`).
+    ignore_rules: ignore::Rules,
 }
 
 impl Gilrs {
@@ -220,11 +223,7 @@ impl Gilrs {
         if let Some(ev) = self.events.pop_front() {
             Some(ev)
         } else {
-            let event = if is_blocking {
-                self.inner.next_event_blocking(blocking_timeout)
-            } else {
-                self.inner.next_event()
-            };
+            let event = self.next_raw_event(is_blocking, blocking_timeout);
 
             match event {
                 Some(RawEvent {
@@ -341,36 +340,9 @@ impl Gilrs {
                                 ),
                             }
                         }
-                        RawEventType::Connected => {
-                            match id.0.cmp(&self.gamepads_data.len()) {
-                                Ordering::Equal => {
-                                    self.gamepads_data.push(GamepadData::new(
-                                        id,
-                                        self.tx.clone(),
-                                        self.inner.gamepad(id.0).unwrap(),
-                                        &self.mappings,
-                                    ));
-                                }
-                                Ordering::Less => {
-                                    self.gamepads_data[id.0] = GamepadData::new(
-                                        id,
-                                        self.tx.clone(),
-                                        self.inner.gamepad(id.0).unwrap(),
-                                        &self.mappings,
-                                    );
-                                }
-                                Ordering::Greater => {
-                                    error!(
-                                        "Platform implementation error: got Connected event with \
-                                         id {}, when expected id {}",
-                                        id.0,
-                                        self.gamepads_data.len()
-                                    );
-                                }
-                            }
-
-                            EventType::Connected
-                        }
+                        // Project Avalanche patch T26: the gamepad's data is made in `next_raw_event`, which
+                        // decides whether the application hears of it.
+                        RawEventType::Connected => EventType::Connected,
                         RawEventType::Disconnected => {
                             let _ = self.tx.send(Message::Close { id: id.0 });
 
@@ -384,6 +356,74 @@ impl Gilrs {
                     Some(Event { id, event, time })
                 }
                 None => None,
+            }
+        }
+    }
+
+    /// Project Avalanche patch T26: the next event of gilrs-core that belongs to a gamepad SDL would open
+    /// (`crate::ignore`). A gamepad's `Connected` makes its data here, which decides; every event of a gamepad SDL
+    /// would not open is dropped, so the application never hears of that gamepad (no `Connected`, no input, no
+    /// `Disconnected`). A blocking wait keeps its timeout across the dropped events.
+    fn next_raw_event(
+        &mut self,
+        is_blocking: bool,
+        blocking_timeout: Option<Duration>,
+    ) -> Option<RawEvent> {
+        let deadline = blocking_timeout.map(|timeout| gilrs_core::utils::time_now() + timeout);
+        loop {
+            let event = if is_blocking {
+                let timeout = deadline.map(|deadline| {
+                    deadline
+                        .duration_since(gilrs_core::utils::time_now())
+                        .unwrap_or(Duration::ZERO)
+                });
+                self.inner.next_event_blocking(timeout)
+            } else {
+                self.inner.next_event()
+            }?;
+            if event.event == RawEventType::Connected {
+                self.gamepad_connected(GamepadId(event.id));
+            }
+            match self.gamepads_data.get(event.id) {
+                Some(data) if data.ignored.is_some() => continue,
+                _ => return Some(event),
+            }
+        }
+    }
+
+    /// A gamepad connected: its data, made anew (the id may name another device than before). An id gilrs-core has no
+    /// gamepad for is logged as the other platform errors are (gilrs 0.11.2 unwrapped it).
+    fn gamepad_connected(&mut self, id: GamepadId) {
+        let Some(gamepad) = self.inner.gamepad(id.0) else {
+            error!("Platform implementation error: got Connected event with id {}, which names no gamepad", id.0);
+            return;
+        };
+        match id.0.cmp(&self.gamepads_data.len()) {
+            Ordering::Equal => {
+                self.gamepads_data.push(GamepadData::new(
+                    id,
+                    self.tx.clone(),
+                    gamepad,
+                    &self.mappings,
+                    &self.ignore_rules,
+                ));
+            }
+            Ordering::Less => {
+                self.gamepads_data[id.0] = GamepadData::new(
+                    id,
+                    self.tx.clone(),
+                    gamepad,
+                    &self.mappings,
+                    &self.ignore_rules,
+                );
+            }
+            Ordering::Greater => {
+                error!(
+                    "Platform implementation error: got Connected event with \
+                     id {}, when expected id {}",
+                    id.0,
+                    self.gamepads_data.len()
+                );
             }
         }
     }
@@ -455,6 +495,7 @@ impl Gilrs {
                 tx.clone(),
                 gamepad,
                 &self.mappings,
+                &self.ignore_rules,
             ))
         }
     }
@@ -495,7 +536,8 @@ impl Gilrs {
         if let Some(data) = self.gamepads_data.get(id.0) {
             let inner = self.inner.gamepad(id.0)?;
 
-            if inner.is_connected() {
+            // Project Avalanche patch T26: a gamepad SDL would not open is not offered.
+            if inner.is_connected() && data.ignored.is_none() {
                 Some(Gamepad { inner, data })
             } else {
                 None
@@ -752,6 +794,10 @@ impl GilrsBuilder {
 
         let (tx, rx) = server::init(self.force_feedback);
 
+        // Project Avalanche patch T26: SDL's environment variables, read once; one log line says what they held.
+        let ignore_rules = ignore::Rules::from_env();
+        info!("{}", ignore_rules.describe());
+
         let mut gilrs = Gilrs {
             inner,
             next_id: 0,
@@ -765,6 +811,7 @@ impl GilrsBuilder {
             axis_to_btn_released: self.axis_to_btn_released,
             update_state: self.update_state,
             gamepads_data: Vec::new(),
+            ignore_rules,
         };
         gilrs.finish_gamepads_creation();
 
@@ -1017,6 +1064,21 @@ pub(crate) struct GamepadData {
     id: GamepadId,
     // Flags used by the deadzone filter.
     pub(crate) have_sent_nonzero_for_axis: [bool; 6],
+    // Project Avalanche patch T26: why SDL would not open this gamepad (`crate::ignore`); such a gamepad is never
+    // offered and its events are dropped.
+    pub(crate) ignored: Option<Ignored>,
+}
+
+/// Project Avalanche patches T22, T23, T26: how a log line names a gamepad: its name, GUID, vendor and product.
+pub(crate) fn describe_device(gamepad: &gilrs_core::Gamepad) -> String {
+    let id = |v: Option<u16>| v.map_or_else(|| "none".to_owned(), |v| format!("{v:04x}"));
+    format!(
+        "Gamepad \"{}\" (GUID {}, vendor {}, product {})",
+        gamepad.name(),
+        Uuid::from_bytes(gamepad.uuid()).simple(),
+        id(gamepad.vendor_id()),
+        id(gamepad.product_id()),
+    )
 }
 
 impl GamepadData {
@@ -1025,32 +1087,59 @@ impl GamepadData {
         tx: Sender<Message>,
         gamepad: &gilrs_core::Gamepad,
         db: &MappingDb,
+        rules: &ignore::Rules,
     ) -> Self {
+        // Project Avalanche patch T26: SDL's rules decide first (`SDL_ShouldIgnoreGamepad` runs before a device is
+        // opened, SDL 3.4.20 src/joystick/SDL_joystick.c:3468-3485); a device without a vendor or product reads 0, as
+        // SDL's does. Such a gamepad gets no mapping and no force feedback, and one log line says why.
+        let ignored = rules.check(
+            gamepad.vendor_id().unwrap_or(0),
+            gamepad.product_id().unwrap_or(0),
+            ignore::guid_version(&gamepad.uuid()),
+        );
+        if let Some(reason) = ignored {
+            info!("{}: not read: {reason}", describe_device(gamepad));
+            return GamepadData {
+                state: GamepadState::new(),
+                mapping: Mapping::new(),
+                tx,
+                id,
+                have_sent_nonzero_for_axis: Default::default(),
+                ignored,
+            };
+        }
+
         // Project Avalanche patches T22 / T23: on Linux the mapping is chosen in SDL's order, SDL's automatic mapping
         // included, and one log line names it (`mapping::select`).
         #[cfg(target_os = "linux")]
         let mapping = crate::mapping::select::select(db, gamepad);
+        // Project Avalanche patch T26: elsewhere the exact GUID's row as before, and one log line names the gamepad and
+        // its mapping (gilrs 0.11.2 logged only a GUID it found no row for).
         #[cfg(not(target_os = "linux"))]
-        let uuid = Uuid::from_bytes(gamepad.uuid());
-        #[cfg(not(target_os = "linux"))]
-        let mapping = db
-            .get(uuid)
-            .map(
-                |s| match Mapping::parse_sdl_mapping(s, gamepad.buttons(), gamepad.axes()) {
-                    Ok(result) => result,
+        let mapping = {
+            let device = describe_device(gamepad);
+            let uuid = Uuid::from_bytes(gamepad.uuid());
+            match db.get(uuid) {
+                Some(row) => match Mapping::parse_sdl_mapping(row, gamepad.buttons(), gamepad.axes()) {
+                    Ok(mapping) => {
+                        info!("{device}: mapping \"{}\" from the mapping row of its GUID", mapping.name());
+                        mapping
+                    }
                     Err(e) => {
-                        warn!(
-                            "Unable to parse SDL mapping for UUID {uuid}\n\t{e:?}\n\tDefault \
-                             mapping will be used.",
-                        );
+                        warn!("{device}: the row of its GUID could not be read ({e}); gilrs' default mapping");
                         Mapping::default(gamepad)
                     }
                 },
-            )
-            .unwrap_or_else(|| {
-                warn!("No mapping found for UUID {uuid}\n\tDefault mapping will be used.");
-                Mapping::default(gamepad)
-            });
+                None if uuid.is_nil() => {
+                    info!("{device}: the backend reads it with gilrs' own codes; gilrs' default mapping");
+                    Mapping::default(gamepad)
+                }
+                None => {
+                    warn!("{device}: no mapping row; gilrs' default mapping");
+                    Mapping::default(gamepad)
+                }
+            }
+        };
 
         if gamepad.is_ff_supported() && gamepad.is_connected() {
             if let Some(device) = gamepad.ff_device() {
@@ -1064,6 +1153,7 @@ impl GamepadData {
             tx,
             id,
             have_sent_nonzero_for_axis: Default::default(),
+            ignored: None,
         }
     }
 
@@ -1298,6 +1388,27 @@ mod tests {
 
         assert_eq!(1.0, axis_value(&info, i32::MIN, axis));
         assert_eq!(-1.0, axis_value(&info, i32::MAX, axis));
+    }
+
+    // Project Avalanche patch T25: a trigger at rest reads as released through both of the Windows.Gaming.Input
+    // backend's ranges: a raw controller's axis (gilrs-core reports −32768…32767, 0 in WGI being −32768) and a WGI
+    // `Gamepad`'s trigger (0…i32::MAX).
+    #[test]
+    fn a_wgi_trigger_at_rest_is_released() {
+        let raw = AxisInfo {
+            min: i16::MIN as i32,
+            max: i16::MAX as i32,
+            deadzone: None,
+        };
+        assert_eq!(0.0, btn_value(&raw, -32768));
+        assert_eq!(1.0, btn_value(&raw, 32767));
+        let gamepad = AxisInfo {
+            min: 0,
+            max: i32::MAX,
+            deadzone: None,
+        };
+        assert_eq!(0.0, btn_value(&gamepad, 0));
+        assert_eq!(1.0, btn_value(&gamepad, i32::MAX));
     }
 
     #[test]

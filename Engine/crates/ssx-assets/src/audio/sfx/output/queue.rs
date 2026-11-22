@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use super::stats;
 use crate::sfx::OutputMix;
+use crate::sfx_queue::{Receiver, Sender, queue};
 
 pub type Command = Box<dyn FnOnce(&mut OutputMix) + Send>;
 
@@ -23,7 +23,7 @@ pub struct MixInbox {
 }
 
 pub fn mix_queue() -> (MixQueue, MixInbox) {
-    let (tx, rx) = channel();
+    let (tx, rx) = queue();
     (MixQueue { tx }, MixInbox { rx })
 }
 
@@ -42,11 +42,11 @@ impl MixQueue {
 }
 
 impl MixInbox {
-    pub fn drain(&self, mix: &mut OutputMix) -> usize {
+    pub fn drain(&mut self, mix: &mut OutputMix) -> usize {
         self.drain_each(mix, |_, _| {})
     }
 
-    pub fn drain_each(&self, mix: &mut OutputMix, mut each: impl FnMut(&'static str, Duration)) -> usize {
+    pub fn drain_each(&mut self, mix: &mut OutputMix, mut each: impl FnMut(&'static str, Duration)) -> usize {
         let mut n = 0;
         while let Ok(command) = self.rx.try_recv() {
             let start = Instant::now();
@@ -64,9 +64,9 @@ impl MixInbox {
 pub fn discard(x: impl Send + 'static) {
     static REAPER: OnceLock<Option<Sender<Box<dyn Send>>>> = OnceLock::new();
     let reaper = REAPER.get_or_init(|| {
-        let (tx, rx) = channel::<Box<dyn Send>>();
+        let (tx, mut rx) = queue::<Box<dyn Send>>();
         let spawned = std::thread::Builder::new().name("ssx_audio_reaper".into()).spawn(move || {
-            for x in rx {
+            while let Ok(x) = rx.recv() {
                 drop(x);
             }
         });
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn commands_apply_in_order_and_fail_without_a_mixer() {
-        let (q, inbox) = mix_queue();
+        let (q, mut inbox) = mix_queue();
         let mut mix = OutputMix::new(None, 44_100, None);
         for k in 0..5 {
             assert!(q.post(move |m| m.music_volume = m.music_volume * 10.0 + k as f32));
@@ -104,13 +104,13 @@ mod tests {
 
     #[test]
     fn a_discarded_value_is_dropped() {
-        struct Flag(Sender<()>);
+        struct Flag(std::sync::mpsc::Sender<()>);
         impl Drop for Flag {
             fn drop(&mut self) {
                 let _ = self.0.send(());
             }
         }
-        let (tx, rx) = channel();
+        let (tx, rx) = std::sync::mpsc::channel();
         discard(Flag(tx));
         assert!(rx.recv_timeout(std::time::Duration::from_secs(10)).is_ok());
     }

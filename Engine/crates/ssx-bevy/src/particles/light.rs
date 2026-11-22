@@ -26,6 +26,7 @@ struct Smoothed {
 
 pub struct NearestLight {
     candidates: Vec<Candidate>,
+    live: bevy::platform::collections::HashMap<(u32, [u32; 3]), (LightBehaviour, f32)>,
     smoothed: Option<Smoothed>,
     rng: crate::particles::sim::Rng,
 }
@@ -83,7 +84,7 @@ impl NearestLight {
                 }
             }
         }
-        Ok(NearestLight { candidates, smoothed: None, rng: Default::default() })
+        Ok(NearestLight { candidates, live: Default::default(), smoothed: None, rng: Default::default() })
     }
 }
 
@@ -108,7 +109,12 @@ impl NearestLight {
         tan_half_fov: f32,
         controllers: Option<&Controllers>,
     ) -> ParticleLight {
-        let mut live: std::collections::HashMap<(u32, [u32; 3]), (LightBehaviour, f32)> = Default::default();
+        // PORT(choice): the map is kept between updates (cleared, its memory kept) and hashed with Bevy's fixed hasher
+        // (foldhash); it was a new `std` map (SipHash) each update (the whole pick 0.06 ms of the main thread a ride
+        // step on Mount Eddie, 0.10 on Vorassay: a traced build with timers, round perf-x1). The same entries; only
+        // its lookups read it. The console's storage of the entities' lights is not decoded.
+        let live = &mut self.live;
+        live.clear();
         for e in controllers.map_or(&[][..], |c| &c.entities).iter().filter(|e| e.owner.is_none()) {
             let Some(run) = e.fx.lights.get("").filter(|r| !r.group && r.on) else { continue };
             let b = match run.update {

@@ -1,7 +1,6 @@
-use eframe::egui::{self, Color32, CursorIcon, Id, InnerResponse, Rect, Response, RichText, Sense, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, CursorIcon, Id, Rect, Response, RichText, Sense, Ui, pos2, vec2};
 
 use super::layout::CUT_BUTTON;
-use super::panel;
 use super::shapes::{self, Cut};
 use super::text::{self, Fit, Style};
 use super::theme::{self, Face, size};
@@ -54,14 +53,6 @@ pub fn button(ui: &mut Ui, label: &str, kind: Kind, enabled: bool) -> Response {
     let galley = text::layout(painter, &label.to_uppercase(), &style.color(colour.gamma_multiply(dim)), Fit::Free);
     text::paint(painter, pos2(rect.left() + BUTTON_PAD, base), galley);
     response
-}
-
-pub fn combo<R>(ui: &mut Ui, combo: egui::ComboBox, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
-    combo.show_ui(ui, |ui| {
-        let inner = add(ui);
-        panel::focus_in_view(ui);
-        inner
-    })
 }
 
 pub struct Question<'a> {
@@ -149,6 +140,14 @@ pub fn paragraph(ui: &mut Ui, text: &str) {
 
 pub fn note(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(shown(text)).color(theme::TEXT_DIM));
+}
+
+pub fn busy(ui: &mut Ui, text: &str) {
+    ui.horizontal(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        ui.spinner();
+        ui.label(shown(text));
+    });
 }
 
 pub fn shown(text: &str) -> String {

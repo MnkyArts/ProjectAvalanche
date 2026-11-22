@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::input::gamepad::{AxisSettings, GamepadSettings};
 use bevy::prelude::*;
 use ssx_physics::rewind::RewindPad;
@@ -57,6 +58,7 @@ impl Ride {
 
     pub fn hold_pads(&mut self, on: bool) {
         self.pads_held = on;
+        self.flush_latch = true;
         if on {
             self.a_lock.pause();
         } else {
@@ -72,6 +74,7 @@ impl Ride {
             return;
         }
         self.chat_held = on;
+        self.flush_latch = true;
         if on {
             self.a_lock.pause();
         } else {
@@ -96,28 +99,102 @@ impl Ride {
         }
         (input, tricks)
     }
+
+    pub(super) fn read_step_controls(&mut self, input: &LiveInput) {
+        let (keys, pads) = (&*input.keys, &input.pads);
+        let mut latch = std::mem::take(&mut self.latch);
+        if std::mem::take(&mut self.flush_latch) {
+            latch.flush(keys, pads.iter());
+        }
+        latch.step(keys, pads.iter());
+        read_live_controls(self, latch.keys(), pads.iter().map(|(e, p)| latch.pad(e, p)), input.chase());
+        self.latch = latch;
+    }
+
+    fn flush_controls(&mut self, input: &LiveInput) {
+        let (keys, pads) = (&*input.keys, &input.pads);
+        self.flush_latch = false;
+        self.latch.flush(keys, pads.iter());
+        let a = live_a(keys, pads.iter().map(|(_, p)| p), input.chase(), self.classic, self.state.start.is_some());
+        if a != self.a_lock.prev {
+            self.a_lock.update(a);
+        }
+    }
+
+    pub fn read_by_test_player(&mut self, keys: &ButtonInput<KeyCode>, pads: &Query<(Entity, &Gamepad)>, chase: bool) {
+        read_live_controls(self, keys, pads.iter().map(|(_, p)| p), chase);
+        self.latch.flush(keys, pads.iter());
+        self.step_read = true;
+    }
 }
 
-pub(super) fn read_controls(
-    keys: Res<ButtonInput<KeyCode>>,
-    gamepads: Query<&Gamepad>,
-    mode: Res<CameraMode>,
-    mut ride: ResMut<Ride>,
-) {
+pub(super) fn viewer_key_presses(keys: Res<ButtonInput<KeyCode>>, mut ride: ResMut<Ride>) {
     if keys.just_pressed(KeyCode::KeyR) && ride.viewer_keys {
         ride.respawn();
     }
     if keys.just_pressed(KeyCode::KeyN) && ride.viewer_keys {
         ride.rail_debug = !ride.rail_debug;
     }
+}
+
+#[derive(SystemParam)]
+pub(super) struct LiveInput<'w, 's> {
+    pub keys: Res<'w, ButtonInput<KeyCode>>,
+    pub pads: Query<'w, 's, (Entity, &'static Gamepad)>,
+    mode: Option<Res<'w, CameraMode>>,
+}
+
+impl LiveInput<'_, '_> {
+    pub fn chase(&self) -> bool {
+        self.mode.as_deref().is_none_or(|m| *m == CameraMode::Chase)
+    }
+}
+
+pub(super) fn latch_frame(input: LiveInput, mut ride: ResMut<Ride>) {
     if ride.scripted() {
         return;
     }
-    read_live_controls(&mut ride, &keys, &gamepads, *mode == CameraMode::Chase);
+    if ride.hold || ride.flush_latch {
+        ride.flush_controls(&input);
+    } else {
+        ride.latch.frame(&input.keys, input.pads.iter());
+    }
+}
+
+pub(super) fn latch_frame_end(input: LiveInput, mut ride: ResMut<Ride>) {
+    if ride.scripted() || !ride.hold {
+        return;
+    }
+    ride.flush_controls(&input);
 }
 
 fn enter_held(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::Enter) && !crate::shell::game_mode::alt_held(keys)
+}
+
+pub(super) trait PadRead {
+    fn pressed(&self, button: GamepadButton) -> bool;
+    fn value(&self, button: GamepadButton) -> f32;
+    fn left_stick(&self) -> Vec2;
+    fn right_stick(&self) -> Vec2;
+}
+
+impl PadRead for &Gamepad {
+    fn pressed(&self, button: GamepadButton) -> bool {
+        Gamepad::pressed(self, button)
+    }
+
+    fn value(&self, button: GamepadButton) -> f32 {
+        self.get(button).unwrap_or(0.0)
+    }
+
+    fn left_stick(&self) -> Vec2 {
+        Gamepad::left_stick(self)
+    }
+
+    fn right_stick(&self) -> Vec2 {
+        Gamepad::right_stick(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -126,40 +203,59 @@ pub(super) struct LiveRead {
     pub tricks: TrickInput,
     pub l2: f32,
     pub r1: bool,
+    pub r3: bool,
     pub rewind: bool,
 }
 
-pub(super) fn live_read(
+pub(super) fn live_read<P: PadRead>(
     keys: &ButtonInput<KeyCode>,
-    gamepads: &Query<&Gamepad>,
+    pads: impl Iterator<Item = P> + Clone,
     chase: bool,
     classic: bool,
     nis: bool,
 ) -> LiveRead {
-    let mut input = live_input(keys, gamepads, chase, classic);
+    let mut input = live_input(keys, pads.clone(), chase, classic);
     input.jump |= nis && enter_held(keys);
-    let tricks = live_tricks(keys, gamepads, chase, input.jump, classic);
+    let tricks = live_tricks(keys, pads.clone(), chase, input.jump, classic);
     // PORT(choice): Backspace is the keyboard's rewind in both schemes, beside the scheme's own button and its stand-in
     // (the standard scheme's L1; the classic scheme's B, whose key is L): the launcher's Controls page and the README
     // list "Backspace = LB (rewind)" with no scheme, the ride overlay "hold Backspace" for a janked rider in both. The
     // console reads the pad only: `RewindManagement_StateMachine` 0x82CF3428 takes `BLN_Pad_Classic_Rewind` (B) with
     // `BLN_ClassicControls`, else `BLN_Pad_Rewind` (L1).
-    let scheme = if classic { tricks.b } else { gamepads.iter().any(|p| p.pressed(GamepadButton::LeftTrigger)) };
+    let scheme = if classic { tricks.b } else { pads.clone().any(|p| p.pressed(GamepadButton::LeftTrigger)) };
     let rewind = keys.pressed(KeyCode::Backspace) || scheme;
-    let (l2, r1) = (live_l2_travel(keys, gamepads, chase, classic), live_r1(keys, gamepads, chase));
-    LiveRead { input, tricks, l2, r1, rewind }
+    let (l2, r1) = (live_l2_travel(keys, pads.clone(), chase, classic), live_r1(keys, pads.clone(), chase));
+    let r3 = live_r3(keys, pads);
+    LiveRead { input, tricks, l2, r1, r3, rewind }
 }
 
-pub fn read_live_controls(ride: &mut Ride, keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>, chase: bool) {
+fn live_a<P: PadRead>(
+    keys: &ButtonInput<KeyCode>,
+    pads: impl Iterator<Item = P> + Clone,
+    chase: bool,
+    classic: bool,
+    nis: bool,
+) -> bool {
+    let mut input = live_input(keys, pads.clone(), chase, classic);
+    input.jump |= nis && enter_held(keys);
+    input.jump || live_tricks(keys, pads, chase, input.jump, classic).a
+}
+
+pub(super) fn read_live_controls<P: PadRead>(
+    ride: &mut Ride,
+    keys: &ButtonInput<KeyCode>,
+    pads: impl Iterator<Item = P> + Clone,
+    chase: bool,
+) {
     let classic = ride.classic;
     let released = ride.pads_held || ride.chat_held;
     ride.back_held =
-        !released && (keys.pressed(KeyCode::KeyC) || gamepads.iter().any(|p| p.pressed(GamepadButton::Select)));
-    let live = live_read(keys, gamepads, chase, classic, ride.state.start.is_some());
+        !released && (keys.pressed(KeyCode::KeyC) || pads.clone().any(|p| p.pressed(GamepadButton::Select)));
+    let live = live_read(keys, pads.clone(), chase, classic, ride.state.start.is_some());
     (ride.l2, ride.l2_hold) = (live.l2 >= TRIGGER_THRESHOLD, live.l2 >= L2_HOLD_MIN);
-    ride.r1 = live.r1;
-    let pads = gamepads.iter().map(|p| p.get(GamepadButton::RightTrigger2).unwrap_or(0.0)).fold(0.0, f32::max);
-    ride.r2 = if live.tricks.tweak && pads < TRIGGER_THRESHOLD { 1.0 } else { pads };
+    (ride.r1, ride.r3) = (live.r1, live.r3);
+    let travel = pads.map(|p| p.value(GamepadButton::RightTrigger2)).fold(0.0, f32::max);
+    ride.r2 = if live.tricks.tweak && travel < TRIGGER_THRESHOLD { 1.0 } else { travel };
     ride.take_live_controls(live.input, live.tricks);
     let takeover = TakeoverPad::of(&ride.input, &ride.tricks, live.l2, live.r1, classic).takeover();
     ride.rewind_pad = RewindPad { rewind_held: live.rewind, takeover, ..RewindPad::default() };
@@ -175,24 +271,6 @@ pub(super) fn scheme_holds(
 ) -> (bool, bool, bool) {
     let (grind, wingsuit) = if classic { (tricks.y, input.jump) } else { (l2, r1) };
     (grind, wingsuit, pad.rewind_held)
-}
-
-pub(super) fn late_controls(
-    keys: Res<ButtonInput<KeyCode>>,
-    gamepads: Query<&Gamepad>,
-    mode: Res<CameraMode>,
-    mut ride: ResMut<Ride>,
-) {
-    if ride.scripted() {
-        return;
-    }
-    let classic = ride.classic;
-    let mut input = live_input(&keys, &gamepads, *mode == CameraMode::Chase, classic);
-    input.jump |= ride.state.start.is_some() && enter_held(&keys);
-    let a = input.jump || live_tricks(&keys, &gamepads, *mode == CameraMode::Chase, input.jump, classic).a;
-    if a != ride.a_lock.prev {
-        ride.a_lock.update(a);
-    }
 }
 
 pub(super) fn numpad_stick(keys: &ButtonInput<KeyCode>) -> Vec2 {
@@ -292,7 +370,12 @@ pub(super) fn pad_axes_as_read(add: On<Add<GamepadSettings>>, mut pads: Query<&m
     }
 }
 
-pub(super) fn live_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>, wasd: bool, classic: bool) -> Input {
+pub(super) fn live_input<P: PadRead>(
+    keys: &ButtonInput<KeyCode>,
+    pads: impl IntoIterator<Item = P>,
+    wasd: bool,
+    classic: bool,
+) -> Input {
     let held =
         |arrow: KeyCode, letter: KeyCode| f32::from(u8::from(keys.pressed(arrow) || (wasd && keys.pressed(letter))));
     let arrow_x = held(KeyCode::ArrowRight, KeyCode::KeyD) - held(KeyCode::ArrowLeft, KeyCode::KeyA);
@@ -305,7 +388,7 @@ pub(super) fn live_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>
     let mut dpad_held = classic && (arrow_x != 0.0 || arrow_y != 0.0);
     let (mut steer, mut tuck, mut brake) = (arrow_x, arrow_y.max(0.0), (-arrow_y).max(0.0));
     let mut jump = keys.pressed(KeyCode::Space);
-    for pad in gamepads {
+    for pad in pads {
         let stick = pad.left_stick();
         steer = (steer + stick.x).clamp(-1.0, 1.0);
         tuck = tuck.max(stick.y);
@@ -323,26 +406,39 @@ pub(super) fn live_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>
     Input { steer, brake, tuck, dpad: dpad.clamp(Vec2::splat(-1.0), Vec2::splat(1.0)), dpad_held, jump }
 }
 
-fn live_l2_travel(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>, chase: bool, classic: bool) -> f32 {
+fn live_l2_travel<P: PadRead>(
+    keys: &ButtonInput<KeyCode>,
+    pads: impl IntoIterator<Item = P>,
+    chase: bool,
+    classic: bool,
+) -> f32 {
     let key = if classic {
         keys.pressed(KeyCode::KeyZ)
     } else {
         chase && keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
     };
-    let pads = gamepads.iter().map(|p| {
+    let travel = pads.into_iter().map(|p| {
         let pressed = f32::from(u8::from(p.pressed(GamepadButton::LeftTrigger2)));
-        p.get(GamepadButton::LeftTrigger2).unwrap_or(0.0).max(pressed)
+        p.value(GamepadButton::LeftTrigger2).max(pressed)
     });
-    if key { 1.0 } else { pads.fold(0.0, f32::max).clamp(0.0, 1.0) }
+    if key { 1.0 } else { travel.fold(0.0, f32::max).clamp(0.0, 1.0) }
 }
 
-fn live_r1(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>, chase: bool) -> bool {
-    (chase && keys.pressed(KeyCode::KeyE)) || gamepads.iter().any(|p| p.pressed(GamepadButton::RightTrigger))
+fn live_r1<P: PadRead>(keys: &ButtonInput<KeyCode>, pads: impl IntoIterator<Item = P>, chase: bool) -> bool {
+    (chase && keys.pressed(KeyCode::KeyE)) || pads.into_iter().any(|p| p.pressed(GamepadButton::RightTrigger))
 }
 
-pub(super) fn live_tricks(
+// PORT(choice): Numpad 5 is the keyboard's right-stick click, in the middle of the right stick's Numpad 8 / 4 / 6 / 2
+// (the user's binding of 2026-11-13), in both schemes and in either camera like those keys; the console reads the pad
+// only: the classic tank is `ButtonRStick MATCH_HOLD`, read by `PlayerUpdate_Oxygen` 0x82CF8788 with
+// `BLN_ClassicControls` (0x82CF8914…0x82CF8948).
+fn live_r3<P: PadRead>(keys: &ButtonInput<KeyCode>, pads: impl IntoIterator<Item = P>) -> bool {
+    keys.pressed(KeyCode::Numpad5) || pads.into_iter().any(|p| p.pressed(GamepadButton::RightThumb))
+}
+
+pub(super) fn live_tricks<P: PadRead>(
     keys: &ButtonInput<KeyCode>,
-    gamepads: &Query<&Gamepad>,
+    pads: impl IntoIterator<Item = P>,
     chase: bool,
     jump: bool,
     classic: bool,
@@ -363,7 +459,7 @@ pub(super) fn live_tricks(
             tweak: keys.pressed(KeyCode::KeyJ),
             signature: shift && ctrl,
         };
-        for pad in gamepads {
+        for pad in pads {
             let stick = pad.right_stick();
             if stick.length() > t.right_stick.length() {
                 t.right_stick = stick;
@@ -374,9 +470,9 @@ pub(super) fn live_tricks(
             let south = pad.pressed(GamepadButton::South);
             let lb = pad.pressed(GamepadButton::LeftTrigger);
             let rb = pad.pressed(GamepadButton::RightTrigger);
-            let lt = pad.get(GamepadButton::LeftTrigger2).unwrap_or(0.0) >= TRIGGER_THRESHOLD
-                || pad.pressed(GamepadButton::LeftTrigger2);
-            let rt = pad.get(GamepadButton::RightTrigger2).unwrap_or(0.0) >= TRIGGER_THRESHOLD
+            let lt =
+                pad.value(GamepadButton::LeftTrigger2) >= TRIGGER_THRESHOLD || pad.pressed(GamepadButton::LeftTrigger2);
+            let rt = pad.value(GamepadButton::RightTrigger2) >= TRIGGER_THRESHOLD
                 || pad.pressed(GamepadButton::RightTrigger2);
             t.x |= west;
             t.tweak |= west;
@@ -398,12 +494,12 @@ pub(super) fn live_tricks(
         signature: shift && ctrl,
         ..TrickInput::default()
     };
-    for pad in gamepads {
+    for pad in pads {
         let stick = pad.right_stick();
         if stick.length() > t.right_stick.length() {
             t.right_stick = stick;
         }
-        let trigger = |b: GamepadButton| pad.get(b).unwrap_or(0.0) >= TRIGGER_THRESHOLD || pad.pressed(b);
+        let trigger = |b: GamepadButton| pad.value(b) >= TRIGGER_THRESHOLD || pad.pressed(b);
         let (l2, r2) = (trigger(GamepadButton::LeftTrigger2), trigger(GamepadButton::RightTrigger2));
         t.y |= pad.pressed(GamepadButton::North);
         t.x |= pad.pressed(GamepadButton::West);
@@ -447,8 +543,8 @@ mod tests {
         app.update();
         app.world_mut()
             .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                let grind = live_l2_travel(&keys, &pads, false, classic) >= TRIGGER_THRESHOLD;
-                (grind, live_tricks(&keys, &pads, false, false, classic))
+                let grind = live_l2_travel(&keys, pads.iter(), false, classic) >= TRIGGER_THRESHOLD;
+                (grind, live_tricks(&keys, pads.iter(), false, false, classic))
             })
             .expect("the live trigger and trick systems")
     }
@@ -559,7 +655,7 @@ mod tests {
         app.update();
         app.world_mut()
             .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                live_input(&keys, &pads, false, classic)
+                live_input(&keys, pads.iter(), false, classic)
             })
             .expect("the live input system")
     }
@@ -587,7 +683,7 @@ mod tests {
                 app.update();
                 app.world_mut()
                     .run_system_once(|keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                        live_input(&keys, &pads, false, false)
+                        live_input(&keys, pads.iter(), false, false)
                     })
                     .expect("the live input system")
                     .steer
@@ -635,7 +731,7 @@ mod tests {
         let read = |app: &mut App, classic: bool| {
             app.world_mut()
                 .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                    live_input(&keys, &pads, false, classic)
+                    live_input(&keys, pads.iter(), false, classic)
                 })
                 .expect("the live input system")
         };
@@ -660,7 +756,7 @@ mod tests {
             app.world_mut().insert_resource(keys);
             app.world_mut()
                 .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                    let r = live_read(&keys, &pads, true, classic, false);
+                    let r = live_read(&keys, pads.iter(), true, classic, false);
                     (r.tricks.right_stick, TakeoverPad::of(&r.input, &r.tricks, r.l2, r.r1, classic).takeover())
                 })
                 .expect("the live tricks system")
@@ -721,9 +817,40 @@ mod tests {
         app.world_mut().insert_resource(held);
         app.world_mut()
             .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                live_read(&keys, &pads, true, classic, false)
+                live_read(&keys, pads.iter(), true, classic, false)
             })
             .expect("the live read")
+    }
+
+    #[test]
+    fn the_tank_is_r1_standard_and_the_right_sticks_click_classic() {
+        use GamepadButton as P;
+        use KeyCode as K;
+        use ssx_physics::survival::OxygenPad;
+        let tank = |classic: bool, keys: &[K], buttons: &[(P, f32)]| {
+            let r = live_of(classic, keys, buttons, &[]);
+            OxygenPad { use_oxygen: r.r1, use_oxygen_classic: r.r3 }.requested(classic)
+        };
+        let wingsuit = |classic: bool, keys: &[K], buttons: &[(P, f32)]| {
+            let r = live_of(classic, keys, buttons, &[]);
+            let pad = RewindPad { rewind_held: r.rewind, ..RewindPad::default() };
+            scheme_holds(classic, &r.input, &r.tricks, r.l2 >= TRIGGER_THRESHOLD, r.r1, &pad).1
+        };
+        assert!(tank(false, &[], &[(P::RightTrigger, 1.0)]) && tank(false, &[K::KeyE], &[]), "standard: R1 / E");
+        assert!(tank(true, &[], &[(P::RightThumb, 1.0)]) && tank(true, &[K::Numpad5], &[]), "classic: R3 / Numpad 5");
+        for (classic, keys, buttons) in [
+            (false, &[][..], &[(P::RightThumb, 1.0)][..]),
+            (false, &[K::Numpad5][..], &[][..]),
+            (true, &[][..], &[(P::RightTrigger, 1.0)][..]),
+            (true, &[K::KeyE][..], &[][..]),
+            (true, &[][..], &[(P::South, 1.0)][..]),
+            (true, &[K::Space][..], &[][..]),
+            (false, &[][..], &[(P::South, 1.0)][..]),
+        ] {
+            assert!(!tank(classic, keys, buttons), "classic {classic}: {keys:?} {buttons:?} is not the tank");
+        }
+        assert!(wingsuit(true, &[], &[(P::South, 1.0)]) && !wingsuit(true, &[], &[(P::RightThumb, 1.0)]));
+        assert!(wingsuit(false, &[], &[(P::RightTrigger, 1.0)]) && !wingsuit(false, &[], &[(P::RightThumb, 1.0)]));
     }
 
     #[test]
@@ -780,7 +907,7 @@ mod tests {
         for (key, what) in standard_keys {
             assert!(takeover_of(false, &[key], &[], none), "standard: {key:?} = {what}");
         }
-        for key in [K::Backspace, K::KeyC, K::KeyQ, K::KeyZ, K::KeyX, K::KeyR, K::Enter] {
+        for key in [K::Backspace, K::KeyC, K::KeyQ, K::KeyZ, K::KeyX, K::KeyR, K::Enter, K::Numpad5] {
             assert!(!takeover_of(false, &[key], &[], none), "standard: {key:?} is none of the takeover's inputs");
         }
         let standard_pad = [(P::West, true), (P::North, true), (P::South, true), (P::RightTrigger, true)]
@@ -803,7 +930,7 @@ mod tests {
         for (key, what) in classic_keys {
             assert!(takeover_of(true, &[key], &[], none), "classic: {key:?} = {what}");
         }
-        for key in [K::KeyL, K::Backspace, K::KeyI, K::KeyK, K::ShiftLeft, K::KeyC] {
+        for key in [K::KeyL, K::Backspace, K::KeyI, K::KeyK, K::ShiftLeft, K::KeyC, K::Numpad5] {
             assert!(!takeover_of(true, &[key], &[], none), "classic: {key:?} is none of the takeover's inputs");
         }
         for (button, takes_over) in [(P::East, false), (P::LeftTrigger, true), (P::North, true), (P::South, true)] {
@@ -867,19 +994,27 @@ mod tests {
         assert!(late.update(true), "first read after the end: seen at once");
     }
 
-    fn popup_answer(hold: f64, fps: f64, injected: bool, fe_frames: u32, late: bool) -> (Vec<u32>, bool) {
-        #[derive(Clone, Copy, Default)]
-        struct Key {
-            down: bool,
-            just: bool,
-        }
-        let set = |k: &mut Key, down: bool| {
-            (k.just, k.down) = (k.just || (down && !k.down), down);
+    fn popup_answer(hold: f64, fps: f64, injected: bool, fe_frames: u32) -> (Vec<u32>, bool) {
+        use super::super::latch::PadLatch;
+        let set = |keys: &mut ButtonInput<KeyCode>, down: bool| {
+            if down && !keys.pressed(KeyCode::Space) {
+                keys.press(KeyCode::Space);
+            } else if !down && keys.pressed(KeyCode::Space) {
+                keys.release(KeyCode::Space);
+            }
+        };
+        let pads = || std::iter::empty::<(Entity, &Gamepad)>();
+        let flush = |latch: &mut PadLatch, lock: &mut PadLock, keys: &ButtonInput<KeyCode>| {
+            latch.flush(keys, pads());
+            let a = keys.pressed(KeyCode::Space);
+            if a != lock.prev {
+                lock.update(a);
+            }
         };
         let (press, release) = (1.0, 1.0 + hold);
         let (again, end) = (release + 0.5, release + 1.0);
         let want = |t: f64| (press..release).contains(&t) || (again..end).contains(&t);
-        let (mut lock, mut key) = (PadLock::default(), Key::default());
+        let (mut lock, mut latch, mut keys) = (PadLock::default(), PadLatch::default(), ButtonInput::default());
         let (mut popup, mut held, mut answered) = (true, false, None::<u32>);
         let (mut early, mut second, mut steps, mut carry) = (Vec::new(), false, 0u32, 0.0);
         for frame in 0.. {
@@ -887,9 +1022,9 @@ mod tests {
             if t > end + 0.2 {
                 break;
             }
-            key.just = false;
+            keys.clear();
             if !injected {
-                set(&mut key, want(t));
+                set(&mut keys, want(t));
             }
             if frame == 2 {
                 lock.pause();
@@ -899,27 +1034,33 @@ mod tests {
                 lock.resume();
                 held = false;
             }
+            if held {
+                flush(&mut latch, &mut lock, &keys);
+            } else {
+                latch.frame(&keys, pads());
+            }
             carry += 1.0 / fps;
             while carry >= 1.0 / 30.0 {
                 carry -= 1.0 / 30.0;
                 if !held {
                     steps += 1;
-                    if lock.seen && t < again {
+                    latch.step(&keys, pads());
+                    let seen = lock.update(latch.keys().pressed(KeyCode::Space));
+                    if seen && t < again {
                         early.push(steps);
                     }
-                    second |= lock.seen && t >= again;
+                    second |= seen && t >= again;
                 }
             }
-            lock.update(key.down);
             if injected {
-                set(&mut key, want(t));
+                set(&mut keys, want(t));
             }
-            if popup && key.just {
+            if popup && keys.just_pressed(KeyCode::Space) {
                 answered.get_or_insert(frame + fe_frames);
             }
             popup &= answered.is_none_or(|f| frame < f);
-            if late && key.down != lock.prev {
-                lock.update(key.down);
+            if held {
+                flush(&mut latch, &mut lock, &keys);
             }
         }
         assert!(!popup && !held && steps > 30, "the popup was answered and the ride went on");
@@ -931,14 +1072,12 @@ mod tests {
         for hold in [0.02, 0.1, 0.6] {
             for fps in [20.0, 30.0, 60.0, 75.0, 144.0, 300.0] {
                 for (injected, fe_frames) in [(false, 0), (false, 1), (false, 3), (true, 0), (true, 1), (true, 3)] {
-                    let (early, second) = popup_answer(hold, fps, injected, fe_frames, true);
+                    let (early, second) = popup_answer(hold, fps, injected, fe_frames);
                     let case = format!("{hold} s at {fps} fps, injected {injected}, the front end {fe_frames} later");
                     assert!(early.is_empty(), "{case}: A seen on steps {early:?}");
                     assert!(second, "{case}: the second press was not seen");
                 }
             }
         }
-        let (early, _) = popup_answer(0.1, 60.0, true, 0, false);
-        assert_eq!(early.first(), Some(&3), "one read per frame: {early:?}");
     }
 }

@@ -21,6 +21,61 @@ impl SegmentQuery {
 
 pub const SEGMENT_MIN_DELTA: f32 = 1.525_878_9e-5;
 
+pub const SEGMENT_MIN_LENGTH: f32 = 0.1;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SegmentCull {
+    inv: [f32; 3],
+    lo: [f32; 3],
+    hi: [f32; 3],
+}
+
+impl SegmentCull {
+    pub fn new(start: Vec3, end: Vec3) -> Self {
+        use ssx_formats::vmx;
+        const TINY: f32 = 1e-6;
+        let (start, end) = (start.to_array(), end.to_array());
+        let delta: [f32; 3] = std::array::from_fn(|i| vmx::sub(end[i], start[i]));
+        let dot = vmx::dot3(delta, delta);
+        let y = vmx::rsqrt(dot);
+        let len = if vmx::eq(dot, 0.0) { 0.0 } else { vmx::mul(dot, y) };
+        let dir: [f32; 3] = std::array::from_fn(|i| if vmx::gt(len, 0.0) { vmx::mul(delta[i], y) } else { 0.0 });
+        let max_len = vmx::max(SEGMENT_MIN_LENGTH, len);
+        let mut out = Self { inv: [0.0; 3], lo: [0.0; 3], hi: [0.0; 3] };
+        for i in 0..3 {
+            let d = vmx::mul(dir[i], max_len);
+            let end = vmx::add(start[i], d);
+            let den = if vmx::gt(vmx::abs(d), TINY) {
+                d
+            } else if vmx::ge(end, start[i]) {
+                TINY
+            } else {
+                -TINY
+            };
+            let est = vmx::refp(den);
+            out.inv[i] = vmx::madd(vmx::nmsub(den, est, 1.0), est, est);
+            let eps = vmx::madd(vmx::max(vmx::abs(start[i]), vmx::abs(end)), TINY, TINY);
+            out.lo[i] = vmx::sub(start[i], eps);
+            out.hi[i] = vmx::add(start[i], eps);
+        }
+        out
+    }
+
+    pub fn pierces(&self, min: Vec3, max: Vec3) -> bool {
+        use ssx_formats::vmx;
+        let (min, max) = (min.to_array(), max.to_array());
+        let (mut t_min, mut t_max) = ([0.0f32; 3], [0.0f32; 3]);
+        for i in 0..3 {
+            let a = vmx::mul(self.inv[i], vmx::sub(min[i], self.hi[i]));
+            let b = vmx::mul(self.inv[i], vmx::sub(max[i], self.lo[i]));
+            (t_min[i], t_max[i]) = (vmx::min(a, b), vmx::max(a, b));
+        }
+        let enter = vmx::max(vmx::max(0.0, t_min[0]), vmx::max(t_min[1], t_min[2]));
+        let exit = vmx::min(vmx::min(1.0, t_max[0]), vmx::min(t_max[1], t_max[2]));
+        vmx::gt(exit, enter)
+    }
+}
+
 impl CollisionWorld {
     pub fn ray_cast(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
         self.ray_cast_masked(origin, dir, max_t, 0)
@@ -52,6 +107,7 @@ impl CollisionWorld {
         let dir = delta / len;
         let inv = dir.recip();
         let r = q.radius;
+        let cull = SegmentCull::new(q.start, q.end);
         let best = std::cell::Cell::new(f32::INFINITY);
         let mut hit: Option<(f32, TriHit, u32, u32)> = None;
         let reach = |b: f32| b.min(len + r);
@@ -64,6 +120,7 @@ impl CollisionWorld {
                 let c = &self.clusters[ci as usize];
                 if !class_passes(q.class_mask, c.class)
                     || !segment_hits_box(q.start, inv, reach(best.get()), c.min, c.max, r)
+                    || !cull.pierces(c.entry_min, c.entry_max)
                 {
                     return;
                 }

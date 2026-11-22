@@ -178,10 +178,15 @@ pub(super) fn terrain_ripple(time: Res<Time>, ride: Res<Ride>, mut ripple: ResMu
 pub(super) fn screen_effects(
     ride: Res<Ride>,
     layers: Option<ResMut<crate::render::post::layers::PostFxLayers>>,
-    effects: Option<Res<crate::render::post::overlay::ScreenEffects>>,
-    overlay: Option<ResMut<crate::render::post::overlay::PostOverlay>>,
-    topogrid: Option<Res<crate::render::post::topogrid::TopogridLevel>>,
-    post_topogrid: Option<ResMut<crate::render::post::topogrid::PostTopogrid>>,
+    (effects, overlay): (
+        Option<Res<crate::render::post::overlay::ScreenEffects>>,
+        Option<ResMut<crate::render::post::overlay::PostOverlay>>,
+    ),
+    (topogrid, post_topogrid): (
+        Option<Res<crate::render::post::topogrid::TopogridLevel>>,
+        Option<ResMut<crate::render::post::topogrid::PostTopogrid>>,
+    ),
+    mut cube: crate::render::post::cube::CubeTarget,
     mut hud: ResMut<GearHud>,
 ) {
     let Some(mut layers) = layers else { return };
@@ -189,33 +194,28 @@ pub(super) fn screen_effects(
         let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         <[f32; 3]>::try_from(v).ok()
     });
-    let mut running: Vec<(String, f32)> = Vec::new();
-    if let Some(o) = ride.session.objectives.as_ref() {
-        running.extend(o.postfx.iter().map(|(n, (_, w))| (n.clone(), *w)));
-    }
-    if let Some(c) = ride.session.controllers.as_ref() {
-        for p in c.fx.postfx.values() {
-            let weight = match (forced, p.modulation) {
-                (Some([h, t, o]), Some((id, inverted))) => {
-                    let v = match ssx_physics::objectives::game_state_name(id) {
-                        "FLT_VignetteHealth" => h,
-                        "FLT_VignetteTemperature" => t,
-                        "FLT_VignetteOxygen" => o,
-                        _ => p.weight,
-                    }
-                    .clamp(0.0, 1.0);
-                    if inverted { 1.0 - v } else { v }
+    let forced_service;
+    let service = match (forced, ride.session.controllers.as_ref()) {
+        (Some([h, t, o]), Some(c)) => {
+            let mut copy = ride.session.postfx.clone();
+            for (preset, (id, inverted)) in &c.fx.modulated {
+                let v = match ssx_physics::objectives::game_state_name(*id) {
+                    "FLT_VignetteHealth" => h,
+                    "FLT_VignetteTemperature" => t,
+                    "FLT_VignetteOxygen" => o,
+                    _ => continue,
                 }
-                _ => p.weight,
-            };
-            running.push((p.preset.text.to_string(), weight));
+                .clamp(0.0, 1.0);
+                copy.set_weight(preset, if *inverted { 1.0 - v } else { v });
+            }
+            forced_service = copy;
+            &forced_service
         }
-    }
-    let (goggles, pulse) = match ride.session.controllers.as_ref() {
-        Some(c) => (c.fx.goggles_layer.blends(), c.fx.goggles_pulse),
-        None => (Vec::new(), 0.0),
+        _ => &ride.session.postfx,
     };
-    let values = layers.scene.frame(&running, &goggles);
+    let pulse = ride.session.controllers.as_ref().map_or(0.0, |c| c.fx.goggles_pulse);
+    let values = layers.scene.frame(service);
+    let cubes = cube.frame(&values.colour_cubes);
     let mut screen = String::new();
     if let (Some(effects), Some(mut overlay)) = (effects, overlay) {
         let state = ssx_assets::postfx_overlay::OverlayState::of(values);
@@ -234,5 +234,5 @@ pub(super) fn screen_effects(
         }
         post.uniform.set(params);
     }
-    hud.screen = format!("\nscreen fx{screen}");
+    hud.screen = format!("\nscreen fx{screen}{cubes}");
 }

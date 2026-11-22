@@ -10,10 +10,27 @@ use ssx_gameplay::validate::Arrival;
 use super::ServerStats;
 use super::instance::Instances;
 use super::validation::{ValidationEvent, ValidationLog};
+use crate::limits::CONNECTION_TIMEOUT_SECS;
 use crate::tick::tick_duration;
 
 pub const JITTER_MULTIPLE: f64 = 4.0;
 pub const JITTER_MARGIN_TICKS: f64 = 1.0;
+
+// PORT(choice): the connection's timeout, 10 s (300 ticks): a stall any connection survives is caught up, so the
+// server's tick keeps to its real time as the clients' estimates of it do; after a longer one every connection has
+// ended (netcode's timeout on both sides), no estimate is left to agree with, and one frame's steps stay bounded.
+// Bevy's own 250 ms guards an app whose fixed steps simulate; the server's only advance its tick (lightyear's timeline,
+// replicon's tick; the network's and the server's own systems run once a frame, outside the fixed schedules), so a
+// catch-up is cheap: measured (round srv2, one server on a laptop's efficiency core) the 91 steps of a 3 s stall in a
+// frame of 7.2 ms, the 286 of 9.5 s in 1.7 ms, the full 300 of a 12 s stall in 15.4 ms; the original has no real-time
+// multiplayer.
+pub const CATCH_UP: Duration = Duration::from_secs(CONNECTION_TIMEOUT_SECS.unsigned_abs() as u64);
+
+// PORT(choice): 250 ms, Bevy's default max delta: the length beyond which the server lost ticks before round srv2, so the
+// operators' earlier warnings and these count the same frames; 7.5 ticks, which no busy frame comes near (measured,
+// round srv2: an idle server's frames at most 66 ms apart, four servers on one laptop core; a frame's work with 8
+// riders at most 2.3 ms); the original has no dedicated server.
+pub const LONG_FRAME: Duration = Duration::from_millis(250);
 
 pub const UNALIGNED_GO_TICKS: f64 = 0.5;
 
@@ -162,13 +179,16 @@ pub(super) fn track(
     mut commands: Commands,
 ) {
     let tick = tick_s();
+    let ms = u64::try_from(real.delta().as_millis()).unwrap_or(u64::MAX);
+    stats.frame_ms_most = stats.frame_ms_most.max(ms);
+    if real.delta() > LONG_FRAME {
+        stats.frames_long += 1;
+    }
     let clamped = real.delta().saturating_sub(virt.delta());
     if !clamped.is_zero() {
         let lost = clamped.as_secs_f64() / tick;
         time.lost += lost;
         stats.frames_clamped += 1;
-        let ms = u64::try_from(real.delta().as_millis()).unwrap_or(u64::MAX);
-        stats.frame_ms_most = stats.frame_ms_most.max(ms);
         if let Some(mut log) = log {
             log.push(ValidationEvent {
                 instance: 0,
@@ -178,8 +198,9 @@ pub(super) fn track(
                 check: None,
                 action: None,
                 text: format!(
-                    "a frame of {ms} ms: Bevy's fixed steps took 250 ms of it, {lost:.1} ticks are lost for good (the \
+                    "a frame of {ms} ms: the fixed steps caught up {} ms of it, {lost:.1} ticks are lost for good (the \
                      server's tick lags its real time by {:.1} ticks in all; the validation measures real time)",
+                    virt.delta().as_millis(),
                     time.lost
                 ),
             });

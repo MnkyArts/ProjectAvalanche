@@ -312,7 +312,7 @@ impl Worker {
         let body = payload::set_activity(std::process::id(), activity, c.nonce);
         let bytes = frame::encode(Opcode::Frame, &body).map_err(|e| format!("the activity is not a frame ({e})"))?;
         c.transport.send(&bytes).map_err(|e| format!("the activity could not be sent ({e})"))?;
-        self.rate.record(now);
+        self.rate.record(Instant::now());
         c.shown = Some(activity.clone());
         debug!("Discord Rich Presence: activity sent (nonce {})", c.nonce);
         Ok(())

@@ -14,6 +14,21 @@ pub const RATE: f32 = 48_000.0;
 const W_MIN: f64 = 0.003_141_592_955_216_765_4;
 const W_MAX: f64 = 3.138_451_099_395_752;
 
+// PORT(choice): positions wrapped by comparing instead of dividing (the same index for every x: the same samples) in the
+// per-sample loops of the delay lines (Delay, Chorus / Vibrato, ReverbModel1's combs, Pan3D's line), where a 64-bit
+// division costs tens of cycles on some CPUs; the console's kernels index their lines with their own PowerPC
+// arithmetic, which the samples do not depend on.
+#[inline(always)]
+pub(crate) fn wrap(x: usize, n: usize) -> usize {
+    if x < n {
+        x
+    } else if x - n < n {
+        x - n
+    } else {
+        x % n
+    }
+}
+
 #[inline(always)]
 pub fn madd(fused: bool, a: f32, b: f32, c: f32) -> f32 {
     if fused { a.mul_add(b, c) } else { a * b + c }
@@ -249,6 +264,15 @@ pub fn apply_gain(buf: &mut [f32], old: f32, new: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_is_the_remainder() {
+        for n in [1usize, 2, 3, 7, 256, 1_000] {
+            for x in (0..5 * n).chain([usize::MAX - 1, usize::MAX]) {
+                assert_eq!(wrap(x, n), x % n, "{x} mod {n}");
+            }
+        }
+    }
 
     fn rbj(kind: &str, w: f64, gain: f64, q: f64) -> [f64; 5] {
         let (s, c) = (w.sin(), w.cos());

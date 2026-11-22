@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{Context, Result, bail};
 use ssx_formats::attrib::{
     Collection, DecodedCollection, Field, FieldData, FieldSource, NameDict, Schema, Value, Vault, collection,
-    container::cstr_in,
+    container::cstr_in, value::ValueKind,
 };
 
 pub const fn fnv1(s: &str) -> u32 {
@@ -27,6 +27,59 @@ pub struct Material {
     pub textures: BTreeMap<String, String>,
     pub floats: BTreeMap<String, f32>,
     pub vectors: BTreeMap<String, Vec<f32>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FieldOverrides {
+    values: BTreeMap<(u32, u32, u32), BTreeMap<u32, Value>>,
+}
+
+static NO_OVERRIDES: FieldOverrides = FieldOverrides::new();
+
+impl FieldOverrides {
+    pub const fn new() -> Self {
+        FieldOverrides { values: BTreeMap::new() }
+    }
+
+    pub fn none() -> &'static FieldOverrides {
+        &NO_OVERRIDES
+    }
+
+    pub fn set(&mut self, class: u32, collection: u32, field: u32, index: u32, value: Value) {
+        self.values.entry((class, collection, field)).or_default().insert(index, value);
+    }
+
+    pub fn get(&self, class: u32, collection: u32, field: u32, index: u32) -> Option<&Value> {
+        self.values.get(&(class, collection, field))?.get(&index)
+    }
+
+    pub fn element<'a>(&'a self, class: u32, collection: u32, field: &'a Field, index: u32) -> Option<&'a Value> {
+        self.get(class, collection, field.key, index).or_else(|| match &field.data {
+            FieldData::Single(v) => (index == 0).then_some(v),
+            FieldData::Array(vs) => vs.get(usize::try_from(index).ok()?),
+        })
+    }
+
+    pub fn single<'a>(&'a self, class: u32, collection: u32, field: &'a Field) -> Option<&'a Value> {
+        match &field.data {
+            FieldData::Single(v) => Some(self.get(class, collection, field.key, 0).unwrap_or(v)),
+            FieldData::Array(_) => None,
+        }
+    }
+
+    pub fn refs(&self, class: u32, collection: u32, field: &Field) -> Vec<ssx_formats::attrib::RefSpec> {
+        let stored: Vec<&Value> = match &field.data {
+            FieldData::Single(v) => vec![v],
+            FieldData::Array(vs) => vs.iter().collect(),
+        };
+        (0u32..)
+            .zip(stored)
+            .filter_map(|(i, v)| match self.get(class, collection, field.key, i).unwrap_or(v) {
+                Value::Ref(r) => Some(*r),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl Material {
@@ -91,6 +144,7 @@ pub struct Db {
     pub dict: NameDict,
     pub vaults: Vec<Loaded>,
     pub unknown: BTreeMap<u32, usize>,
+    kinds: HashMap<u32, ValueKind>,
 }
 
 fn disc_attribdb(big_root: &Path) -> PathBuf {
@@ -330,7 +384,8 @@ fn build_db(big_root: &Path, files: Vec<Files>) -> Result<Db> {
         .zip(files)
         .map(|((cols, decoded, local), files)| Loaded { cols, decoded, local, files })
         .collect();
-    Ok(Db { dict, vaults: loaded, unknown })
+    let kinds = schema.types.iter().map(|t| (t.hash, t.kind)).collect();
+    Ok(Db { dict, vaults: loaded, unknown, kinds })
 }
 
 fn decode_vault(
@@ -455,6 +510,10 @@ impl Db {
         }
     }
 
+    pub fn kind(&self, type_hash: u32) -> Option<ValueKind> {
+        self.kinds.get(&type_hash).copied()
+    }
+
     pub fn field(&self, class: u32, coll: u32, key: u32) -> Result<Option<&Field>> {
         Ok(self.fields(class, coll)?.into_iter().find(|f| f.key == key))
     }
@@ -493,6 +552,10 @@ impl Db {
     }
 
     pub fn material(&self, class: u32, key: u32) -> Result<Material> {
+        self.material_with(class, key, FieldOverrides::none())
+    }
+
+    pub fn material_with(&self, class: u32, key: u32, overrides: &FieldOverrides) -> Result<Material> {
         if class != CLASS_MATERIAL {
             bail!("material reference to class {} instead of ge_material", self.class_name(class));
         }
@@ -505,7 +568,7 @@ impl Db {
             }
             let is_params = self.class_name(c).starts_with("ge_materialtype_default");
             for f in self.fields(c, k)? {
-                match single(&f.data) {
+                match overrides.single(c, k, f) {
                     Some(Value::Ref(r)) if r.collection != 0 => match r.class {
                         CLASS_EFFECT if f.key == FIELD_EFFECT => m.effect = self.text_of(r.class, r.collection)?,
                         CLASS_TEXTURE if is_params => {
@@ -568,7 +631,28 @@ mod tests {
     }
 
     fn db() -> Arc<Db> {
-        Arc::new(Db { dict: NameDict::new(), vaults: Vec::new(), unknown: BTreeMap::new() })
+        Arc::new(Db { dict: NameDict::new(), vaults: Vec::new(), unknown: BTreeMap::new(), kinds: HashMap::new() })
+    }
+
+    #[test]
+    fn an_override_is_read_in_place_of_the_stored_element() {
+        let r = |collection: u32| Value::Ref(ssx_formats::attrib::RefSpec { class: 7, collection });
+        let one = Field { key: 1, type_hash: 0, source: FieldSource::Layout, data: FieldData::Single(r(10)) };
+        let many =
+            Field { key: 2, type_hash: 0, source: FieldSource::OutOfLine, data: FieldData::Array(vec![r(20), r(21)]) };
+        let mut o = FieldOverrides::new();
+        assert_eq!(o.single(3, 4, &one), Some(&r(10)));
+        assert_eq!(o.element(3, 4, &one, 1), None);
+        assert_eq!(o.element(3, 4, &many, 1), Some(&r(21)));
+        assert_eq!(o.element(3, 4, &many, 2), None);
+        o.set(3, 4, 1, 0, r(11));
+        o.set(3, 4, 2, 1, r(22));
+        assert_eq!(o.single(3, 4, &one), Some(&r(11)));
+        assert_eq!(o.single(3, 4, &many), None);
+        assert_eq!(o.element(3, 4, &many, 1), Some(&r(22)));
+        assert_eq!(o.refs(3, 4, &many).iter().map(|r| r.collection).collect::<Vec<_>>(), vec![20, 22]);
+        assert_eq!(o.single(3, 5, &one), Some(&r(10)));
+        assert_eq!(FieldOverrides::none().single(3, 4, &one), Some(&r(10)));
     }
 
     #[test]

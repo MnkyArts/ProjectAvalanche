@@ -9,6 +9,7 @@ use bevy::window::{PrimaryWindow, WindowRef};
 use ssx_assets::display::{DisplaySettings, render_size};
 
 use super::DisplayState;
+use crate::render::post::fsr::ScaledScene;
 
 const PRESENT_LAYER: usize = 9;
 const PRESENT_ORDER: isize = 1000;
@@ -21,11 +22,21 @@ pub struct RenderScale {
     logged: Option<(Option<UVec2>, UVec2)>,
 }
 
+#[cfg(test)]
+impl RenderScale {
+    pub(super) fn off() -> RenderScale {
+        RenderScale { image: Handle::default(), size: UVec2::ONE, enabled: false, logged: None }
+    }
+}
+
 #[derive(Component)]
 struct PresentCamera;
 
 #[derive(Component)]
 struct PresentSprite;
+
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct Retarget;
 
 pub(super) fn register(app: &mut App, display: &DisplaySettings, window: (u32, u32)) {
     let size = render_size(window, display.render_height).map_or(UVec2::ONE, |(w, h)| UVec2::new(w, h));
@@ -49,7 +60,8 @@ pub(super) fn register(app: &mut App, display: &DisplaySettings, window: (u32, u
         RenderLayers::layer(PRESENT_LAYER),
         PresentCamera,
     ));
-    app.insert_resource(RenderScale { image, size, enabled: false, logged: None }).add_systems(Update, follow);
+    app.insert_resource(RenderScale { image, size, enabled: false, logged: None })
+        .add_systems(Update, follow.in_set(Retarget));
 }
 
 fn target_image(size: UVec2) -> Image {
@@ -71,7 +83,7 @@ fn follow(
     display: Res<DisplayState>,
     mut scale: ResMut<RenderScale>,
     mut images: ResMut<Assets<Image>>,
-    mut targets: Query<&mut RenderTarget, Without<PresentCamera>>,
+    mut targets: Query<&mut RenderTarget, (Without<PresentCamera>, Without<ScaledScene>)>,
     mut present: Query<&mut Camera, With<PresentCamera>>,
     mut sprites: Query<(&mut Sprite, &mut Visibility), With<PresentSprite>>,
 ) {

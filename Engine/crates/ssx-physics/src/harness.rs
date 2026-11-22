@@ -300,7 +300,7 @@ impl CoursePlayer {
                 out.survived = false;
                 break;
             }
-            s.wingsuit.pad_r1 = c.r1;
+            s.hold_standard_r1(c.r1);
             let e = x.execute(&mut s, w, &pad_for_intent(c.input), &c.tricks, 0.0, &RewindPad::default(), None);
             self.rollout_steps += 1;
             if e.rider_dead.is_some() {

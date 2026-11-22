@@ -37,7 +37,6 @@ fn schema() -> SaveSchema {
     SaveSchema { database, meta, riders: Vec::new(), items: Default::default(), drops: Vec::new(), audio: None }
 }
 
-#[cfg(target_os = "linux")]
 fn written_by_this_thread() -> u64 {
     let io = std::fs::read_to_string("/proc/thread-self/io").expect("/proc/thread-self/io (the task's I/O counts)");
     io.lines()
@@ -46,7 +45,6 @@ fn written_by_this_thread() -> u64 {
         .expect("a wchar line in /proc/thread-self/io")
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn the_frames_thread_writes_none_of_the_save() {
     let dir = std::env::temp_dir().join(format!("ssx-save-slot-{}", std::process::id()));

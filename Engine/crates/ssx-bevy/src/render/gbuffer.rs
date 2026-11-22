@@ -1,3 +1,4 @@
+use bevy::pbr::MeshPipelineKey;
 use bevy::render::render_resource::RenderPipelineDescriptor;
 use bevy::shader::ShaderDefVal;
 
@@ -20,5 +21,22 @@ pub fn specialize_main_pass(descriptor: &mut RenderPipelineDescriptor) {
     strip(&mut descriptor.vertex.shader_defs);
     if let Some(f) = descriptor.fragment.as_mut() {
         strip(&mut f.shader_defs);
+    }
+}
+
+pub fn is_depth_prepass(descriptor: &RenderPipelineDescriptor, mesh_key: MeshPipelineKey) -> bool {
+    has(&descriptor.vertex.shader_defs, "PREPASS_PIPELINE")
+        && !mesh_key.intersects(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO | MeshPipelineKey::NORMAL_PREPASS)
+}
+
+pub fn depth_prepass_writes(descriptor: &mut RenderPipelineDescriptor, writes: bool) {
+    if let Some(depth) = descriptor.depth_stencil.as_mut() {
+        depth.depth_write_enabled = Some(writes);
+    }
+}
+
+pub fn invariant_main_pass(descriptor: &mut RenderPipelineDescriptor) {
+    if !has(&descriptor.vertex.shader_defs, "PREPASS_PIPELINE") {
+        descriptor.vertex.shader_defs.push("SSX_INVARIANT_POSITION".into());
     }
 }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use bevy::prelude::AppExit;
 use clap::Parser;
-use ssx_assets::port_options::{BootMovie, DiscordPresence, MenuFocus, RangeMovies};
+use ssx_assets::port_options::{BootMovie, DiscordPresence, FrameLimit, MenuFocus, RangeMovies, ResolutionScale};
 use ssx_bevy::{RenderArgs, game_mode, terrain_look};
 
 /// The game: the front end from the boot movie to a drop and back in one window, the profile loaded and saved. The
@@ -56,6 +56,17 @@ struct Cli {
     /// off.
     #[arg(long, value_name = "ON_OFF", default_value_t = DiscordPresence::Off)]
     discord_presence: DiscordPresence,
+
+    /// The most frames a second the game draws: `off` (the default: as the present mode lets it, the display's
+    /// refresh rate with VSync), `30`, `60`, `120` or `144`. The launcher passes its setting.
+    #[arg(long, value_name = "FPS", default_value_t = FrameLimit::Off)]
+    frame_limit: FrameLimit,
+
+    /// The 3-D scene's resolution: `native` (the default: the screen's), or rendered smaller and brought up to the
+    /// screen by AMD FSR 1: `ultra-quality` (÷1.3 per side), `quality` (÷1.5), `balanced` (÷1.7), `performance` (÷2).
+    /// The HUD and the menus stay at the screen's resolution. The launcher passes its setting.
+    #[arg(long, value_name = "MODE", default_value_t = ResolutionScale::Native)]
+    resolution_scale: ResolutionScale,
 
     /// A test option: the window in pixels at scale factor 1 (e.g. `1280x720`), windowed; the launcher's display
     /// settings neither read nor kept.
@@ -197,12 +208,56 @@ struct Cli {
     /// A test option: the server browser's tabs show N generated servers (also `SSX_FAKE_SERVERS=N`).
     #[arg(long, value_name = "N")]
     fake_servers: Option<usize>,
+
+    /// Runs the benchmark: fixed scenes, each played the same way in a window of its own from a fresh profile, with
+    /// the other options given here (the display, the rendering, the data); every frame's time recorded and one
+    /// report written (JSON and text). Scenes: fe, alps, whitehorn, heli, eddie (DLC), deathzone, night, flight; none
+    /// named: all.
+    #[arg(
+        long,
+        value_name = "SCENE",
+        num_args = 0..,
+        value_delimiter = ',',
+        conflicts_with_all = [
+            "script", "level_script", "launch", "launch_map", "launch_mode", "autoplay", "follow_prompts", "seconds",
+            "rides", "ride_limit", "ride_shots", "ride_win", "connect", "link", "play_movie", "open_view", "mod_dev",
+            "fade_shots", "benchmark_scene"
+        ]
+    )]
+    benchmark: Option<Vec<String>>,
+
+    /// The benchmark's report (`.json`, the text beside it as `.txt`; default
+    /// `<app dir>/Benchmarks/benchmark-<date>.json`).
+    #[arg(long, value_name = "FILE", requires = "benchmark")]
+    out: Option<PathBuf>,
+
+    /// A benchmark scene's process (the benchmark starts the game with it): the scene to play and where its result
+    /// goes.
+    #[arg(long, value_name = "SCENE", hide = true, requires = "benchmark_part")]
+    benchmark_scene: Option<String>,
+    #[arg(long, value_name = "FILE", hide = true, requires = "benchmark_scene")]
+    benchmark_part: Option<PathBuf>,
 }
 
 fn main() -> AppExit {
     let cli = Cli::parse();
     if cli.display.list_displays {
         return game_mode::print_displays();
+    }
+    if let Some(scenes) = cli.benchmark {
+        use ssx_bevy::benchmark::driver;
+        let forwarded = driver::forwarded(std::env::args_os().skip(1));
+        return match driver::run(driver::DriverArgs { scenes, out: cli.out, forwarded }) {
+            Ok((_, true)) => AppExit::Success,
+            Ok((report, false)) => {
+                ssx_core::eprintln!("benchmark: no scene was measured (the report: {})", report.display());
+                AppExit::error()
+            }
+            Err(e) => {
+                ssx_core::eprintln!("benchmark: {e:#}");
+                AppExit::error()
+            }
+        };
     }
     match game_args(cli).and_then(game_mode::run) {
         Ok(exit) => exit,
@@ -234,7 +289,12 @@ fn game_args(cli: Cli) -> Result<game_mode::GameArgs> {
         let found = cwd.ancestors().map(|d| d.join("Game-Data/Converted/screenshots")).find(|p| p.is_dir());
         found.unwrap_or_else(|| ssx_assets::setup::app_dir().join("Screenshots"))
     });
+    let benchmark = match (cli.benchmark_scene, cli.benchmark_part) {
+        (Some(scene), Some(part)) => Some(ssx_bevy::benchmark::SceneRun::new(&scene, part)?),
+        _ => None,
+    };
     Ok(game_mode::GameArgs {
+        benchmark,
         big_root,
         save: cli.save,
         lang: cli.lang,
@@ -263,6 +323,11 @@ fn game_args(cli: Cli) -> Result<game_mode::GameArgs> {
         shading: cli.render.shading,
         no_objects: cli.render.no_objects,
         wireframe: cli.render.wireframe,
+        view_distance: cli.render.view_distance,
+        frame_limit: cli.frame_limit,
+        resolution_scale: cli.resolution_scale,
+        shadow_quality: cli.render.shadow_quality,
+        post_levels: cli.render.post_levels(),
         mods: !cli.no_mods,
         classic_front_end,
         open_view: cli.open_view,

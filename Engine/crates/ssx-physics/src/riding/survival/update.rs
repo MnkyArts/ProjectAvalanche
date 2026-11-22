@@ -188,7 +188,7 @@ impl SurvivalState {
         d: &DropSurvival,
         f: RunFlags,
         player_speed: f32,
-        use_pressed: bool,
+        classic: bool,
         time_since_death: f32,
         dt: f32,
     ) {
@@ -200,7 +200,7 @@ impl SurvivalState {
             };
             let (x, v) = spring(self.oxygen_flow, self.oxygen_flow_vel, player_speed, omega(stiffness), dt);
             (self.oxygen_flow, self.oxygen_flow_vel) = (x.max(0.0), v);
-            self.oxygen_use_requested = use_pressed;
+            self.oxygen_use_requested = self.oxygen_pad.requested(classic);
             let usage = r.oxygen_tank_usage_modifier;
             if self.oxygen_use_requested && self.oxygen_tank > 0.0 && usage > 0.0 {
                 let used = t.base_oxygen_tank_usage_rate * dt * usage;

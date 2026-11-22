@@ -28,7 +28,7 @@ fn array_data<'a>(env: &Env<'a>, ctrl: CtrlId) -> Option<ArrayData<'a>> {
     }
 }
 
-fn select(xs: &[f32], pos: f32) -> Vec<(usize, f32)> {
+pub(crate) fn select(xs: &[f32], pos: f32) -> Vec<(usize, f32)> {
     let n = xs.len();
     if n == 0 {
         return Vec::new();
@@ -58,7 +58,7 @@ fn select(xs: &[f32], pos: f32) -> Vec<(usize, f32)> {
     vec![(n - 1, 1.0)]
 }
 
-fn damp(cur: f32, target: f32, clamp: [f32; 2], damping: [f32; 2], dt: f32) -> f32 {
+pub(crate) fn damp(cur: f32, target: f32, clamp: [f32; 2], damping: [f32; 2], dt: f32) -> f32 {
     let diff = target - cur;
     let rate = if cur * diff < 0.0 { damping[1] } else { damping[0] };
     let max = rate * dt;

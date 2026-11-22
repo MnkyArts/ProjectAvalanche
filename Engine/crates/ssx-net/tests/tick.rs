@@ -11,7 +11,8 @@ use common::*;
 use ssx_net::harness::{Conditions, Io};
 use ssx_net::lightyear::core::timeline::LocalTimelineShift;
 use ssx_net::lightyear::prelude::{InputTimelineConfig, LocalTimeline, LocalTimelineSync};
-use ssx_net::{NetClientPlugin, NetServerPlugin, tick_duration};
+use ssx_net::server::CATCH_UP;
+use ssx_net::{NetClientPlugin, NetServerPlugin, ServerStats, tick_duration};
 use ssx_net_proto::TICK_HZ;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -69,6 +70,32 @@ fn server_tick_counts_every_fixed_step() {
     let mut app = headless();
     app.add_plugins(NetServerPlugin);
     count_over_an_hour(app);
+}
+
+#[test]
+fn the_server_catches_a_stall_up_to_the_connections_timeout() {
+    let mut app = headless();
+    app.add_plugins(NetServerPlugin);
+    app.finish();
+    app.cleanup();
+    assert_eq!(app.world().resource::<Time<Virtual>>().max_delta(), CATCH_UP);
+    assert_eq!(CATCH_UP, Duration::from_secs(10), "the connection's timeout");
+    let ticks = |app: &App| app.world().resource::<LocalTimeline>().tick().0;
+    let clamped = |app: &App| app.world().resource::<ServerStats>().frames_clamped;
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(tick_duration()));
+    for _ in 0..30 {
+        app.update();
+    }
+    for (stall, steps, clamps) in [(3.0, 90, 0), (10.0, 300, 0), (12.0, 300, 1), (1.0, 30, 1)] {
+        let before = ticks(&app);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(stall)));
+        app.update();
+        assert_eq!(ticks(&app) - before, steps, "a frame of {stall} s");
+        assert_eq!(clamped(&app), clamps, "clamped frames after a frame of {stall} s");
+    }
+    let stats = app.world().resource::<ServerStats>();
+    assert_eq!(stats.frame_ms_most, 12_000);
+    assert_eq!(stats.frames_long, 4, "every stall over 250 ms counted, caught up or clamped");
 }
 
 #[test]

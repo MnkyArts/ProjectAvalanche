@@ -10,6 +10,10 @@ impl RiderGraph {
         self.animator.take_driver_events()
     }
 
+    pub fn take_pin_events(&mut self) -> Vec<ssx_assets::anim_eval::PinEvent> {
+        self.animator.take_pin_events()
+    }
+
     pub fn take_queued_queries(&mut self) -> Vec<String> {
         self.animator.take_queued_queries()
     }

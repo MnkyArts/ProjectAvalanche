@@ -1,0 +1,15 @@
+struct Globals {
+    view_from_world: mat4x4<f32>,
+    clip_from_view: mat4x4<f32>,
+    view_from_clip: mat4x4<f32>,
+    world_from_view: mat4x4<f32>,
+    view_prev: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+    ramp0: vec4<f32>,
+    ramp1: vec4<f32>,
+    atten: vec4<f32>,
+    fog_data: vec4<f32>,
+    fog_color: vec4<f32>,
+    sizes: vec4<f32>,
+    game_proj: vec4<f32>,
+}

@@ -56,14 +56,8 @@ pub(crate) mod sdl_guid {
 /// write for it), or gilrs' default mapping.
 pub(crate) fn select(db: &MappingDb, gamepad: &gilrs_core::Gamepad) -> Mapping {
     let uuid = Uuid::from_bytes(gamepad.uuid());
-    let id = |v: Option<u16>| v.map_or_else(|| "none".to_owned(), |v| format!("{v:04x}"));
-    let device = format!(
-        "Gamepad \"{}\" (GUID {}, vendor {}, product {})",
-        gamepad.name(),
-        uuid.simple(),
-        id(gamepad.vendor_id()),
-        id(gamepad.product_id()),
-    );
+    // Project Avalanche patch T26: the description every platform's line uses.
+    let device = crate::gamepad::describe_device(gamepad);
 
     if let Some(found) = db.lookup(uuid) {
         let origin = match found.origin {

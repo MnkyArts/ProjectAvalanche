@@ -125,12 +125,18 @@ fn effect_note(effect: &str) -> Option<&'static str> {
 pub struct LoadedObjects {
     pub stats: ObjectStats,
     meshes: Vec<(String, Mesh)>,
-    images: crate::render::reload::BuiltImages,
+    images: crate::render::uploads::PartImages,
     materials: Vec<MaterialSpec>,
     parts: Vec<Vec<Vec<(usize, usize)>>>,
     lods: Vec<ObjectLod>,
     placements: Vec<(usize, Placement)>,
     source: (std::path::PathBuf, ObjectsSource),
+}
+
+impl LoadedObjects {
+    pub fn queue_textures(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        self.images.queue(uploads, images);
+    }
 }
 
 #[derive(Resource)]

@@ -30,11 +30,33 @@ pub enum Category {
     PlayerName,
 }
 
-const BASE_CATEGORIES: [(Category, &str); 8] = [
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphicsRequest {
+    pub frame_limit: ssx_assets::port_options::FrameLimit,
+    pub resolution_scale: ssx_assets::port_options::ResolutionScale,
+    pub shadow_quality: ssx_assets::port_options::ShadowQuality,
+    pub bloom: bool,
+    pub fxaa: bool,
+}
+
+impl GraphicsRequest {
+    fn of(s: &PortSettings) -> GraphicsRequest {
+        GraphicsRequest {
+            frame_limit: s.frame_limit,
+            resolution_scale: s.resolution_scale,
+            shadow_quality: s.shadow_quality,
+            bloom: s.bloom,
+            fxaa: s.fxaa,
+        }
+    }
+}
+
+const BASE_CATEGORIES: [(Category, &str); 9] = [
     (Category::Game(1), "TXT_GAMEPLAY_SETTINGS"),
     (Category::Game(2), "TXT_AUDIO_SETTINGS"),
     (Category::Game(3), "TXT_VIDEO_CALIBRATION"),
     (Category::Port(Page::Display), "TXT_AVA_OPTIONS_DISPLAY"),
+    (Category::Port(Page::Graphics), "TXT_AVA_OPTIONS_GRAPHICS"),
     (Category::Port(Page::Effects), "TXT_AVA_OPTIONS_EFFECTS"),
     (Category::Port(Page::Sound), "TXT_AVA_OPTIONS_SOUND"),
     (Category::Port(Page::Movies), "TXT_AVA_OPTIONS_MOVIES"),
@@ -65,6 +87,8 @@ pub struct Options {
     pub writer: Option<Arc<SettingsWriter>>,
     pub host_window: Option<WindowChoice>,
     pub window_request: Option<DisplaySettings>,
+    pub view_distance_request: Option<ssx_assets::port_options::ViewDistance>,
+    pub graphics_request: Option<GraphicsRequest>,
     pub originals: PortSettings,
     pub page: Option<Page>,
     pub changed: bool,
@@ -255,6 +279,19 @@ pub(super) fn save(fe: &mut FrontEnd, broken_popup: &str) {
         fe.menu_focus = fe.ava.options.settings.menu_focus;
         fe.note(format!("options: menu focus {} from now on", fe.menu_focus));
     }
+    let (now, kept) = (GraphicsRequest::of(&fe.ava.options.settings), GraphicsRequest::of(&fe.ava.options.kept));
+    if now != kept {
+        fe.ava.options.graphics_request = Some(now);
+        fe.note(format!(
+            "options: frame limit {}, resolution scale {}, shadows {}, bloom {}, FXAA {} from now on",
+            now.frame_limit, now.resolution_scale, now.shadow_quality, now.bloom, now.fxaa
+        ));
+    }
+    if fe.ava.options.settings.view_distance != fe.ava.options.kept.view_distance {
+        let v = fe.ava.options.settings.view_distance;
+        fe.ava.options.view_distance_request = Some(v);
+        fe.note(format!("options: view distance {} m from now on", v.meters()));
+    }
     let o = &mut fe.ava.options;
     if o.settings.window != o.kept.window
         && let Some(w) = o.settings.window.clone()
@@ -400,6 +437,7 @@ pub fn build(fe: &FrontEnd, cx: &mut Ctx, loc: &mut Localization, dp: &str) -> O
             let _ = cx.set_member(&v, "showDescription", Value::Bool(true));
             let note = match o.page {
                 Some(Page::Display) => "TXT_AVA_OPTIONS_DISPLAY_NOTE",
+                Some(Page::Graphics) => "TXT_AVA_OPTIONS_GRAPHICS_NOTE",
                 Some(Page::Movies) => "TXT_AVA_OPTIONS_MOVIES_NOTE",
                 Some(Page::Menus) => "TXT_AVA_OPTIONS_MENUS_NOTE",
                 #[cfg(feature = "net")]

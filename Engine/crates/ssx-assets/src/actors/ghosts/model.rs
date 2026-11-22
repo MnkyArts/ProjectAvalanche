@@ -202,7 +202,15 @@ pub struct BotModel {
     pub rig: SceneGraph,
     pub bind: Vec<Srt>,
     pub light_nodes: Vec<Vec<crate::track_lights::LightNode>>,
+    pub board: Option<BotBoard>,
     pub problems: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BotBoard {
+    pub mesh_name: String,
+    pub geom: String,
+    pub material: Material,
 }
 
 pub fn load_bot_model(big_root: &Path, track: Option<&str>, character: &str) -> Result<BotModel> {
@@ -213,7 +221,7 @@ pub fn load_bot_model(big_root: &Path, track: Option<&str>, character: &str) -> 
     if key == 0 {
         bail!("character {character} has no game object (field 0x030BB788)");
     }
-    let (lod_thresholds, models, light_nodes) = crate::vault_db::with_level_db(big_root, track, |db| {
+    let (lod_thresholds, models, light_nodes, board) = crate::vault_db::with_level_db(big_root, track, |db| {
         let mut thresholds = Vec::new();
         let (mut models, mut lights) = (Vec::new(), Vec::new());
         for f in db.fields(CLASS_GAMEOBJECT, key)? {
@@ -243,7 +251,8 @@ pub fn load_bot_model(big_root: &Path, track: Option<&str>, character: &str) -> 
                 _ => {}
             }
         }
-        Ok((thresholds, models, lights))
+        let board = crate::character::racer_board(db, CLASS_GAMEOBJECT, key)?;
+        Ok((thresholds, models, lights, board))
     })?;
     let skeleton = models
         .first()
@@ -254,7 +263,8 @@ pub fn load_bot_model(big_root: &Path, track: Option<&str>, character: &str) -> 
         .with_context(|| format!("parsing {}", rig_file.display()))?
         .scene
         .with_context(|| format!("{} has no SGRF scene graph", rig_file.display()))?;
-    let mut problems = Vec::new();
+    let (board, mut problems) = board;
+    let board = board.map(|m| BotBoard { mesh_name: m.mesh_name, geom: m.geom, material: m.material });
     let mut read_lods = Vec::new();
     for parts in models {
         let mut loaded = Vec::new();
@@ -299,5 +309,5 @@ pub fn load_bot_model(big_root: &Path, track: Option<&str>, character: &str) -> 
     if lods.first().is_none_or(|l| l.is_empty()) {
         bail!("game object {key:08x}: no LOD-0 part loaded ({})", problems.join("; "));
     }
-    Ok(BotModel { game_object: key, lod_thresholds, lods, rig_file, rig, bind, light_nodes, problems })
+    Ok(BotModel { game_object: key, lod_thresholds, lods, rig_file, rig, bind, light_nodes, board, problems })
 }

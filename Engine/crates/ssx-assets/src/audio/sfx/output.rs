@@ -248,7 +248,7 @@ pub fn delay() -> Duration {
 
 const DRAIN_PERIOD: Duration = Duration::from_nanos(FRAME_SAMPLES as u64 * 1_000_000_000 / MIXER_RATE as u64);
 
-fn mixer_thread(inner: &Inner, mut mix: OutputMix, inbox: MixInbox, scheduling: Scheduling) {
+fn mixer_thread(inner: &Inner, mut mix: OutputMix, mut inbox: MixInbox, scheduling: Scheduling) {
     let mut promotion = priority::Promotion::start(scheduling);
     crate::sfx_stream::mark_live_thread();
     let mut frames_rendered = 0u64;
@@ -291,13 +291,14 @@ fn mixer_thread(inner: &Inner, mut mix: OutputMix, inbox: MixInbox, scheduling: 
             }
             (lead.channels, lead.step())
         };
-        let t1 = Instant::now();
+        let (t1, cpu) = (Instant::now(), stats::thread_cpu());
         frames_rendered += 1;
         crate::sfx_stream::live_frame(frames_rendered, step);
         frame.resize(ch * MIX_FRAMES, 0.0);
         mix.render_channels(&mut frame, ch);
         let swapped = std::mem::take(&mut mix.swapped);
-        stats::render(t1.elapsed().as_nanos() as u64, MIX_FRAMES as u64);
+        let on_cpu = cpu.zip(stats::thread_cpu()).map_or(0, |(a, b)| b.saturating_sub(a).as_nanos() as u64);
+        stats::render(t1.elapsed().as_nanos() as u64, on_cpu, MIX_FRAMES as u64);
         for x in &mut frame {
             *x = x.clamp(-1.0, 1.0);
         }

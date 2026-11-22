@@ -49,6 +49,12 @@ impl HeliPose {
         p
     }
 
+    pub fn default_of(rig: &Rig, joint: &str) -> Option<([f32; 4], [f32; 3])> {
+        rig.skeleton.find(joint)?;
+        let d = rig.defaults.get(joint).copied().unwrap_or(crate::rigamate::Sqt::IDENTITY);
+        Some((d.q, [d.t[0], d.t[1], d.t[2]]))
+    }
+
     pub fn write_nis(&mut self, clip: &NisClip, tick: f32) {
         self.write_clip(clip, tick, |_| true);
     }
@@ -132,10 +138,7 @@ impl HeliPose {
                 continue;
             }
             let a = self.q.get(j).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
-            let s = if (0..4).map(|k| a[k] * b[k]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
-            let q: [f32; 4] = std::array::from_fn(|k| a[k] + (s * b[k] - a[k]) * w);
-            let n = q.iter().map(|x| x * x).sum::<f32>().sqrt();
-            self.q.insert(j.clone(), if n > 0.0 { q.map(|x| x / n) } else { a });
+            self.q.insert(j.clone(), blend_rotation(a, *b, w));
         }
         for (j, b) in &other.t {
             let w = weight(j, 't');
@@ -143,9 +146,20 @@ impl HeliPose {
                 continue;
             }
             let a = self.t.get(j).copied().unwrap_or([0.0; 3]);
-            self.t.insert(j.clone(), std::array::from_fn(|k| a[k] + (b[k] - a[k]) * w));
+            self.t.insert(j.clone(), blend_translation(a, *b, w));
         }
     }
+}
+
+pub fn blend_rotation(a: [f32; 4], b: [f32; 4], w: f32) -> [f32; 4] {
+    let s = if (0..4).map(|k| a[k] * b[k]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+    let q: [f32; 4] = std::array::from_fn(|k| a[k] + (s * b[k] - a[k]) * w);
+    let n = q.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if n > 0.0 { q.map(|x| x / n) } else { a }
+}
+
+pub fn blend_translation(a: [f32; 3], b: [f32; 3], w: f32) -> [f32; 3] {
+    std::array::from_fn(|k| a[k] + (b[k] - a[k]) * w)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -273,7 +287,7 @@ pub struct HeliAnimator {
 #[derive(Clone, Debug)]
 pub struct HoverNoise {
     pub items: Vec<(f32, NisClip)>,
-    pub loop_end: f32,
+    pub length: f32,
 }
 
 impl HoverNoise {
@@ -295,11 +309,24 @@ impl HoverNoise {
             items.push((x, NisClip::load(db, all, &clip, HELI_RIG)?));
         }
         anyhow::ensure!(!items.is_empty(), "sba_helicopter_noise: no items");
-        Ok(Self { items, loop_end: looping.f32("LoopEndTime").unwrap_or(0.0) })
+        let fields = crate::anim_graph::LoopFields::of_asset(&looping);
+        anyhow::ensure!(
+            !fields.loop_control && fields.start == 0.0,
+            "sba_helicopter_noise (Looping): IsLoopControl {} / StartTime {} (not ported)",
+            fields.loop_control,
+            fields.start
+        );
+        let length = items[0].1.num_ticks;
+        anyhow::ensure!(
+            length > 0.0 && items.iter().all(|i| i.1.num_ticks == length),
+            "sba_helicopter_noise: items of {:?} ticks (the array's length follows the signal; not ported)",
+            items.iter().map(|i| i.1.num_ticks).collect::<Vec<_>>()
+        );
+        Ok(Self { items, length })
     }
 
     pub fn write(&self, pose: &mut HeliPose, speed_ratio: f32, ticks: f32) {
-        let t = if self.loop_end > 0.0 { ticks.rem_euclid(self.loop_end) } else { ticks };
+        let t = ticks.rem_euclid(self.length);
         let xs: Vec<f32> = self.items.iter().map(|i| i.0).collect();
         let (lo, hi) = (xs[0].min(xs[xs.len() - 1]), xs[0].max(xs[xs.len() - 1]));
         let pos = speed_ratio.clamp(0.0, 1.0).clamp(lo, hi);

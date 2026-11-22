@@ -319,7 +319,19 @@ fn delay_ramp(path: &mut Path, p: &Packet, countdown: i32, max_samples: i32) {
 }
 
 impl Pan3d {
-    fn render_path(&mut self, slot: usize, base: i64, mut at: usize, mut n: usize, out: &mut [Vec<f32>]) {
+    fn render_path(&mut self, slot: usize, base: i64, at: usize, n: usize, out: &mut [Vec<f32>]) {
+        // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the multiply-adds of the delay read
+        // and the low-pass (6 a sample) and of the mix (1 a sample and channel) are the instruction in line instead of
+        // calls to the runtime's `fmaf` (the same single rounding: the same samples bit for bit); the flag is not used
+        // (they stay fused without FMA too, as before); the console has 0x82A52D08, whose multiply-adds these are.
+        super::fused(
+            #[inline(always)]
+            |_| self.render_path_in(slot, base, at, n, out),
+        );
+    }
+
+    #[inline(always)]
+    fn render_path_in(&mut self, slot: usize, base: i64, mut at: usize, mut n: usize, out: &mut [Vec<f32>]) {
         let chans = self.chans;
         let mut x = [0.0f32; BLOCK];
         while n > 0 {
@@ -367,6 +379,7 @@ impl Pan3d {
     }
 }
 
+#[inline(always)]
 fn read_delay(line: &[f32], at: i64, delay: f32, inc: f32, x: &mut [f32]) {
     let len = line.len() as i64;
     let start = (at as f64 - f64::from(delay)) as f32;
@@ -375,15 +388,17 @@ fn read_delay(line: &[f32], at: i64, delay: f32, inc: f32, x: &mut [f32]) {
     let pos0 = round_half(frac * 65_536.0) as u32;
     let step = round_half((1.0 - inc) * 65_536.0) as u32;
     let scale = f32::from_bits(0x377F_FC9C);
-    let sample = |k: i64| line[(k.rem_euclid(len)) as usize];
+    let first = (i as i64).rem_euclid(len) as usize;
+    let sample = |off: usize| line[super::wrap(first + off, line.len())];
     for (k, v) in x.iter_mut().enumerate() {
         let pos = pos0.wrapping_add(step.wrapping_mul(k as u32));
-        let idx = i as i64 + i64::from(pos >> 16);
+        let off = (pos >> 16) as usize;
         let f = (pos & 0xFFFF) as f32 * scale;
-        *v = (1.0 - f).mul_add(sample(idx), f * sample(idx + 1));
+        *v = (1.0 - f).mul_add(sample(off), f * sample(off + 1));
     }
 }
 
+#[inline(always)]
 fn lowpass(c: &Coefs, state: &mut [f32; 4], buf: &mut [f32]) {
     let [mut x1, mut x2, mut y1, mut y2] = *state;
     for v in buf.iter_mut() {
@@ -396,6 +411,7 @@ fn lowpass(c: &Coefs, state: &mut [f32; 4], buf: &mut [f32]) {
     *state = [x1, x2, y1, y2];
 }
 
+#[inline(always)]
 fn mix(path: &mut Path, chans: usize, x: &[f32], out: &mut [Vec<f32>], at: usize) {
     let groups = x.len() / 16;
     for c in 0..chans.min(out.len()) {

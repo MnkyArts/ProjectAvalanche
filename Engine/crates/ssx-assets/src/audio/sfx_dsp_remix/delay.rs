@@ -22,7 +22,7 @@ impl Ring {
 
     pub(super) fn get(&self, c: usize, back: usize) -> f32 {
         let n = self.len();
-        self.buf[c][(self.pos + n - back % n) % n]
+        self.buf[c][wrap(self.pos + n - wrap(back, n), n)]
     }
 
     pub(super) fn push(&mut self, c: usize, x: f32) {
@@ -30,7 +30,7 @@ impl Ring {
     }
 
     fn advance(&mut self) {
-        self.pos = (self.pos + 1) % self.len();
+        self.pos = wrap(self.pos + 1, self.len());
     }
 }
 
@@ -85,24 +85,33 @@ impl Delay {
             return;
         }
         let channels = self.ring.buf.len();
-        for k in 0..BLOCK {
-            for (c, buf) in chans.iter_mut().enumerate().take(channels) {
-                let x = buf[k];
-                let new = self.ring.get(c, self.delay);
-                let (y, w) = if self.fade && k < 128 {
-                    let r = 0.992_187_5 - k as f32 * 0.007_812_5;
-                    let old = self.ring.get(c, self.old_delay);
-                    let a = (1.0 - r) * new;
-                    let w = f64::from(a) * f64::from(self.fb) + f64::from((old * self.old_fb) * r);
-                    (a + old * r, (w as f32) + x)
-                } else {
-                    (new, new.mul_add(self.fb, x))
-                };
-                self.ring.push(c, w);
-                buf[k] = y;
-            }
-            self.ring.advance();
-        }
+        // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the feedback's multiply-add a sample
+        // is the instruction in line instead of a call to the runtime's `fmaf` (the same single rounding: the same
+        // samples bit for bit); the flag is not used (it stays fused without FMA too, as before); the console has the
+        // kernels 0x82A51EB8 / 0x82A51D40, whose multiply-add this is.
+        crate::sfx_dsp::fused(
+            #[inline(always)]
+            |_| {
+                for k in 0..BLOCK {
+                    for (c, buf) in chans.iter_mut().enumerate().take(channels) {
+                        let x = buf[k];
+                        let new = self.ring.get(c, self.delay);
+                        let (y, w) = if self.fade && k < 128 {
+                            let r = 0.992_187_5 - k as f32 * 0.007_812_5;
+                            let old = self.ring.get(c, self.old_delay);
+                            let a = (1.0 - r) * new;
+                            let w = f64::from(a) * f64::from(self.fb) + f64::from((old * self.old_fb) * r);
+                            (a + old * r, (w as f32) + x)
+                        } else {
+                            (new, new.mul_add(self.fb, x))
+                        };
+                        self.ring.push(c, w);
+                        buf[k] = y;
+                    }
+                    self.ring.advance();
+                }
+            },
+        );
         self.fade = false;
     }
 }
@@ -190,24 +199,34 @@ impl ModDelay {
     pub fn process(&mut self, chans: &mut [Vec<f32>]) {
         let len = self.ring.first().map_or(1, Vec::len);
         let input: Vec<Vec<f32>> = chans.to_vec();
-        for (c, buf) in chans.iter_mut().enumerate().take(self.ring.len()) {
-            buf.iter_mut().for_each(|x| *x *= self.dry);
-            for t in &self.taps {
-                let mut ph = t.phase;
-                for (k, out) in buf.iter_mut().enumerate() {
-                    let s = (f64::from(ph).sin() as f32) + 1.0;
-                    let d = s.mul_add(t.depth as f32, t.fixed as f32) + 512.0;
-                    let back = d - (k as f32 + 1.0);
-                    let cb = back.ceil();
-                    let frac = cb - back;
-                    let at = |b: usize| self.ring[c][(self.pos + len - b % len) % len];
-                    let (older, newer) = (at(cb as usize), at(cb as usize - 1));
-                    let v = (1.0 - frac) * older + (f64::from(newer) * f64::from(frac)) as f32;
-                    *out = t.gain.mul_add(v, *out);
-                    ph = (f64::from(t.freq) + f64::from(ph)) as f32;
+        let (ring, taps, pos, dry) = (&self.ring, &self.taps, self.pos, self.dry);
+        // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the 2 multiply-adds a sample and tap
+        // are the instruction in line instead of calls to the runtime's `fmaf` (the same single rounding: the same
+        // samples bit for bit); the flag is not used (they stay fused without FMA too, as before); the console has the
+        // engine 0x82A16D70, whose multiply-adds these are.
+        crate::sfx_dsp::fused(
+            #[inline(always)]
+            |_| {
+                for (c, buf) in chans.iter_mut().enumerate().take(ring.len()) {
+                    buf.iter_mut().for_each(|x| *x *= dry);
+                    for t in taps {
+                        let mut ph = t.phase;
+                        for (k, out) in buf.iter_mut().enumerate() {
+                            let s = (f64::from(ph).sin() as f32) + 1.0;
+                            let d = s.mul_add(t.depth as f32, t.fixed as f32) + 512.0;
+                            let back = d - (k as f32 + 1.0);
+                            let cb = back.ceil();
+                            let frac = cb - back;
+                            let at = |b: usize| ring[c][wrap(pos + len - wrap(b, len), len)];
+                            let (older, newer) = (at(cb as usize), at(cb as usize - 1));
+                            let v = (1.0 - frac) * older + (f64::from(newer) * f64::from(frac)) as f32;
+                            *out = t.gain.mul_add(v, *out);
+                            ph = (f64::from(t.freq) + f64::from(ph)) as f32;
+                        }
+                    }
                 }
-            }
-        }
+            },
+        );
         for t in &mut self.taps {
             let p = (f64::from(t.freq) * 256.0 + f64::from(t.phase)) as f32;
             let turns = f64::from(p) * 0.159_154_936_671_257_02;
@@ -219,7 +238,7 @@ impl ModDelay {
         }
         for (c, x) in input.iter().enumerate().take(self.ring.len()) {
             for (k, v) in x.iter().enumerate() {
-                self.ring[c][(self.pos + k) % len] = *v;
+                self.ring[c][wrap(self.pos + k, len)] = *v;
             }
         }
         self.pos = (self.pos + BLOCK) % len;

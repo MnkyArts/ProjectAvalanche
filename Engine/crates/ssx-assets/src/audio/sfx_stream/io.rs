@@ -1,11 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, OnceLock};
 
 use super::StreamFile;
 use super::parse::BlockKind;
 use super::strm::{self, HIGH, ON, Order, Strm};
+use crate::sfx_queue::{Receiver, Sender, TryRecvError, queue};
 
 pub(super) struct Request {
     pub tag: u64,
@@ -61,7 +61,7 @@ pub(super) enum Delivery {
 pub(super) fn sender() -> Option<&'static Sender<Msg>> {
     static IO: OnceLock<Option<Sender<Msg>>> = OnceLock::new();
     IO.get_or_init(|| {
-        let (tx, rx) = channel();
+        let (tx, rx) = queue();
         std::thread::Builder::new().name("ssx_stream_io".into()).spawn(move || run(rx)).ok().map(|_| tx)
     })
     .as_ref()
@@ -98,7 +98,7 @@ impl Reading {
     }
 }
 
-fn run(rx: Receiver<Msg>) {
+fn run(mut rx: Receiver<Msg>) {
     let mut slots: HashMap<u64, SlotIo> = HashMap::new();
     let mut order = Order::default();
     loop {

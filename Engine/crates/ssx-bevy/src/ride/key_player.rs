@@ -13,6 +13,7 @@ const SECTOR: f32 = 0.383;
 pub(super) struct Buttons {
     pub l2: bool,
     pub r1: bool,
+    pub r3: bool,
     pub r2: f32,
     pub rewind: bool,
     pub takeover: bool,
@@ -57,6 +58,7 @@ fn key_named(name: &str) -> Option<KeyCode> {
         "num2" => KeyCode::Numpad2,
         "num4" => KeyCode::Numpad4,
         "num6" => KeyCode::Numpad6,
+        "num5" => KeyCode::Numpad5,
         _ => return None,
     })
 }
@@ -213,6 +215,7 @@ pub(super) struct StepRead {
     bail_on_landing: bool,
     r2: bool,
     shoulders: [bool; 2],
+    oxygen_use: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -252,6 +255,7 @@ pub(super) fn keys_for(input: &Input, tricks: &TrickInput, b: Buttons, classic: 
     add(KeyCode::Numpad4, rs.x <= -SECTOR);
     add(KeyCode::Numpad8, rs.y >= SECTOR);
     add(KeyCode::Numpad2, rs.y <= -SECTOR || (b.takeover && rs.length() < SECTOR));
+    add(KeyCode::Numpad5, b.r3);
     if classic {
         add(KeyCode::ControlLeft, tricks.y);
         add(KeyCode::KeyJ, tricks.x || tricks.tweak);
@@ -276,7 +280,7 @@ pub(super) fn keys_for(input: &Input, tricks: &TrickInput, b: Buttons, classic: 
 }
 
 impl Ride {
-    pub(super) fn through_keys(&mut self, gamepads: &Query<&Gamepad>, chase: bool) {
+    pub(super) fn through_keys<'a>(&mut self, gamepads: impl Iterator<Item = &'a Gamepad> + Clone, chase: bool) {
         if !self.autoplay || !enabled() {
             return;
         }
@@ -288,6 +292,7 @@ impl Ride {
         let b = Buttons {
             l2: self.l2,
             r1: self.r1,
+            r3: self.r3,
             r2: self.r2,
             rewind: self.rewind_pad.rewind_held,
             takeover: self.rewind_pad.takeover,
@@ -336,12 +341,13 @@ impl Ride {
             bail_on_landing: self.state.landing.bail_on_landing,
             r2: self.key_holds.live.0,
             shoulders: self.key_holds.live.1,
+            oxygen_use: self.state.survival.oxygen_use_requested,
         };
         if self.key_holds.read != Some(read) && self.steps > 0 {
             info!(
                 "Ride step {}: key holds: the step read the grind button {}, the surface analysis' next L2 {}, boosting \
                  {} (meter {:.3}), the rewind {:?}, the wingsuit hold {}, in the air {}, the landing bail {}, \
-                 R2 held {}, the classic shoulders LT {} RT {}",
+                 R2 held {}, the classic shoulders LT {} RT {}, the tank requested {} (oxygen {:.4}, tank {:.4})",
                 self.steps,
                 read.grind_button,
                 read.sa_l2,
@@ -353,7 +359,10 @@ impl Ride {
                 read.bail_on_landing,
                 read.r2,
                 read.shoulders[0],
-                read.shoulders[1]
+                read.shoulders[1],
+                read.oxygen_use,
+                self.state.survival.oxygen,
+                self.state.survival.oxygen_tank
             );
         }
         self.key_holds.read = Some(read);
@@ -439,7 +448,7 @@ mod tests {
             app.world_mut().insert_resource(keys);
             app.world_mut()
                 .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>| {
-                    let r = live_read(&keys, &pads, true, classic, false);
+                    let r = live_read(&keys, pads.iter(), true, classic, false);
                     (r.input, r.tricks, r)
                 })
                 .expect("the live controls")

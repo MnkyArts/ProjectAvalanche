@@ -220,7 +220,19 @@ impl StatKey {
     pub fn key(&self) -> u32 {
         match &self.location {
             None => self.name.hash,
-            Some(l) => fnv1(format!("{}{}", self.name.text, l.hash).as_bytes()),
+            Some(l) => {
+                let mut digits = [0u8; 10];
+                let (mut n, mut i) = (l.hash, digits.len());
+                loop {
+                    i -= 1;
+                    digits[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                super::fnv1_continue(fnv1(self.name.text.as_bytes()), &digits[i..])
+            }
         }
     }
 }

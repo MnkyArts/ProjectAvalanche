@@ -25,7 +25,7 @@ use ssx_formats::crsf::SceneGraph;
 use ssx_physics::helicopter::downwash::Downwash;
 use ssx_physics::nis::IntroAssets;
 
-use crate::render::lighting::game::{GameLightAssets, GameLightUniform};
+use crate::render::lighting::game::{GameLightAssets, LEVEL_LIGHT};
 use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::{LDR_FRAME_FORMAT, LDR_PIPELINE_LABEL, LDR_TONEMAP_BUFFER, ObjectMaterial};
 use crate::render::objects::{LoadedPart, MaterialHandle, part_from_mesh};
@@ -56,20 +56,28 @@ struct PendingHeli(Option<LoadedHeli>);
 
 #[derive(Resource)]
 pub struct HeliVisual {
-    model: HeliModel,
-    animator: HeliAnimator,
+    model: Arc<HeliModel>,
     root: Entity,
     nodes: Vec<Entity>,
-    seen_steps: u64,
-    handover: Option<HeliPose>,
-    steps: (Vec<JointRecord>, Vec<JointRecord>),
+    snap: crate::frame_task::FrameTask<HeliSnapshot, ()>,
+    handed: Option<u64>,
     pub drawn_floor: Option<Vec3>,
     lights: Vec<HeliLight>,
     pub particle_nodes: Vec<ParticleNode>,
-    wash: Option<(usize, usize)>,
     pub newest: Vec<JointRecord>,
     drawn: Vec<JointRecord>,
     pub downwash: Option<Downwash>,
+}
+
+struct HeliSnapshot {
+    model: Arc<HeliModel>,
+    animator: HeliAnimator,
+    seen_steps: u64,
+    handover: Option<HeliPose>,
+    steps: (Vec<JointRecord>, Vec<JointRecord>),
+    wash: Option<(usize, usize)>,
+    newest: Vec<JointRecord>,
+    downwash: Option<Downwash>,
 }
 
 impl HeliVisual {
@@ -132,6 +140,18 @@ fn load(root: &Path, track: Option<&str>, intro: &IntroAssets) -> Result<LoadedH
 }
 
 pub type Loaded = LoadedHeli;
+
+impl LoadedHeli {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for p in &mut self.parts {
+            p.0.queue_images(uploads, images);
+        }
+    }
+
+    pub fn effect_inputs(&self) -> (&[ParticleNode], &SceneGraph) {
+        (&self.particles, &self.model.rig)
+    }
+}
 
 pub fn register(app: &mut App) {
     let (ride, heli) = (resource_exists::<crate::ride::Ride>, resource_exists::<HeliVisual>);
@@ -274,7 +294,7 @@ fn spawn(
             let m = translucent.add(HeliTranslucentMaterial {
                 base,
                 extension: HeliTranslucentExtension {
-                    light: light.uniform,
+                    light: LEVEL_LIGHT,
                     params: HeliTranslucentParams {
                         shading: Vec4::new(
                             o.extension.params.shading.y,
@@ -298,18 +318,26 @@ fn spawn(
             MaterialHandle::Foreground(m) => e.insert(MeshMaterial3d(m)),
         };
     }
-    commands.insert_resource(HeliVisual {
-        model: loaded.model,
+    let model = Arc::new(loaded.model);
+    let snap = HeliSnapshot {
+        model: model.clone(),
         animator: loaded.animator,
-        root,
-        nodes,
         seen_steps: 0,
         handover: None,
         steps: (Vec::new(), Vec::new()),
+        wash: loaded.wash,
+        newest: Vec::new(),
+        downwash: None,
+    };
+    commands.insert_resource(HeliVisual {
+        model,
+        root,
+        nodes,
+        snap: crate::frame_task::FrameTask::new(snap),
+        handed: None,
         drawn_floor: None,
         lights: loaded.lights,
         particle_nodes: loaded.particles,
-        wash: loaded.wash,
         newest: Vec::new(),
         drawn: Vec::new(),
         downwash: None,
@@ -321,30 +349,49 @@ fn record_transform(r: &JointRecord) -> Transform {
 }
 
 fn snapshot(ride: Res<crate::ride::Ride>, mut heli: ResMut<HeliVisual>) {
-    let h = &mut *heli;
+    let heli = &mut *heli;
     let Some(state) = ride.heli.as_ref() else {
-        (h.steps, h.newest) = ((Vec::new(), Vec::new()), Vec::new());
+        if let Some(h) = heli.snap.settle() {
+            (h.steps, h.newest) = ((Vec::new(), Vec::new()), Vec::new());
+        }
+        heli.handed = None;
         return;
     };
-    if ride.steps < h.seen_steps {
-        (h.seen_steps, h.handover, h.steps) = (0, None, (Vec::new(), Vec::new()));
-    }
-    if ride.steps == h.seen_steps && !h.steps.1.is_empty() {
+    if heli.handed == Some(ride.steps) {
         return;
     }
-    let ticks = (ride.steps - h.seen_steps) as f32 * ssx_physics::DT_TICKS;
-    h.seen_steps = ride.steps;
-    h.animator.update(ticks);
-    let root = Quat::from_array(state.gameplay_pose().q.get("Root").copied().unwrap_or([0.0, 0.0, 0.0, 1.0]));
-    let (newest, reference) = pose_records(h, state, root);
-    let before = std::mem::replace(&mut h.steps.1, snapshot_block(&newest, reference));
-    h.steps.0 = if before.is_empty() { h.steps.1.clone() } else { before };
-    h.newest = newest;
-    h.downwash = ride.session.downwash;
-    if let (Some((_, wash)), Some(d)) = (h.wash, h.downwash)
-        && let Some((q, p)) = d.wash
-    {
-        h.newest[wash] = JointRecord { s: Vec3::ONE, q, p };
+    heli.handed = Some(ride.steps);
+    // PORT(choice): the step's pose of the helicopter (its layers, the pose block's snapshot: 0.9 ms a step on Mount
+    // Eddie, traced) is worked out on the compute pool from a copy of its state while the frame goes on, and joined
+    // where it is first read (the drawn frame's `update`); the same work in the same order, so the same records. The
+    // console's render-state updates ran after the simulation phase on the game thread (0x829E18E0).
+    let (state, steps, downwash) = (state.clone(), ride.steps, ride.session.downwash);
+    heli.snap.spawn(move |h| h.step(&state, steps, downwash));
+}
+
+impl HeliSnapshot {
+    fn step(&mut self, state: &ssx_physics::helicopter::Helicopter, steps: u64, downwash: Option<Downwash>) {
+        let h = self;
+        if steps < h.seen_steps {
+            (h.seen_steps, h.handover, h.steps) = (0, None, (Vec::new(), Vec::new()));
+        }
+        if steps == h.seen_steps && !h.steps.1.is_empty() {
+            return;
+        }
+        let ticks = (steps - h.seen_steps) as f32 * ssx_physics::DT_TICKS;
+        h.seen_steps = steps;
+        h.animator.update(ticks);
+        let root = Quat::from_array(state.gameplay_joint("Root").0.unwrap_or([0.0, 0.0, 0.0, 1.0]));
+        let (newest, reference) = pose_records(h, state, root);
+        let before = std::mem::replace(&mut h.steps.1, snapshot_block(&newest, reference));
+        h.steps.0 = if before.is_empty() { h.steps.1.clone() } else { before };
+        h.newest = newest;
+        h.downwash = downwash;
+        if let (Some((_, wash)), Some(d)) = (h.wash, h.downwash)
+            && let Some((q, p)) = d.wash
+        {
+            h.newest[wash] = JointRecord { s: Vec3::ONE, q, p };
+        }
     }
 }
 
@@ -357,7 +404,10 @@ fn update(
 ) {
     let (Some(ride), Some(mut heli)) = (ride, heli) else { return };
     let h = &mut *heli;
-    if ride.heli.is_none() || h.steps.1.is_empty() {
+    let Some(snap) = h.snap.settle() else { return };
+    h.newest.clone_from(&snap.newest);
+    h.downwash = snap.downwash;
+    if ride.heli.is_none() || snap.steps.1.is_empty() {
         if let Ok(mut v) = visibility.get_mut(h.root) {
             *v = Visibility::Hidden;
         }
@@ -366,7 +416,7 @@ fn update(
     }
     let lag_ticks = ((ride.steps as f32 / ssx_physics::SIM_HZ - ride.render_time).max(0.0)) * 60.0;
     let frac = 1.0 - (lag_ticks / ssx_physics::DT_TICKS).clamp(0.0, 1.0);
-    interpolate_records(&h.steps.0, &h.steps.1, frac, &mut h.drawn);
+    interpolate_records(&snap.steps.0, &snap.steps.1, frac, &mut h.drawn);
     for (&e, r) in h.nodes.iter().zip(&h.drawn) {
         if let Ok(mut tr) = transforms.get_mut(e) {
             *tr = record_transform(r);
@@ -426,7 +476,7 @@ fn snapshot_block(records: &[JointRecord], reference: Vec3) -> Vec<JointRecord> 
 }
 
 fn pose_records(
-    h: &mut HeliVisual,
+    h: &mut HeliSnapshot,
     state: &ssx_physics::helicopter::Helicopter,
     root: Quat,
 ) -> (Vec<JointRecord>, Vec3) {
@@ -493,8 +543,8 @@ pub struct HeliTranslucentParams {
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(HeliTranslucentKey)]
 pub struct HeliTranslucentExtension {
-    #[uniform(100)]
-    pub light: GameLightUniform,
+    #[storage(100, read_only)]
+    pub light: Handle<ShaderBuffer>,
     #[uniform(101)]
     pub params: HeliTranslucentParams,
     #[texture(102)]

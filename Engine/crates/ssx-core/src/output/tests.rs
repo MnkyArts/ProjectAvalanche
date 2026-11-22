@@ -143,3 +143,20 @@ fn the_log_time_format() {
     assert_eq!(utc(UNIX_EPOCH + Duration::from_secs(1_709_164_800)), "2024-02-29T00:00:00.000000Z");
     assert_eq!(utc(UNIX_EPOCH + Duration::from_secs(4_102_444_799)), "2099-12-31T23:59:59.000000Z");
 }
+
+#[test]
+fn flush_waits_for_every_started_output() {
+    let (seen, g) = (Seen::default(), gate(false));
+    let out = Output::new();
+    let running = out.start("test-writer", sink(&seen, &g)).unwrap();
+    out.line(Stream::Err, Keep::Droppable, b"held\n".to_vec()).unwrap();
+    let flushing = std::thread::spawn(flush);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!flushing.is_finished(), "the module's flush did not wait for a started output's lines");
+    open(&g);
+    flushing.join().unwrap();
+    assert_eq!(text(&seen), "held\n");
+    drop(running);
+    drop(out);
+    flush();
+}

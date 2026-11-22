@@ -5,16 +5,16 @@ use eframe::egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
-    Mountain,
+    Globe,
+    Layers,
     Gear,
-    Wrench,
 }
 
 pub fn draw(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
     match icon {
-        Icon::Mountain => mountain(painter, rect, color),
+        Icon::Globe => globe(painter, rect, color),
+        Icon::Layers => layers(painter, rect, color),
         Icon::Gear => gear(painter, rect, color),
-        Icon::Wrench => wrench(painter, rect, color),
     }
 }
 
@@ -55,19 +55,32 @@ fn gear(painter: &Painter, rect: Rect, color: Color32) {
     }
 }
 
-fn wrench(painter: &Painter, rect: Rect, color: Color32) {
-    let s = rect.width();
-    let at = |x: f32, y: f32| rect.min + vec2(x, y) * s;
-    let head = at(0.68, 0.32);
-    let (radius, weight) = (s * 0.20, s * 0.17);
-    let open = -TAU / 8.0;
-    let arc: Vec<Pos2> =
-        (0..=24).map(|i| head + Vec2::angled(open + TAU * (0.14 + 0.72 * i as f32 / 24.0)) * radius).collect();
-    painter.add(Shape::line(arc, Stroke::new(weight, color)));
-    let (dir, side) = (vec2(-1.0, 1.0).normalized(), vec2(1.0, 1.0).normalized());
-    let (from, to, half) = (head + dir * (radius * 0.9), at(0.16, 0.84), s * 0.085);
-    polygon(painter, &[from - side * half, from + side * half, to + side * half, to - side * half], color);
-    painter.add(Shape::circle_filled(to, half, color));
+fn unit(rect: Rect) -> (impl Fn(f32, f32) -> Pos2, f32) {
+    let s = rect.width() / 74.0;
+    (move |x: f32, y: f32| rect.min + vec2(x, y) * s, 5.0 * s)
+}
+
+fn globe(painter: &Painter, rect: Rect, color: Color32) {
+    let (at, weight) = unit(rect);
+    let stroke = Stroke::new(weight, color);
+    let c = at(37.0, 37.0);
+    let r = at(67.0, 37.0).x - c.x;
+    painter.add(Shape::circle_stroke(c, r, stroke));
+    let (rx, ry) = (at(50.0, 0.0).x - c.x, r);
+    let meridian: Vec<Pos2> = (0..48).map(|i| c + Vec2::angled(TAU * i as f32 / 48.0) * vec2(rx, ry)).collect();
+    painter.add(Shape::closed_line(meridian, stroke));
+    for y in [28.0, 46.0] {
+        painter.add(Shape::line_segment([at(8.0, y), at(66.0, y)], stroke));
+    }
+}
+
+fn layers(painter: &Painter, rect: Rect, color: Color32) {
+    let (at, weight) = unit(rect);
+    let stroke = Stroke::new(weight, color);
+    painter.add(Shape::closed_line(vec![at(37.0, 8.0), at(66.0, 22.0), at(37.0, 36.0), at(8.0, 22.0)], stroke));
+    for y in [37.0, 52.0] {
+        painter.add(Shape::line(vec![at(8.0, y), at(37.0, y + 14.0), at(66.0, y)], stroke));
+    }
 }
 
 pub fn chevrons(painter: &Painter, right: Pos2, height: f32, weight: f32, color: Color32) {

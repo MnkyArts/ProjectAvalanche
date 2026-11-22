@@ -13,6 +13,8 @@ pub use queries::*;
 pub struct Cluster {
     pub min: Vec3,
     pub max: Vec3,
+    pub entry_min: Vec3,
+    pub entry_max: Vec3,
     pub vert_start: u32,
     pub vert_count: u16,
     pub tri_start: u32,
@@ -168,6 +170,8 @@ impl CollisionWorld {
         self.clusters.push(Cluster {
             min,
             max,
+            entry_min: min,
+            entry_max: max,
             vert_start: self.vertices.len() as u32,
             vert_count: vertices.len() as u16,
             tri_start: self.triangles.len() as u32,
@@ -201,6 +205,12 @@ impl CollisionWorld {
     pub fn set_cluster_entity(&mut self, id: u32) {
         if let Some(e) = self.cluster_entity.last_mut() {
             *e = id;
+        }
+    }
+
+    pub fn set_cluster_entry_box(&mut self, min: Vec3, max: Vec3) {
+        if let Some(c) = self.clusters.last_mut() {
+            (c.entry_min, c.entry_max) = (min, max);
         }
     }
 

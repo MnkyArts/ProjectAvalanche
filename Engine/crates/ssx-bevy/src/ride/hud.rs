@@ -184,14 +184,14 @@ pub(super) fn spawn_hud(mut commands: Commands) {
 
 const RIDE_CONTROLS: &str = "A/D or Left/Right steer (air: spin) | S/Down brake, W/Up tuck (air: flip) | Space jump (on \
 release; air: A grab) | grabs I/J/L/K = Y/X/B/A (ground / rail: J/L = X/B nose / tail press) | Shift R2 (boost / tweak) | Ctrl L2 (grind) | Ctrl+Shift signature (L2+R2) \
-| E R1 (wingsuit) | hold Backspace rewind | Num8/4/6/2 right stick (grabs, up = jump) | pad: left stick, right stick grabs and up = jump, A/B/X/Y, R2, L2 grind, L2+R2, \
-R1 wingsuit, L1 rewind | R respawn | N rail \
+| E R1 (wingsuit, oxygen) | hold Backspace rewind | Num8/4/6/2 right stick (grabs, up = jump) | pad: left stick, right stick grabs and up = jump, A/B/X/Y, R2, L2 grind, L2+R2, \
+R1 wingsuit and oxygen, L1 rewind | R respawn | N rail \
 debug | Tab chase/fly | F wireframe | H overlay";
 
 const RIDE_CONTROLS_CLASSIC: &str = "Classic: D-pad or A/D carve (air: spin) | S/Down brake, W/Up tuck (air: flip) | Space A jump \
 (on release; air: A held wingsuit) | Q/E/Z/X = LB/RB/LT/RT grabs (exact shoulder sets; right stick (Num8/4/6/2) up/down = nose/tail) | J X \
-(boost / tweak) | Ctrl Y grind | hold L (B) or Backspace rewind | Ctrl+Shift signature | pad: D-pad, shoulders, right \
-stick up/down nose/tail | R respawn | N rail debug | Tab chase/fly | F wireframe | H overlay";
+(boost / tweak) | Ctrl Y grind | hold L (B) or Backspace rewind | Num5 R3 (oxygen) | Ctrl+Shift signature | pad: D-pad, \
+shoulders, right stick up/down nose/tail, R3 oxygen | R respawn | N rail debug | Tab chase/fly | F wireframe | H overlay";
 
 fn death_hud(ride: &Ride) -> String {
     let (d, t) = (&ride.state.death, &ride.session.timer);
@@ -286,7 +286,7 @@ fn trick_hud(ride: &Ride) -> String {
     let last = if sc.last_lost { format!("lost {:.0}", sc.last_capture) } else { format!("+{:.0}", sc.last_capture) };
     let tricky = match (sc.is_super_awesome, sc.is_awesome) {
         (true, _) => format!("SUPER TRICKY {:.1} s", sc.super_timer / 60.0),
-        (false, true) => format!("TRICKY {:.1} s", sc.awesome_timer / 60.0),
+        (false, true) => format!("TRICKY {:.1} s, super {:.1}%", sc.awesome_timer / 60.0, 100.0 * sc.super_activation),
         _ => format!("tricky meter {:.0}%", 100.0 * sc.boost / max_boost.max(1.0)),
     };
     format!(
@@ -328,8 +328,12 @@ fn survival_hud(ride: &Ride) -> String {
         line += &format!(" | temp {:.2}/{:.2} ({shade})", h.temperature, h.temperature_max);
     }
     if d.low_oxygen || v.oxygen < 1.0 {
-        let r1 = if h.oxygen_use_requested { " R1" } else { "" };
-        line += &format!(" | oxygen {:.2} (flow {:.0} m/s) tank {:.2}{r1}", v.oxygen, v.oxygen_flow, h.oxygen_tank);
+        let button = match (h.oxygen_use_requested, s.tricks.classic) {
+            (false, _) => "",
+            (true, false) => " R1",
+            (true, true) => " R3",
+        };
+        line += &format!(" | oxygen {:.2} (flow {:.0} m/s) tank {:.2}{button}", v.oxygen, v.oxygen_flow, h.oxygen_tank);
     }
     if d.slots[ssx_physics::character::SLOT_ICE_AXE] {
         let a = &s.ice_axe;

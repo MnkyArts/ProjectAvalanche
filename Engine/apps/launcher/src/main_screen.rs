@@ -1,10 +1,11 @@
-use eframe::egui::{self, Key};
+use eframe::egui;
 
 use crate::app::Launcher;
 use crate::command;
+use crate::jobs::Program;
 use crate::ui::footer::Status;
 use crate::ui::layout::{self, Layout};
-use crate::ui::{self, MenuItem, Page, theme};
+use crate::ui::{self, MenuItem, OnlineTab, Page, nav, theme};
 
 impl Launcher {
     pub fn status(&self) -> Status {
@@ -31,9 +32,8 @@ impl Launcher {
                 return status(theme::WARN, "Program files missing");
             }
         }
-        match (self.running(), self.started_game, self.data_ready) {
-            (true, true, _) => status(theme::CYAN, "Game running"),
-            (true, false, _) => status(theme::CYAN, "Viewer running"),
+        match (self.running(), self.started, self.data_ready) {
+            (true, program, _) => status(theme::CYAN, &format!("{} running", program.name())),
             (false, _, true) if !self.data_state.is_complete() => status(theme::WARN, "Game data: repair needed"),
             (false, _, true) if self.tracks.is_empty() => status(theme::WARN, "Game data incomplete"),
             (false, _, true) => status(theme::GOOD, "Game data ready"),
@@ -47,31 +47,10 @@ impl Launcher {
         }
     }
 
-    fn activate(&mut self, ctx: &egui::Context, item: MenuItem, key: bool) {
+    fn activate(&mut self, ctx: &egui::Context, item: MenuItem) {
         match item {
             MenuItem::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            MenuItem::Page(Page::Play) if key && self.page == Page::Play => self.hero_clicked(ctx),
             MenuItem::Page(page) => self.go(page),
-        }
-    }
-
-    fn keys(&mut self, ctx: &egui::Context) {
-        if ctx.memory(|m| m.focused().is_some()) || ctx.any_popup_open() {
-            return;
-        }
-        let pressed = |key| ctx.input(|i| i.key_pressed(key));
-        let step = pressed(Key::ArrowDown) as isize - pressed(Key::ArrowUp) as isize;
-        if step != 0 {
-            self.cursor = self.cursor.moved(step);
-            if let MenuItem::Page(page) = self.cursor {
-                self.page = page;
-            }
-        }
-        if pressed(Key::Enter) {
-            self.activate(ctx, self.cursor, true);
-        }
-        if pressed(Key::Escape) {
-            self.go(Page::Play);
         }
     }
 
@@ -85,10 +64,10 @@ impl Launcher {
                 Some(link) => command::game_with_link(&self.settings, &big, &link),
                 None => command::game(&self.settings, &big),
             };
-            self.start(ctx, &game, true);
+            self.start(ctx, &game, Program::Game);
         }
         if std::mem::take(&mut self.auto_launch_pending) {
-            self.start(ctx, &command::viewer(&self.settings, &big), false);
+            self.start(ctx, &command::viewer(&self.settings, &big), Program::Viewer);
         }
     }
 
@@ -99,6 +78,9 @@ impl Launcher {
         let settled = self.checking.is_none()
             && self.window_pixels.is_none()
             && self.scripted_keys.is_empty()
+            && self.scripted_pad.is_empty()
+            && self.scripted_clicks.is_empty()
+            && self.pointer_frames.is_empty()
             && !self.gallery.loading
             && (!self.auto_extract || extracting || self.setup_message.is_some())
             && (!self.auto_launch || viewer_done)
@@ -109,7 +91,9 @@ impl Launcher {
             && !self.tu.busy()
             && self.host.script.is_empty()
             && self.host.scripted_done()
-            && (self.page != Page::Host || self.host.drops.is_some() == self.data_ready);
+            && (self.page != Page::Online
+                || self.online_tab != OnlineTab::Host
+                || self.host.drops.is_some() == self.data_ready);
         if !plan.requested && self.frame >= 40 && settled {
             plan.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -123,6 +107,11 @@ impl Launcher {
         if let Some(image) = image {
             if let Err(e) = crate::save_png(&plan.path, &image) {
                 ssx_core::eprintln!("error: saving {}: {e}", plan.path.display());
+            }
+            if let Some(path) = &self.nav_dump
+                && let Err(e) = std::fs::write(path, self.nav_report(ctx))
+            {
+                ssx_core::eprintln!("error: writing {}: {e}", path.display());
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -154,23 +143,43 @@ impl eframe::App for Launcher {
             });
             self.scroll = 0.0;
         }
+        if due
+            && self.scripted_keys.is_empty()
+            && let Some(button) = self.scripted_pad.pop_front()
+        {
+            let style = self.pads.connected().first().map_or(crate::ui::nav::PadStyle::Xbox, |p| p.style);
+            self.pads.script(button, style);
+        }
         if let Some((key, shift)) = due.then(|| self.scripted_keys.pop_front()).flatten() {
             for pressed in [true, false] {
                 let modifiers = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::default() };
                 raw_input.events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
             }
         }
-        if !self.scripted_keys.is_empty() {
+        if let Some(events) = self.pointer_frames.pop_front() {
+            raw_input.events.extend(events);
+        } else if due
+            && self.scripted_keys.is_empty()
+            && self.scripted_pad.is_empty()
+            && let Some(l) = &self.layout
+            && let Some(click) = self.scripted_clicks.pop_front()
+        {
+            self.pointer_frames = click.frames(l).into();
+        }
+        let scripted = !self.scripted_keys.is_empty() || !self.scripted_pad.is_empty();
+        if scripted || !self.scripted_clicks.is_empty() || !self.pointer_frames.is_empty() {
             ctx.request_repaint();
         }
+        self.take_input(ctx, raw_input);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.frame += 1;
+        nav::begin_frame(&ctx);
         self.poll(&ctx);
         let big = self.data_ready.then(|| self.settings.big_root());
-        let opened = self.page == Page::Mods && self.last_page != Page::Mods;
+        let opened = self.page == Page::Content && self.last_page != Page::Content;
         if self.mods.poll() || opened || self.mods.base_changed(&big) {
             self.refresh_mods(&ctx);
         }
@@ -231,19 +240,19 @@ impl eframe::App for Launcher {
             crate::data_state::menu_play(&self.data_state),
             self.forced_hover.as_deref(),
         ) {
-            self.activate(&ctx, item, false);
+            self.activate(&ctx, item);
         }
-        match self.page {
+        let drawn = self.page;
+        match drawn {
             Page::Play => self.play_page(ui, &l),
-            Page::Host => self.host_page(ui, &l),
-            Page::Mods => self.mods_page(ui, &l),
-            Page::Settings => self.settings_page(ui, &l),
-            Page::Extras => self.extras_page(ui, &l),
+            _ => self.panel_page(ui, &l),
         }
-        ui::footer::draw(&painter, &l, &self.status());
+        ui::titlebar::show(ui, &l, self.forced_hover.as_deref());
+        self.after_page(&ctx, ui.layer_id(), &l, drawn);
+        ui::footer::draw(&painter, &l, &self.status(), self.device, &self.prompts(&ctx));
+        self.layout = scaled.then_some(l);
         self.settings_question(&ctx);
         self.settings_frame(&ctx);
-        self.keys(&ctx);
         self.screenshot_step(&ctx);
     }
 }

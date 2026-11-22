@@ -298,7 +298,8 @@ fn group(ui: &mut Ui, name: &str) {
 }
 
 fn credit(ui: &mut Ui, name: &str, url: Option<&str>, what: &str) {
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         match url {
             Some(url) => {
                 ui.hyperlink_to(RichText::new(name).color(theme::CYAN), url);

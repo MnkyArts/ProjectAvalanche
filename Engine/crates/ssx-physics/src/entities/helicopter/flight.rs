@@ -289,12 +289,16 @@ impl Helicopter {
 
     pub fn floor_joint(&self) -> Vec3 {
         let rig = &self.assets.nis.heli;
-        let pose = self.gameplay_pose();
         let Some(chain) = rig.chain("Floor", "AITrajectory") else { return self.traj.1 };
+        // PORT(choice): the chain's joints of the gameplay pose alone, by the pose's own per-joint lookup (the rig's
+        // defaults under the nodes' DOFs), instead of the whole string-keyed pose (0.24 ms of a 3.25 ms step on Mount
+        // Eddie, traced), the same values; how the console evaluated this joint was not decoded.
+        let side = self.gameplay_side();
         let (mut q, mut p) = self.traj;
         for j in chain.iter().rev() {
-            let lq = pose.q.get(j).map_or(Quat::IDENTITY, |v| Quat::from_array(*v));
-            let lt = pose.t.get(j).map_or(Vec3::ZERO, |v| Vec3::from_array(*v));
+            let (lq, lt) = super::pose::over_defaults(rig, &side, j);
+            let lq = lq.map_or(Quat::IDENTITY, Quat::from_array);
+            let lt = lt.map_or(Vec3::ZERO, Vec3::from_array);
             p += q * lt;
             q = (q * lq).normalize();
         }

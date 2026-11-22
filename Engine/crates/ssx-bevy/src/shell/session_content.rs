@@ -248,7 +248,7 @@ pub fn follow_mount(
     root: Option<Res<SessionRoot>>,
     held: Option<Res<SessionContent>>,
     mut game: Option<ResMut<crate::shell::game_mode::GameUiRes>>,
-    scene: Option<ResMut<crate::ui::UiScene>>,
+    mut scene: Option<ResMut<crate::ui::UiScene>>,
 ) {
     let Some(root) = root else { return };
     let content = GameContent::of(&root.0);
@@ -269,9 +269,9 @@ pub fn follow_mount(
             Err(e) => warn!("session: the riders' records not read again: {e:#}"),
         }
     }
-    let Some(mut scene) = scene else { return };
+    let Some(scene) = scene.as_deref_mut().and_then(crate::ui::UiScene::state) else { return };
     if changed(&[Kind::Font]) {
-        let n = crate::render::reload::ui_content::apply_fonts(&mut scene, game.as_deref_mut().map(|g| &mut g.0));
+        let n = crate::render::reload::ui_content::apply_fonts(scene, game.as_deref_mut().map(|g| &mut g.0));
         info!("session: the fonts converted again, {n} text fields laid out anew");
     }
     if (riders || changed(&[Kind::String]))

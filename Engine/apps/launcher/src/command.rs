@@ -1,7 +1,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use ssx_assets::port_options::{BootMovie, DiscordPresence, MenuFocus, RangeMovies};
+use ssx_assets::port_options::{
+    BootMovie, DiscordPresence, FrameLimit, MenuFocus, RangeMovies, ResolutionScale, ShadowQuality, ViewDistance,
+};
 
 use crate::catalog;
 use crate::settings::{Mode, Music, Settings, Shading};
@@ -47,6 +49,8 @@ pub fn viewer(s: &Settings, big_root: &Path) -> Invocation {
         vec![catalog::track_dir(big_root, &s.track).into(), "--big-root".into(), big_root.into()];
     let mut push = |list: &[&str]| args.extend(list.iter().map(OsString::from));
     push(&["--subdivide", &s.subdivide.to_string()]);
+    view_distance(s, &mut push);
+    level_graphics(s, &mut push);
     match s.shading {
         Shading::Auto => {}
         Shading::Textured => push(&["--shading", "textured"]),
@@ -58,9 +62,7 @@ pub fn viewer(s: &Settings, big_root: &Path) -> Invocation {
         (None, 0) => {}
         (None, n) => push(&["--drop", &n.to_string()]),
     }
-    for (on, name) in
-        [(!s.objects, "--no-objects"), (!s.hud, "--no-hud"), (!s.vsync, "--no-vsync"), (s.wireframe, "--wireframe")]
-    {
+    for (on, name) in [(!s.hud, "--no-hud"), (!s.vsync, "--no-vsync"), (s.wireframe, "--wireframe")] {
         if on {
             push(&[name]);
         }
@@ -73,6 +75,23 @@ pub fn viewer(s: &Settings, big_root: &Path) -> Invocation {
         }
     }
     Invocation { program: viewer_exe(), args, env: env(s) }
+}
+
+fn view_distance(s: &Settings, push: &mut impl FnMut(&[&str])) {
+    if !s.view_distance.is_original() {
+        push(&[ViewDistance::FLAG, &s.view_distance.to_string()]);
+    }
+}
+
+fn level_graphics(s: &Settings, push: &mut impl FnMut(&[&str])) {
+    if s.shadow_quality != ShadowQuality::Original {
+        push(&[ShadowQuality::FLAG, s.shadow_quality.arg()]);
+    }
+    for (on, name) in [(!s.bloom, "--no-bloom"), (!s.fxaa, "--no-fxaa")] {
+        if on {
+            push(&[name]);
+        }
+    }
 }
 
 fn env(s: &Settings) -> Vec<(String, String)> {
@@ -127,16 +146,24 @@ pub fn game(s: &Settings, big_root: &Path) -> Invocation {
     }
     let mut push = |list: &[&str]| args.extend(list.iter().map(OsString::from));
     push(&["--subdivide", &s.subdivide.to_string()]);
+    view_distance(s, &mut push);
+    level_graphics(s, &mut push);
     match s.shading {
         Shading::Auto => {}
         Shading::Textured => push(&["--shading", "textured"]),
         Shading::Height => push(&["--shading", "height"]),
         Shading::Material => push(&["--shading", "material"]),
     }
-    for (on, name) in [(!s.objects, "--no-objects"), (!s.vsync, "--no-vsync"), (s.wireframe, "--wireframe")] {
+    for (on, name) in [(!s.vsync, "--no-vsync"), (s.wireframe, "--wireframe")] {
         if on {
             push(&[name]);
         }
+    }
+    if s.frame_limit != FrameLimit::Off {
+        push(&[FrameLimit::FLAG, s.frame_limit.arg()]);
+    }
+    if s.resolution_scale != ResolutionScale::Native {
+        push(&[ResolutionScale::FLAG, s.resolution_scale.arg()]);
     }
     if s.range_movies != RangeMovies::EveryTime {
         push(&[RangeMovies::FLAG, s.range_movies.arg()]);
@@ -152,6 +179,16 @@ pub fn game(s: &Settings, big_root: &Path) -> Invocation {
     }
     args.extend(s.display.args().into_iter().map(OsString::from));
     Invocation { program: game_exe(), args, env: env(s) }
+}
+
+pub fn benchmark_dir() -> PathBuf {
+    crate::settings::app_dir().join("Benchmarks")
+}
+
+pub fn benchmark(s: &Settings, big_root: &Path) -> Invocation {
+    let mut inv = game(s, big_root);
+    inv.args.push("--benchmark".into());
+    inv
 }
 
 pub fn game_joining(s: &Settings, big_root: &Path, server: std::net::SocketAddr) -> Invocation {
@@ -239,6 +276,80 @@ mod tests {
         assert!(args(&once).windows(2).any(|w| w[0] == "--range-movies" && w[1] == "first-time-only"));
         assert!(!args(&Settings::default()).iter().any(|a| a == "--range-movies"));
         assert!(!viewer(&once, big).args.iter().any(|a| a == "--range-movies"));
+    }
+
+    #[test]
+    fn the_view_distance_is_passed_when_not_the_originals() {
+        let big = Path::new("data/big");
+        let strings =
+            |inv: Invocation| -> Vec<String> { inv.args.iter().map(|a| a.to_string_lossy().into_owned()).collect() };
+        let far = Settings { view_distance: ViewDistance::nearest(2000.0).unwrap(), ..Settings::default() };
+        for args in [strings(game(&far, big)), strings(viewer(&far, big)), strings(benchmark(&far, big))] {
+            assert!(args.windows(2).any(|w| w[0] == "--view-distance" && w[1] == "2000"), "{args:?}");
+        }
+        assert!(!strings(game(&Settings::default(), big)).iter().any(|a| a == "--view-distance"));
+    }
+
+    #[test]
+    fn the_graphics_settings_are_passed_when_not_the_games() {
+        let big = Path::new("data/big");
+        let strings =
+            |inv: Invocation| -> Vec<String> { inv.args.iter().map(|a| a.to_string_lossy().into_owned()).collect() };
+        let low = Settings {
+            frame_limit: FrameLimit::Fps60,
+            resolution_scale: ResolutionScale::Balanced,
+            shadow_quality: ShadowQuality::Low,
+            bloom: false,
+            fxaa: false,
+            ..Settings::default()
+        };
+        let pair = |args: &[String], flag: &str, value: &str| args.windows(2).any(|w| w[0] == flag && w[1] == value);
+        for args in [strings(game(&low, big)), strings(benchmark(&low, big))] {
+            assert!(pair(&args, "--frame-limit", "60") && pair(&args, "--resolution-scale", "balanced"), "{args:?}");
+            assert!(pair(&args, "--shadow-quality", "low"), "{args:?}");
+            assert!(args.iter().any(|a| a == "--no-bloom") && args.iter().any(|a| a == "--no-fxaa"), "{args:?}");
+        }
+        let tool = strings(viewer(&low, big));
+        assert!(pair(&tool, "--shadow-quality", "low") && tool.iter().any(|a| a == "--no-fxaa"), "{tool:?}");
+        assert!(!tool.iter().any(|a| a == "--frame-limit" || a == "--resolution-scale"), "{tool:?}");
+        for args in [strings(game(&Settings::default(), big)), strings(viewer(&Settings::default(), big))] {
+            for flag in ["--frame-limit", "--resolution-scale", "--shadow-quality", "--no-bloom", "--no-fxaa"] {
+                assert!(!args.iter().any(|a| a == flag), "{flag}: {args:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn no_start_turns_the_placed_objects_off() {
+        let big = Path::new("data/big");
+        let s = Settings::from_object(serde_json::json!({"objects": false, "vsync": false}).as_object().unwrap());
+        assert!(s.old_objects && !s.vsync, "the member is read only to be noted");
+        let server = std::net::SocketAddr::from(([127, 0, 0, 1], 27450));
+        for inv in [
+            game(&s, big),
+            game_joining(&s, big, server),
+            game_with_link(&s, big, "avalanche://connect/127.0.0.1:27450"),
+            benchmark(&s, big),
+            viewer(&s, big),
+            viewer(&Settings { mode: Mode::Ride, ..s.clone() }, big),
+        ] {
+            assert!(!inv.args.iter().any(|a| a == "--no-objects"), "{inv:?}");
+            assert!(inv.args.iter().any(|a| a == "--no-vsync"), "the rest still passed: {inv:?}");
+        }
+    }
+
+    #[test]
+    fn the_benchmark_runs_the_game_with_plays_options() {
+        let s = Settings { vsync: false, ..Settings::default() };
+        let big = Path::new("data/big");
+        let bench = benchmark(&s, big);
+        let play = game(&s, big);
+        assert_eq!(bench.program, play.program);
+        assert_eq!(bench.env, play.env);
+        assert_eq!(bench.args[..play.args.len()], play.args[..]);
+        let rest: Vec<_> = bench.args[play.args.len()..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(rest, ["--benchmark"]);
+        assert!(benchmark_dir().ends_with("Benchmarks"));
     }
 
     #[test]

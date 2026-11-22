@@ -1,13 +1,13 @@
-import bevy_pbr::render::{
-    mesh_functions,
-    view_transformations::position_world_to_clip,
-};
-import bevy_pbr::prepass::io::{Vertex, VertexOutput, decompress_vertex};
+import bevy_pbr::render::mesh_functions;
+import bevy_pbr::prepass::io::{Vertex, decompress_vertex};
+import package::render::lighting::game_position::place;
+import package::render::lighting::prepass_output::PrepassOutput;
+@if(SSX_TERRAIN_RIPPLE)
 import package::render::terrain::terrain_ripple;
 
 @vertex
-fn vertex(vertex_in: Vertex) -> VertexOutput {
-    var out: VertexOutput;
+fn vertex(vertex_in: Vertex) -> PrepassOutput {
+    var out: PrepassOutput;
     let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
@@ -15,9 +15,12 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let normal = (world_from_local * vec4<f32>(vertex.normal, 0.0)).xyz;
 @else
     let normal = vec3(0.0, 1.0, 0.0);
-    let rippled = terrain_ripple::apply(out.world_position.xyz, normal);
-    out.world_position = vec4(rippled[0], out.world_position.w);
-    out.position = position_world_to_clip(out.world_position.xyz);
+@if(SSX_TERRAIN_RIPPLE)
+    let placed = terrain_ripple::place(out.world_position.xyz, normal);
+@else
+    let placed = place(out.world_position.xyz, normal);
+    out.world_position = vec4(placed.world_position, out.world_position.w);
+    out.position = placed.clip_position;
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;
     out.position.z = min(out.position.z, 1.0);
@@ -29,7 +32,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     out.uv_b = vertex.uv_b;
 
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
-    out.world_normal = rippled[1];
+    out.world_normal = placed.world_normal;
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
 

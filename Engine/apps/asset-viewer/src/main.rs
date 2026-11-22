@@ -192,22 +192,21 @@ fn run(cli: Cli) -> Result<AppExit> {
         screenshot_steps: cli.screenshot.as_ref().map(|_| cli.frames),
         ..default()
     });
+    let big_root = cli.big_root.clone().or_else(|| ssx_bevy::terrain_look::find_big_root(&track_dir));
     if cli.mods {
-        let big = cli.big_root.clone().or_else(|| ssx_bevy::terrain_look::find_big_root(&track_dir));
-        let big = big.context("--mods needs the extracted archive root (--big-root)")?;
+        let big = big_root.as_deref().context("--mods needs the extracted archive root (--big-root)")?;
         ssx_assets::content::data::tuning::set_bundle_reader(ssx_physics::tuning::read_check);
-        let report = ssx_assets::content::GameContent::of(&big).mount_client_mods(&ssx_assets::setup::app_dir());
+        let report = ssx_assets::content::GameContent::of(big).mount_client_mods(&ssx_assets::setup::app_dir());
         report.lines().iter().for_each(|l| ssx_core::eprintln!("{l}"));
     }
     if let Some(root) = &cli.dlc {
-        let big = cli.big_root.clone().or_else(|| ssx_bevy::terrain_look::find_big_root(&track_dir));
-        let big = big.context("--dlc needs the extracted archive root (--big-root)")?;
-        let report = ssx_assets::content::GameContent::of(&big).mount_dlc(root);
+        let big = big_root.as_deref().context("--dlc needs the extracted archive root (--big-root)")?;
+        let report = ssx_assets::content::GameContent::of(big).mount_dlc(root);
         report.lines().iter().for_each(|l| ssx_core::eprintln!("{l}"));
     }
     let spec = level::LevelSpec {
         track_dir,
-        big_root: cli.big_root.clone(),
+        big_root,
         subdivide: cli.render.subdivide.unwrap_or(ssx_assets::subdiv::GAME_LEVELS as u32),
         shading: cli.render.shading,
         objects: !cli.render.no_objects,
@@ -242,10 +241,20 @@ fn run(cli: Cli) -> Result<AppExit> {
             .set(WindowPlugin { primary_window: Some(window), ..default() })
             .set(level::render_plugin())
             .set(level::log_plugin())
+            .set(level::task_pool_plugin())
             .disable::<bevy::audio::AudioPlugin>(),
         FrameTimeDiagnosticsPlugin::default(),
     ));
-    level::register(&mut app, level::Registration { wireframe: cli.render.wireframe, viewer_hud: !cli.no_hud });
+    level::register(
+        &mut app,
+        level::Registration {
+            wireframe: cli.render.wireframe,
+            view_distance: cli.render.view_distance,
+            viewer_hud: !cli.no_hud,
+            shadow_quality: cli.render.shadow_quality,
+            post_levels: cli.render.post_levels(),
+        },
+    );
     level::begin(app.world_mut());
     data.insert(app.world_mut())?;
     app.add_systems(Startup, level::startup_system);

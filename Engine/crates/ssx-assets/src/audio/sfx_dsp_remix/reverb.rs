@@ -31,7 +31,7 @@ impl Comb {
 
     pub(super) fn tap(&self, back: usize) -> f32 {
         let n = self.ring.len();
-        self.ring[(self.pos + n - back) % n]
+        self.ring[wrap(self.pos + n - back, n)]
     }
 }
 
@@ -196,26 +196,36 @@ impl Reverb {
         if silent {
             chans.iter_mut().for_each(|c| c.fill(0.0));
         } else if let Some(x) = chans.first_mut() {
-            let mut wet = vec![0.0f32; x.len()];
-            for l in &mut self.lines {
-                let n = l.ring.len() - 1;
-                for (k, &xk) in x.iter().enumerate() {
-                    let (old, next) = (l.tap(n), l.tap(n - 1));
-                    let y = l.a.mul_add(l.z, l.b.mul_add(old, xk));
-                    wet[k] = (-l.a).mul_add(next, old).mul_add(1.0 / 6.0, wet[k]);
-                    l.ring[l.pos] = y;
-                    l.pos = (l.pos + 1) % l.ring.len();
-                    l.z = y;
-                }
-            }
-            let (g, n) = (self.ap.a, self.ap_len);
-            for (k, v) in wet.iter().enumerate() {
-                let old = self.ap.tap(n);
-                let w = (-g).mul_add(old, *v);
-                self.ap.ring[self.ap.pos] = w;
-                self.ap.pos = (self.ap.pos + 1) % self.ap.ring.len();
-                x[k] = g.mul_add(w, old) * 2.0;
-            }
+            let (lines, ap, ap_len) = (&mut self.lines, &mut self.ap, self.ap_len);
+            // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the multiply-adds (4 a sample
+            // and line, 2 a sample in the all-pass) are the instruction in line instead of calls to the runtime's
+            // `fmaf` (the same single rounding: the same samples bit for bit); the flag is not used (they stay fused
+            // without FMA too, as before); the console has the ReverbModel1 process, whose multiply-adds these are.
+            crate::sfx_dsp::fused(
+                #[inline(always)]
+                |_| {
+                    let mut wet = vec![0.0f32; x.len()];
+                    for l in lines.iter_mut() {
+                        let n = l.ring.len() - 1;
+                        for (k, &xk) in x.iter().enumerate() {
+                            let (old, next) = (l.tap(n), l.tap(n - 1));
+                            let y = l.a.mul_add(l.z, l.b.mul_add(old, xk));
+                            wet[k] = (-l.a).mul_add(next, old).mul_add(1.0 / 6.0, wet[k]);
+                            l.ring[l.pos] = y;
+                            l.pos = wrap(l.pos + 1, l.ring.len());
+                            l.z = y;
+                        }
+                    }
+                    let (g, n) = (ap.a, ap_len);
+                    for (k, v) in wet.iter().enumerate() {
+                        let old = ap.tap(n);
+                        let w = (-g).mul_add(old, *v);
+                        ap.ring[ap.pos] = w;
+                        ap.pos = wrap(ap.pos + 1, ap.ring.len());
+                        x[k] = g.mul_add(w, old) * 2.0;
+                    }
+                },
+            );
         }
         if self.state == 1 {
             self.recompute(time, space, brightness);

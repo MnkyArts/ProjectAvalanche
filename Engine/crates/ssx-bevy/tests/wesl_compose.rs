@@ -13,6 +13,16 @@ use ssx_bevy::hooks::sets::{
     package_imports, variations, with,
 };
 
+fn invariant(path: &str, defs: &[ShaderDefVal]) -> bool {
+    match path {
+        "ssx_bevy/render/terrain/terrain_prepass.wesl" | "ssx_bevy/render/objects/object_prepass.wesl" => true,
+        "ssx_bevy/render/lighting/game_vertex.wesl" => {
+            defs.iter().any(|d| matches!(d, ShaderDefVal::Bool(n, true) if n == "SSX_INVARIANT_POSITION"))
+        }
+        _ => false,
+    }
+}
+
 const REQUIRED: wgpu::Features = wgpu::Features::POLYGON_MODE_LINE.union(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER);
 
 struct DeviceClass {
@@ -82,6 +92,48 @@ fn validate(device: &RenderDevice, wgsl: &str) -> Result<(), String> {
         Some(error) => Err(error.to_string()),
         None => Ok(()),
     }
+}
+
+fn vertex_outputs(wgsl: &str) -> Result<Option<(Vec<String>, bool)>, String> {
+    let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| e.emit_to_string(wgsl))?;
+    let Some(entry) = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Vertex) else {
+        return Ok(None);
+    };
+    let result = entry.function.result.as_ref().ok_or("a vertex entry point without a result")?;
+    let naga::TypeInner::Struct { members, .. } = &module.types[result.ty].inner else {
+        return Err("a vertex entry point's result that is not a struct".into());
+    };
+    let mut invariant = false;
+    let mut outputs = Vec::new();
+    for member in members {
+        let binding = match member.binding {
+            Some(naga::Binding::BuiltIn(naga::BuiltIn::Position { invariant: i })) => {
+                invariant = i;
+                "position".to_string()
+            }
+            ref other => format!("{other:?}"),
+        };
+        outputs.push(format!("{binding}: {:?}", module.types[member.ty].inner));
+    }
+    outputs.sort();
+    Ok(Some((outputs, invariant)))
+}
+
+fn same_outputs(ours: &str, bevy: &str, invariant: bool) -> Result<(), String> {
+    let Some((ours, is_invariant)) = vertex_outputs(ours)? else {
+        return Err("no vertex entry point".into());
+    };
+    let Ok(bevy) = vertex_outputs(bevy) else { return Ok(()) };
+    let Some((bevy, _)) = bevy else {
+        return Err("Bevy's module: no vertex entry point".into());
+    };
+    if ours != bevy {
+        return Err(format!("vertex outputs differ from Bevy's: {ours:?} vs. {bevy:?}"));
+    }
+    if invariant != is_invariant {
+        return Err(format!("vertex output position @invariant: {is_invariant}, expected {invariant}"));
+    }
+    Ok(())
 }
 
 struct Composer {
@@ -190,6 +242,7 @@ struct Stats {
     variations: AtomicUsize,
     unproducible: AtomicUsize,
     validated: AtomicUsize,
+    outputs_compared: AtomicUsize,
     bevy_too: AtomicUsize,
     failures: AtomicUsize,
     unproducible_failures: AtomicUsize,
@@ -210,6 +263,14 @@ type Outcomes = BTreeMap<(usize, &'static str, String), (usize, String)>;
 fn every_wesl_module_composes_and_validates_for_every_def_set() {
     let modules = modules();
     let kinds: Vec<Kind> = modules.iter().map(|m| m.kind).collect();
+    let disk = shader_files_on_disk();
+    let vertex: Vec<bool> = modules
+        .iter()
+        .map(|m| {
+            let src = std::fs::read_to_string(&disk[&m.path]).expect("a shader file");
+            src.lines().any(|l| l.trim_start().starts_with("@vertex"))
+        })
+        .collect();
     let shaders = loaded_shaders();
     let devices = device_classes();
     let paths: BTreeSet<&str> = shaders.iter().map(|(p, _, _)| p.as_str()).collect();
@@ -253,34 +314,46 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
                 let devices = device_classes();
                 let mut composers: Vec<Composer> =
                     devices.iter().map(|d| Composer::new(&shaders, &d.globals)).collect();
-                let mut check = |m: usize, d: usize, path: &str, defs: &[ShaderDefVal]| -> Result<(), String> {
-                    let t0 = std::time::Instant::now();
-                    let wgsl = composers[d].compose(path, defs);
-                    stats[m].compose_ns.fetch_add(t0.elapsed().as_nanos() as usize, Ordering::Relaxed);
-                    let wgsl = wgsl?;
-                    let hash = hash_of(&wgsl);
-                    if let Some((_, lines)) = &dump
-                        && path.starts_with(CRATE)
-                    {
-                        let mut sorted: Vec<&str> = wgsl.lines().collect();
-                        sorted.sort_unstable();
-                        let lines_hash = hash_of(&sorted.join("\n"));
-                        lines.lock().expect("lock").push(format!(
-                            "{path}\t{}\t{}\t{lines_hash:016x}",
-                            devices[d].name,
-                            describe(defs)
-                        ));
-                    }
-                    if let Some(known) = validated[d].lock().expect("lock").get(&hash) {
-                        return known.clone().map_or(Ok(()), Err);
-                    }
-                    stats[m].validated.fetch_add(1, Ordering::Relaxed);
-                    let t1 = std::time::Instant::now();
-                    let result = validate(&devices[d].device, &wgsl).and_then(|()| view_bindings_fit(kinds[m], &wgsl));
-                    stats[m].validate_ns.fetch_add(t1.elapsed().as_nanos() as usize, Ordering::Relaxed);
-                    validated[d].lock().expect("lock").insert(hash, result.clone().err());
-                    result
-                };
+                let mut check =
+                    |m: usize, d: usize, path: &str, defs: &[ShaderDefVal], bevy: Option<&str>| -> Result<(), String> {
+                        let t0 = std::time::Instant::now();
+                        let wgsl = composers[d].compose(path, defs);
+                        let theirs =
+                            bevy.filter(|_| wgsl.is_ok()).and_then(|bevy| composers[d].compose(bevy, defs).ok());
+                        stats[m].compose_ns.fetch_add(t0.elapsed().as_nanos() as usize, Ordering::Relaxed);
+                        let wgsl = wgsl?;
+                        let outputs = |wgsl: &str| match &theirs {
+                            Some(theirs) => {
+                                stats[m].outputs_compared.fetch_add(1, Ordering::Relaxed);
+                                same_outputs(wgsl, theirs, invariant(path, defs))
+                            }
+                            None => Ok(()),
+                        };
+                        let hash = hash_of(&wgsl);
+                        if let Some((_, lines)) = &dump
+                            && path.starts_with(CRATE)
+                        {
+                            let mut sorted: Vec<&str> = wgsl.lines().collect();
+                            sorted.sort_unstable();
+                            let lines_hash = hash_of(&sorted.join("\n"));
+                            lines.lock().expect("lock").push(format!(
+                                "{path}\t{}\t{}\t{lines_hash:016x}",
+                                devices[d].name,
+                                describe(defs)
+                            ));
+                        }
+                        let known = validated[d].lock().expect("lock").get(&hash).cloned();
+                        if let Some(known) = known {
+                            return known.map_or_else(|| outputs(&wgsl), Err);
+                        }
+                        stats[m].validated.fetch_add(1, Ordering::Relaxed);
+                        let t1 = std::time::Instant::now();
+                        let result =
+                            validate(&devices[d].device, &wgsl).and_then(|()| view_bindings_fit(kinds[m], &wgsl));
+                        stats[m].validate_ns.fetch_add(t1.elapsed().as_nanos() as usize, Ordering::Relaxed);
+                        validated[d].lock().expect("lock").insert(hash, result.clone().err());
+                        result.and_then(|()| outputs(&wgsl))
+                    };
                 loop {
                     let start = next.fetch_add(32, Ordering::Relaxed);
                     if start >= jobs.len() {
@@ -318,10 +391,13 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
                             Job::Variation { .. } => s.variations.fetch_add(1, Ordering::Relaxed),
                             Job::Unproducible { .. } => s.unproducible.fetch_add(1, Ordering::Relaxed),
                         };
-                        let Err(error) = check(m, d, &module.path, &defs) else { continue };
+                        let compare = (vertex[m] && d == 0 && !matches!(job, Job::Unproducible { .. }))
+                            .then(|| counterpart(module.kind))
+                            .flatten();
+                        let Err(error) = check(m, d, &module.path, &defs, compare) else { continue };
                         let key = error_key(&error);
                         let bevy_too = counterpart(module.kind)
-                            .map(|c| check(m, d, c, &defs))
+                            .map(|c| check(m, d, c, &defs, None))
                             .is_some_and(|bevy| bevy.err().is_some_and(|e| error_key(&e) == key));
                         let outcome = if bevy_too {
                             s.bevy_too.fetch_add(1, Ordering::Relaxed);
@@ -351,7 +427,7 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
         started.elapsed().as_secs_f64()
     );
     ssx_core::println!(
-        "{:<42} {:<13} {:>4} {:>7} {:>6} {:>5} {:>6} {:>9} {:>6} {:>6} {:>6} {:>8}",
+        "{:<42} {:<13} {:>4} {:>7} {:>6} {:>5} {:>6} {:>9} {:>7} {:>6} {:>6} {:>6} {:>8}",
         "module",
         "kind",
         "dims",
@@ -360,6 +436,7 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
         "views",
         "unprod",
         "validated",
+        "outputs",
         "bevy",
         "unp.f",
         "FAILED",
@@ -370,7 +447,7 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
         let n = |a: &AtomicUsize| a.load(Ordering::Relaxed);
         failed += n(&s.failures);
         ssx_core::println!(
-            "{:<42} {:<13} {:>4} {:>7} {:>6} {:>5} {:>6} {:>9} {:>6} {:>6} {:>6} {:>8.1}",
+            "{:<42} {:<13} {:>4} {:>7} {:>6} {:>5} {:>6} {:>9} {:>7} {:>6} {:>6} {:>6} {:>8.1}",
             module.path.trim_start_matches("ssx_bevy/"),
             format!("{:?}", module.kind),
             module.dims.len(),
@@ -379,6 +456,7 @@ fn every_wesl_module_composes_and_validates_for_every_def_set() {
             n(&s.variations),
             n(&s.unproducible),
             n(&s.validated),
+            n(&s.outputs_compared),
             n(&s.bevy_too),
             n(&s.unproducible_failures),
             n(&s.failures),

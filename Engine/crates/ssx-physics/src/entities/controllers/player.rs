@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
+use ssx_assets::postfx_state::GOGGLES_PRIORITY;
 use ssx_lua::game::controllers::{ControllerWorld, Phase, Track, TrackCall};
 use ssx_lua::game::objectives::{GsValue, Name};
 
-use super::{Ctx, InstState, ParticleTarget, PlayerFx, PostFxRun, Switch, apply_light, as_float, player_name, push_op};
+use super::{Ctx, InstState, ParticleTarget, PlayerFx, Switch, apply_light, as_float, player_name, push_op};
 use crate::objectives::ObjectiveWorld;
 
 pub(super) struct PlayerWorld<'a, 'b, 'c> {
@@ -84,31 +85,29 @@ impl ControllerWorld for PlayerWorld<'_, '_, '_> {
             (Track::PostFxModulated { preset, id, inverted }, Phase::Update(_)) => {
                 let v = as_float(self.ctx.sw.game_state(&player_name(), *id)).clamp(0.0, 1.0);
                 let weight = if *inverted { 1.0 - v } else { v };
-                let run = self.fx.postfx.entry(c.inst).or_insert_with(|| PostFxRun {
-                    preset: preset.clone(),
-                    weight,
-                    blend_in: 0.0,
-                    modulated: true,
-                    modulation: Some((*id, *inverted)),
-                    started: true,
-                });
-                run.weight = weight;
+                if self.inst.contains_key(&c.inst) {
+                    self.ctx.sw.postfx.set_weight(&preset.text, weight);
+                } else {
+                    self.ctx.sw.postfx.start(&preset.text, 0.0, weight);
+                    self.inst.insert(c.inst, InstState::PostFxStarted);
+                    self.fx.modulated.insert(preset.text.to_string(), (*id, *inverted));
+                }
             }
-            (Track::PostFxModulated { .. } | Track::PostFx { .. }, Phase::End) => {
-                fx.postfx.remove(&c.inst);
+            (Track::PostFxModulated { preset, .. }, Phase::End) => {
+                if self.inst.remove(&c.inst).is_some() {
+                    self.ctx.sw.postfx.stop(&preset.text, 0.0);
+                    self.fx.modulated.remove(&*preset.text);
+                }
             }
-            // TODO(guess): a `PostFxTrack`'s start / stop blends (`PostFxLayers_Start` 0x82FCCC30, `_Stop` 0x82FCCFD8) are not ramped, the run carries its weight, and a track's preset on `postfx_layers/goggles` (priority 5) blends after the goggles' state instead of replacing it in the one layer object the game keeps per `postfx_layers` entry (no disc script starts one: the Lua tracks start motion_blur, awesome_*, tunnel_*, the damage presets); settle: drive these presets through `postfx_state::Layer` (the ramps, ported for the goggles' layer), one per `postfx_layers` entry, against the overlay's captures.
             (Track::PostFx { preset, blend_in, weight, .. }, Phase::Begin) => {
-                crate::guess_hit!();
-                let run = PostFxRun {
-                    preset: preset.clone(),
-                    weight: *weight,
-                    blend_in: *blend_in,
-                    modulated: false,
-                    modulation: None,
-                    started: true,
-                };
-                fx.postfx.insert(c.inst, run);
+                if let Some(handle) = self.ctx.sw.postfx.request(&preset.text, *blend_in, *weight) {
+                    self.inst.insert(c.inst, InstState::PostFx { handle });
+                }
+            }
+            (Track::PostFx { blend_out, .. }, Phase::End) => {
+                if let Some(InstState::PostFx { handle }) = self.inst.remove(&c.inst) {
+                    self.ctx.sw.postfx.release(handle, *blend_out);
+                }
             }
             (Track::RenderAttribute { .. }, _) => self.render_attribute(c, phase),
             (Track::Ao { .. } | Track::AoGroundContact { .. }, _) => self.ao(c, phase),
@@ -145,7 +144,9 @@ impl PlayerWorld<'_, '_, '_> {
                 self.fx.goggles_copies = self.fx.goggles_copies.wrapping_add(1);
                 let whiteout = self.ctx.sw.w.survival.whiteout_lighting;
                 let g = GogglesTrack::begin(preset, &mods, copy, whiteout);
-                self.fx.goggles_layer.start(g.key, g.holder.clone(), *blend_in, 1.0);
+                let handle =
+                    self.ctx.sw.postfx.request_state(g.key, g.holder.clone(), GOGGLES_PRIORITY, *blend_in, 1.0);
+                self.inst.insert(c.inst, InstState::PostFx { handle });
                 self.fx.goggles = Some(g);
             }
             Phase::Update(dt) => {
@@ -154,12 +155,13 @@ impl PlayerWorld<'_, '_, '_> {
                 let def = GogglesDef { outer: *outer_range, threshold: *static_threshold };
                 self.fx.goggles_pulse = g.update(dt, battery, def);
                 if g.key != 0 {
-                    self.fx.goggles_layer.reload(g.key, g.holder.clone());
+                    self.ctx.sw.postfx.reload(g.key, GOGGLES_PRIORITY, g.holder.clone());
                 }
             }
             Phase::End => {
-                if let Some(g) = self.fx.goggles.take().filter(|g| g.key != 0) {
-                    self.fx.goggles_layer.stop(g.key, *blend_out);
+                self.fx.goggles = None;
+                if let Some(InstState::PostFx { handle }) = self.inst.remove(&c.inst) {
+                    self.ctx.sw.postfx.release(handle, *blend_out);
                 }
             }
         }

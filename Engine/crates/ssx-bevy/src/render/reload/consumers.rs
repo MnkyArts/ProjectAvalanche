@@ -75,11 +75,11 @@ pub(super) fn globe(
     *pending = Some(Mutex::new(rx));
 }
 
-pub(super) fn ui_images(reload: Res<ContentReload>, mut seen: Local<u64>, scene: Option<ResMut<UiScene>>) {
+pub(super) fn ui_images(reload: Res<ContentReload>, mut seen: Local<u64>, mut scene: Option<ResMut<UiScene>>) {
     if std::mem::replace(&mut *seen, reload.generation) == reload.generation {
         return;
     }
-    let Some(mut scene) = scene else { return };
+    let Some(scene) = scene.as_deref_mut().and_then(UiScene::state) else { return };
     let n = scene.lib.reload_images(|source| {
         let path = ssx_ui::fs::normalise(source);
         ssx_assets::content::textures::common_texture_id(&path).is_some_and(|id| reload.touches(&id))

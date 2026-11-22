@@ -180,6 +180,25 @@ fn explore_rows_become_racers_of_type_two_in_leaderboard_order() {
 }
 
 #[test]
+fn a_free_ride_requests_no_explore_ghosts_and_changes_nothing_else() {
+    use crate::event::EventType::{self, *};
+    for t in (0..=8).map(|v| EventType::from_raw(v).expect("a UI_EventType")) {
+        let event = start_drop_racers(t, false);
+        let expected = match t {
+            RaceBots | TrickBots => StartDropRacers::Bots,
+            RaceGhosts | TrickGhosts => StartDropRacers::ExploreGhosts,
+            _ => StartDropRacers::None,
+        };
+        assert_eq!(event, expected, "{t:?} without the flag");
+        let free = start_drop_racers(t, true);
+        match t {
+            RaceGhosts | TrickGhosts => assert_eq!(free, StartDropRacers::None, "{t:?} in a free ride"),
+            _ => assert_eq!(free, event, "{t:?}: the flag changes only the explore ghosts"),
+        }
+    }
+}
+
+#[test]
 fn bots_are_named_after_their_characters() {
     let row = |ghost_id, character| Rival {
         starting_idx: 1,

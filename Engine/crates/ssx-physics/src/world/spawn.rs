@@ -355,6 +355,10 @@ pub fn survival_of_scripts(scripts: crate::objectives::DropScripts) -> crate::su
             avalanche_drop: p.flag("AvalancheDrop"),
             reverse_cam: p.value("TheCamera", "INT_CameraType") == Some(GsValue::Int(2)),
         },
+        camera_nis_wind: match p.value("TheCamera", "FLT_NisWindValue") {
+            Some(GsValue::Float(v)) => Some(v),
+            _ => None,
+        },
         objectives: Some(std::sync::Arc::new(scripts)),
         ..Default::default()
     }

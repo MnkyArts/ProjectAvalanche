@@ -13,10 +13,10 @@ const SUB_BASE: f32 = 55.0;
 fn labels(page: Page, play: &'static str) -> (&'static str, &'static str) {
     match page {
         Page::Play => ("PLAY", play),
-        Page::Host => ("HOST", "A SERVER FOR YOUR FRIENDS"),
-        Page::Mods => ("MODS", "INSTALL, ORDER, SWITCH"),
-        Page::Settings => ("SETTINGS", "GRAPHICS, CONTROLS, AUDIO"),
-        Page::Extras => ("EXTRAS", "TOOLS, CREDITS, UPDATES"),
+        Page::Online => ("ONLINE", "HOST A SERVER, LINKS"),
+        Page::Content => ("CONTENT", "MODS, DLC, GAME DATA"),
+        Page::Settings => ("SETTINGS", "DISPLAY, GRAPHICS, AUDIO"),
+        Page::Extras => ("EXTRAS", "TOOLS, LOG, UPDATES"),
     }
 }
 

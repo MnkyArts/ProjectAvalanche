@@ -1,4 +1,5 @@
 mod intro;
+mod layers;
 mod outro;
 #[cfg(test)]
 mod tests;
@@ -13,10 +14,12 @@ use ssx_formats::ant_anim::{Animation, ChannelToDof, Pose, Skeleton, dof_list};
 
 use crate::anim_db::{Asset, AssetDb, field};
 pub use crate::anim_graph::Blend;
+use crate::anim_graph::LoopFields;
 use crate::rig_anim::{RIG_BUNDLE, has_bundle};
 use crate::rigamate::{Sqt, rig_defaults};
 
 pub use intro::*;
+pub use layers::*;
 pub use outro::*;
 use walk::*;
 
@@ -111,11 +114,8 @@ impl NisClip {
     }
 
     pub fn joint(&self, p: &Pose, rig: &Rig, joint: &str) -> ([f32; 4], [f32; 3]) {
-        let d = rig.defaults.get(joint).copied().unwrap_or(Sqt::IDENTITY);
-        (
-            self.quat(p, &format!("{joint}.q")).unwrap_or(d.q),
-            self.vec3(p, &format!("{joint}.t")).unwrap_or([d.t[0], d.t[1], d.t[2]]),
-        )
+        let (q, t) = rig.joint_default(joint);
+        (self.quat(p, &format!("{joint}.q")).unwrap_or(q), self.vec3(p, &format!("{joint}.t")).unwrap_or(t))
     }
 }
 
@@ -129,6 +129,11 @@ pub struct Rig {
 impl Rig {
     pub fn load(all: &Stream, name: &str) -> Result<Self> {
         Ok(Self { name: name.to_string(), skeleton: Skeleton::of_rig(all, name)?, defaults: rig_defaults(all, name)? })
+    }
+
+    pub fn joint_default(&self, joint: &str) -> ([f32; 4], [f32; 3]) {
+        let d = self.defaults.get(joint).copied().unwrap_or(Sqt::IDENTITY);
+        (d.q, [d.t[0], d.t[1], d.t[2]])
     }
 
     pub fn chain(&self, joint: &str, root: &str) -> Option<Vec<String>> {
@@ -213,10 +218,11 @@ pub struct NisActor {
     pub seed: Option<u32>,
     pub chooser: Option<NisChooser>,
     pub sequences: Vec<(String, f32)>,
-    pub root: Option<(String, Option<f32>)>,
+    pub root: Option<NisRoot>,
     pub tags: Tags,
     pub clock: ElementClock,
     pub pieces: Vec<NisPiece>,
+    pub layers: Vec<NisLayer>,
 }
 
 impl NisActor {
@@ -309,10 +315,46 @@ impl Tags {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NisRoot {
+    pub controller: String,
+    pub looping: Option<LoopFields>,
+    pub loop_in_root: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NisLoop {
+    pub fields: LoopFields,
+    pub length: f32,
+    pub in_root: bool,
+}
+
+impl NisLoop {
+    pub fn of_scene(fields: LoopFields, in_root: bool, actors: &[NisActor]) -> Result<Self> {
+        anyhow::ensure!(
+            !fields.loop_control && fields.start == 0.0,
+            "a loop with IsLoopControl {} / StartTime {} (not ported)",
+            fields.loop_control,
+            fields.start
+        );
+        let length = actors.first().map_or(0.0, |a| a.length);
+        anyhow::ensure!(
+            length > 0.0 && actors.iter().all(|a| a.length == length),
+            "a loop over actors of the lengths {:?} (not ported)",
+            actors.iter().map(|a| a.length).collect::<Vec<_>>()
+        );
+        Ok(Self { fields, length, in_root })
+    }
+
+    pub fn time(&self, ticks: f32) -> f32 {
+        ticks.rem_euclid(self.length)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NisScene {
     pub node: String,
     pub sequence: String,
-    pub loop_end: Option<f32>,
+    pub looping: Option<NisLoop>,
     pub actors: Vec<NisActor>,
     pub node_tags: Tags,
     pub problems: Vec<String>,

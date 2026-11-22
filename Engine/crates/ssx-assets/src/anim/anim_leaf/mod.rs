@@ -10,6 +10,7 @@ use crate::anim_graph::{Blend, BlendId, ChooserEntry, Ctrl, CtrlId, Selector, Si
 use crate::anim_pose::{AnimPose, Delta};
 
 pub use blend_array::*;
+pub(crate) use blend_array::{damp as blend_array_damp, select as blend_array_select};
 pub use chooser::*;
 pub use layers::*;
 pub use mirror::*;

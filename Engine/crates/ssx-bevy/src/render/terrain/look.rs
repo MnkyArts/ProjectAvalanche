@@ -201,6 +201,10 @@ impl TrackLooks {
 }
 
 pub fn find_big_root(track_dir: &Path) -> Option<PathBuf> {
+    find_big_root_from(track_dir, std::env::current_dir().ok().as_deref())
+}
+
+fn find_big_root_from(track_dir: &Path, cwd: Option<&Path>) -> Option<PathBuf> {
     let is_root = |p: &Path| p.join("cache1/data/xenon/attribdb").is_dir();
     #[cfg(windows)]
     let track_dir = std::path::absolute(track_dir).unwrap_or_else(|_| track_dir.to_path_buf());
@@ -209,8 +213,14 @@ pub fn find_big_root(track_dir: &Path) -> Option<PathBuf> {
     if let Some(root) = track_dir.ancestors().find(|p| is_root(p)) {
         return Some(root.to_path_buf());
     }
-    let cwd = std::env::current_dir().ok()?;
-    cwd.ancestors().map(|dir| dir.join("Game-Data/Extracted/big")).find(|p| is_root(p))
+    // PORT(choice): a track folder outside any archive root (a DLC track's, `<DLC>/<package>/data/xenon/gameexplorer/
+    // <track>`) takes the development tree's `Game-Data/Extracted/big` above the working directory: for the asset
+    // viewer run there without `--big-root`. No loader relies on it: the game and the launcher's viewer always pass the
+    // root, and on a player's computer no such folder lies above the working directory (0.4.2-dev's terrain loader
+    // searched here with the root given, and a player's Mount Eddie had no proxy and no snow-depth displacement). The
+    // console reads its archives from its disc and mounts each package at a device of its own (`DLC%04d:`,
+    // `DlcContent_Mount` 0x82ACFDB0 through `XamContentCreateEx`); it searches no folders.
+    cwd?.ancestors().map(|dir| dir.join("Game-Data/Extracted/big")).find(|p| is_root(p))
 }
 
 fn compact_names(names: &[String]) -> String {
@@ -225,4 +235,30 @@ fn compact_names(names: &[String]) -> String {
     }
     out.extend(rest.into_iter().cloned());
     out.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_track_folder_finds_its_own_root_and_a_dlc_track_only_the_development_trees() {
+        let top = std::env::temp_dir().join(format!("ssx-big-root-{}", std::process::id()));
+        let disc = top.join("GameData/big");
+        let disc_track = disc.join("data0/data/xenon/gameexplorer/alps0101");
+        let dlc_track = top.join("DLC/dlc_paid_mnt_eddie/data/xenon/gameexplorer/rockies0706");
+        let dev = top.join("dev/Game-Data/Extracted/big");
+        let dev_cwd = top.join("dev/Engine");
+        for dir in [disc.join("cache1/data/xenon/attribdb"), disc_track.clone(), dlc_track.clone()] {
+            std::fs::create_dir_all(dir).expect("the test's folders");
+        }
+        std::fs::create_dir_all(dev.join("cache1/data/xenon/attribdb")).expect("the test's folders");
+        std::fs::create_dir_all(&dev_cwd).expect("the test's folders");
+        let disc = std::fs::canonicalize(&disc).expect("the root's canonical path");
+        assert_eq!(find_big_root_from(&disc_track, Some(&dev_cwd)), Some(disc.clone()));
+        assert_eq!(find_big_root_from(&disc_track, None), Some(disc));
+        assert_eq!(find_big_root_from(&dlc_track, Some(&dev_cwd)), Some(dev));
+        assert_eq!(find_big_root_from(&dlc_track, None), None);
+        std::fs::remove_dir_all(&top).expect("the test's folders removed");
+    }
 }

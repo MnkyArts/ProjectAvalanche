@@ -337,8 +337,10 @@ impl RideDriver {
         {
             let mut rng = ssx_assets::career::random::Mt19937::seeded(ssx_physics::session::bots::DEFAULT_BOT_SEED);
             let course = session.event.setup.course;
+            let free_ride = session.event.setup.free_ride;
             session.bots =
-                ssx_physics::session::bots::BotRace::for_event(big_root, d, &data, &mut rng, course).map(|(r, _)| r);
+                ssx_physics::session::bots::BotRace::for_event(big_root, d, &data, &mut rng, course, free_ride)
+                    .map(|(r, _)| r);
         }
         session.tombstones = def.as_ref().and_then(ssx_physics::session::tombstones::Tombstones::for_event);
         let drop_key = def.as_ref().map(|d| d.key).unwrap_or_else(|| {

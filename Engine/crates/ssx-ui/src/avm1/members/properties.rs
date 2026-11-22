@@ -32,6 +32,35 @@ impl Ctx<'_> {
         }
     }
 
+    pub fn peek_member(&self, obj: &Value, name: &str) -> Option<Value> {
+        let id = obj.as_object()?;
+        let o = self.vm.heap.get(id)?;
+        if let Kind::Display(d) = &o.kind {
+            if self.player.get(d.id).is_none() || crate::avm1::display::is_display_property(name) {
+                return None;
+            }
+            if !o.props.contains(name)
+                && let Some(child) = self.child_named(d.id, name)
+            {
+                return self
+                    .vm
+                    .display_objs
+                    .get(&child)
+                    .filter(|c| self.vm.heap.get(**c).is_some())
+                    .map(|c| Value::Object(*c));
+            }
+        }
+        let mut cur = Some(id);
+        for _ in 0..MAX_CHAIN {
+            let o = self.vm.heap.get(cur?)?;
+            if let Some(p) = o.props.get(name) {
+                return p.accessor.is_none().then(|| p.value.clone());
+            }
+            cur = o.proto.as_object();
+        }
+        None
+    }
+
     pub(super) fn own_special(&mut self, id: ObjId, name: &str) -> Result<Option<Value>, Fault> {
         let Some(o) = self.vm.heap.get(id) else { return Ok(None) };
         if name == "__proto__" {

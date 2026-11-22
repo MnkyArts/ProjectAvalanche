@@ -34,6 +34,7 @@ pub struct Side {
     pub ticks: f32,
     pub rider_pick: usize,
     pub camera_pick: usize,
+    pub base: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,7 +85,13 @@ impl IntroState {
             (None, Scene::Ready { .. }) => SceneRef::Ready,
             (None, Scene::Jump { .. }) => SceneRef::Jump,
         };
-        Side { scene, ticks: self.ticks(), rider_pick: self.rider_pick, camera_pick: self.camera_pick }
+        Side {
+            scene,
+            ticks: self.ticks(),
+            rider_pick: self.rider_pick,
+            camera_pick: self.camera_pick,
+            base: self.node_base,
+        }
     }
 
     pub fn ready_chooser(&self) -> Option<&NisActor> {
@@ -93,6 +100,10 @@ impl IntroState {
                 && a.sequences.len() == a.choices.len()
                 && a.chooser.as_ref().is_some_and(|c| c.looping && c.choose_on_loop)
         })
+    }
+
+    pub fn node_time(&self, s: &Side) -> f32 {
+        s.base + s.ticks
     }
 
     pub fn side_time(&self, s: &Side) -> f32 {
@@ -254,7 +265,7 @@ mod tests {
     #[test]
     fn a_fade_ends_when_its_rest_fits_the_step() {
         let f = |elapsed| SceneFade {
-            from: Side { scene: SceneRef::Ready, ticks: 0.0, rider_pick: 0, camera_pick: 0 },
+            from: Side { scene: SceneRef::Ready, ticks: 0.0, rider_pick: 0, camera_pick: 0, base: 0.0 },
             blend: Blend::default_transition(),
             elapsed,
             frozen: false,

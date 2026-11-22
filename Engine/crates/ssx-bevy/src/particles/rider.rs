@@ -7,7 +7,6 @@ use ssx_assets::character::Loadout;
 use ssx_assets::particles::ParticleNode;
 use ssx_assets::particles::rider::rider_particle_nodes;
 use ssx_formats::crsf::SceneGraph;
-use ssx_formats::lynx::Behaviour;
 
 use crate::particles::sim::{EffectInstance, RecordView, SetArena};
 use crate::particles::spray::SprayInputs;
@@ -20,7 +19,7 @@ pub struct RiderSlot {
     pub node: ParticleNode,
     pub joint: Option<usize>,
     pub instance: EffectInstance,
-    pub behaviour: Option<Behaviour>,
+    pub behaviour: Option<std::sync::Arc<crate::particles::inputs::Script>>,
     pub start: f32,
     pub stop: f32,
     pub instant: bool,
@@ -144,7 +143,7 @@ impl RiderEffects {
             .map(|s| {
                 let j = joints.get(s.joint?)?;
                 let (scale, rotation, position) = compose(j, &s.node);
-                let blend = crate::particles::inputs::default_blend(s.behaviour.as_ref(), inputs, precipitation);
+                let blend = crate::particles::inputs::default_blend(s.behaviour.as_deref(), inputs, precipitation);
                 Some(RecordView {
                     scale,
                     rotation,

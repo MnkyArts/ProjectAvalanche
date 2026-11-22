@@ -16,6 +16,7 @@ use bevy::shader::Shader;
 use super::midground::gpu as midground;
 use super::package_gpu;
 use super::{SkySettings, SkyUniform};
+use crate::render::bind_cache::BindGroupCache;
 use crate::render::buffers::QueuedUniform;
 
 const SHADER: &str = "embedded://ssx_bevy/render/sky/sky.wesl";
@@ -42,13 +43,7 @@ pub(super) fn build(app: &mut App) {
                 package_gpu::prepare.in_set(RenderSystems::PrepareBindGroups),
             ),
         )
-        .add_systems(
-            Core3d,
-            (
-                draw_sky.after(main_opaque_pass_3d).before(main_transparent_pass_3d),
-                midground::draw.after(draw_sky).before(main_transparent_pass_3d),
-            ),
-        );
+        .add_systems(Core3d, draw_sky.after(main_opaque_pass_3d).before(main_transparent_pass_3d));
 }
 
 #[derive(Resource)]
@@ -197,9 +192,14 @@ fn prepare_pipelines(
     }
 }
 
+// PORT(choice): the sky's bind group is kept across frames and made again only when what it binds changes
+// (`BindGroupCache`: Bevy's view uniform buffer, the sky's uniform, its three textures and two samplers), instead of
+// one made and freed every frame. The same resources bound, so the same pass. wgpu's bind groups are the port's
+// renderer; the console's GPU had none.
 #[derive(Resource, Default)]
 struct SkyBuffer {
     uniform: QueuedUniform<SkyUniform>,
+    binds: BindGroupCache,
     bind_group: Option<BindGroup>,
 }
 
@@ -223,13 +223,16 @@ fn prepare_bind_group(
     else {
         return;
     };
-    buffer.uniform.write(&device, &queue, "ssx_sky_uniform", &settings.uniform);
-    let bind_group = device.create_bind_group(
+    let SkyBuffer { uniform, binds, bind_group } = &mut *buffer;
+    uniform.write(&device, &queue, "ssx_sky_uniform", &settings.uniform);
+    binds.next_frame();
+    let group = binds.get(
+        &device,
         "ssx_sky",
         &cache.get_bind_group_layout(&pipeline.layout),
         &BindGroupEntries::sequential((
             view,
-            &buffer.uniform,
+            &*uniform,
             &density.texture_view,
             &normal.texture_view,
             &light.texture_view,
@@ -237,23 +240,53 @@ fn prepare_bind_group(
             &pipeline.clamp,
         )),
     );
-    buffer.bind_group = Some(bind_group);
+    *bind_group = Some(group);
 }
 
+type SkyView = (
+    &'static ViewDepthStencilTexture,
+    &'static ViewUniformOffset,
+    &'static SkyPipelineId,
+    Option<&'static package_gpu::ViewPackageSky>,
+);
+
 fn draw_sky(
-    view: ViewQuery<(
-        &ViewTarget,
+    view: ViewQuery<(&ViewTarget, Option<SkyView>, Option<&midground::ViewMidground>)>,
+    buffer: Res<SkyBuffer>,
+    dome: Res<package_gpu::DomeBuffers>,
+    midground_buffers: Res<midground::MidgroundBuffers>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let (target, sky, mg) = view.into_inner();
+    if let Some(sky) = sky {
+        record_sky(&mut ctx, target, sky, &buffer, &dome, &cache);
+    }
+    // PORT(choice): the mid-ground is recorded into the sky's command encoder: Bevy 0.20 gives every system with a
+    // `RenderContext` an encoder of its own and submits each as a command buffer (finished on the render thread,
+    // validated one by one in `queue_submit`), and a command buffer costs the render thread about 0.04 ms (1080p,
+    // `--benchmark`, the dev laptop: the benchmark's eight timestamp marks, one command buffer each, 0.33 / 0.34 ms on
+    // Mount Eddie / alps0101); one fewer a frame here (24 → 23 traced). The order is the one before: the sky, then the
+    // mid-ground, both after the opaque and before the transparent phase. wgpu's command buffers are the port's
+    // renderer.
+    if let Some(mg) = mg {
+        midground::record(&mut ctx, target, mg, &midground_buffers, &cache);
+    }
+}
+
+fn record_sky(
+    ctx: &mut RenderContext,
+    target: &ViewTarget,
+    (depth, offset, pipeline_id, package): (
         &ViewDepthStencilTexture,
         &ViewUniformOffset,
         &SkyPipelineId,
         Option<&package_gpu::ViewPackageSky>,
-    )>,
-    buffer: Res<SkyBuffer>,
-    dome: Res<package_gpu::DomeBuffers>,
-    cache: Res<PipelineCache>,
-    mut ctx: RenderContext,
+    ),
+    buffer: &SkyBuffer,
+    dome: &package_gpu::DomeBuffers,
+    cache: &PipelineCache,
 ) {
-    let (target, depth, offset, pipeline_id, package) = view.into_inner();
     if let Some(package) = package {
         let color = [Some(target.get_color_attachment())];
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
@@ -264,7 +297,7 @@ fn draw_sky(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if !package_gpu::draw(&mut pass, package, &dome, &cache, offset.offset) {
+        if !package_gpu::draw(&mut pass, package, dome, cache, offset.offset) {
             return;
         }
         if let (Some(bind_group), Some(over)) =

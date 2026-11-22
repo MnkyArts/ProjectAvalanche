@@ -90,8 +90,7 @@ fn tonemap_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(sqrt(clamp(t, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
 }
 
-@fragment
-fn composite_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+fn composite(in: FullscreenVertexOutput) -> vec3<f32> {
     let base = textureLoad(scene, vec2<i32>(floor(in.position.xy)), 0).rgb;
     var lin = base * base;
     if (u.bloom.z != 0.0) {
@@ -99,7 +98,10 @@ fn composite_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         lin += b * b * u.bloom.y;
     }
     let g = sqrt(lin);
-    let l = textureSampleLevel(lut, samp, g * (31.0 / 32.0) + 1.0 / 64.0, 0.0).rgb;
+    var l = min(g, vec3<f32>(1.0));
+    if (u.grade.x != 0.0) {
+        l = textureSampleLevel(lut, samp, g * (31.0 / 32.0) + 1.0 / 64.0, 0.0).rgb;
+    }
     var v = clamp(l, vec3<f32>(0.0), vec3<f32>(1.0));
     let topo = topogrid.colour.w > 0.0;
     if overlay.fadeoffbounds.w > 0.0 || topo {
@@ -112,5 +114,15 @@ fn composite_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         }
         v = clamp(sqrt(max(sq, vec3<f32>(0.0))), vec3<f32>(0.0), vec3<f32>(1.0));
     }
-    return vec4<f32>(srgb_to_linear(v), 1.0);
+    return v;
+}
+
+@fragment
+fn composite_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(srgb_to_linear(composite(in)), 1.0);
+}
+
+@fragment
+fn composite_codes_pass(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(composite(in), 1.0);
 }

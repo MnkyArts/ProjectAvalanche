@@ -44,6 +44,9 @@ ssx-net-join = { workspace = true, optional = true }
 ssx-gameplay = { workspace = true, optional = true }
 ssx-script = { workspace = true, optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 ssx-core = { workspace = true, features = ["dev-master"] }
 ssx-formats = { workspace = true, features = ["test-fixtures"] }

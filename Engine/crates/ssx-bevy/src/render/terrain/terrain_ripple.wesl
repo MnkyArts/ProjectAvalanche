@@ -1,3 +1,5 @@
+import package::render::lighting::game_position;
+
 struct TerrainRipple {
     a: vec4<f32>,
     b: vec4<f32>,
@@ -17,4 +19,9 @@ fn apply(position: vec3<f32>, normal: vec3<f32>) -> array<vec3<f32>, 2> {
         n = n - vec3(dxz.x, 0.0, dxz.y) / d * h * ripple.a.z * sin(ripple.a.z * t);
     }
     return array<vec3<f32>, 2>(p, n);
+}
+
+fn place(world_position: vec3<f32>, world_normal: vec3<f32>) -> game_position::Placed {
+    let rippled = apply(world_position, world_normal);
+    return game_position::place(rippled[0], rippled[1]);
 }

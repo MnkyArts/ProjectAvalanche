@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use super::{Pull, RATE};
 
 pub static RENDER_NS: AtomicU64 = AtomicU64::new(0);
+pub static RENDER_CPU_NS: AtomicU64 = AtomicU64::new(0);
 pub static RENDER_MAX_NS: AtomicU64 = AtomicU64::new(0);
 pub static DRAIN_NS: AtomicU64 = AtomicU64::new(0);
 pub static FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -25,6 +26,7 @@ pub static WAIT_NS: AtomicU64 = AtomicU64::new(0);
 pub static WAIT_MAX_NS: AtomicU64 = AtomicU64::new(0);
 pub static RENDERED: AtomicU64 = AtomicU64::new(0);
 pub static RENDERED_NS: AtomicU64 = AtomicU64::new(0);
+pub static RENDERED_CPU_NS: AtomicU64 = AtomicU64::new(0);
 pub static FRAME_MAX_NS: AtomicU64 = AtomicU64::new(0);
 pub static POSTED: AtomicU64 = AtomicU64::new(0);
 pub static APPLIED: AtomicU64 = AtomicU64::new(0);
@@ -33,13 +35,42 @@ pub static STARVED: AtomicU64 = AtomicU64::new(0);
 pub static ERRORS: AtomicU64 = AtomicU64::new(0);
 pub static DEMOTED: AtomicBool = AtomicBool::new(false);
 
-pub fn render(render_ns: u64, frames: u64) {
+pub fn render(render_ns: u64, cpu_ns: u64, frames: u64) {
+    RENDERED_CPU_NS.fetch_add(cpu_ns, Relaxed);
+    RENDER_CPU_NS.fetch_add(cpu_ns, Relaxed);
     RENDER_NS.fetch_add(render_ns, Relaxed);
     RENDER_MAX_NS.fetch_max(render_ns, Relaxed);
     FRAMES.fetch_add(frames, Relaxed);
     RENDERED.fetch_add(frames, Relaxed);
     RENDERED_NS.fetch_add(render_ns, Relaxed);
     FRAME_MAX_NS.fetch_max(render_ns, Relaxed);
+}
+
+#[cfg(target_os = "linux")]
+pub fn thread_cpu() -> Option<Duration> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) } != 0 {
+        return None;
+    }
+    Some(Duration::new(u64::try_from(ts.tv_sec).ok()?, u32::try_from(ts.tv_nsec).ok()?))
+}
+
+#[cfg(windows)]
+pub fn thread_cpu() -> Option<Duration> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let (mut created, mut exited, mut kernel, mut user) =
+        (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+    if unsafe { GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
+        return None;
+    }
+    let units = |t: FILETIME| u64::from(t.dwHighDateTime) << 32 | u64::from(t.dwLowDateTime);
+    Some(Duration::from_nanos(units(kernel).saturating_add(units(user)).saturating_mul(100)))
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn thread_cpu() -> Option<Duration> {
+    None
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -191,6 +222,7 @@ pub struct Snapshot {
     pub wait_ns: u64,
     pub rendered: u64,
     pub rendered_ns: u64,
+    pub rendered_cpu_ns: u64,
     pub underruns: u64,
     pub starved: u64,
     pub errors: u64,
@@ -199,6 +231,7 @@ pub struct Snapshot {
     pub stream_dry: u64,
     pub waited_first: u64,
     pub waited_dry: u64,
+    pub waited_ns: u64,
 }
 
 pub fn snapshot() -> Snapshot {
@@ -211,6 +244,7 @@ pub fn snapshot() -> Snapshot {
         wait_ns: WAIT_NS.load(Relaxed),
         rendered: RENDERED.load(Relaxed),
         rendered_ns: RENDERED_NS.load(Relaxed),
+        rendered_cpu_ns: RENDERED_CPU_NS.load(Relaxed),
         underruns: UNDERRUNS.load(Relaxed),
         starved: STARVED.load(Relaxed),
         errors: ERRORS.load(Relaxed),
@@ -219,6 +253,7 @@ pub fn snapshot() -> Snapshot {
         stream_dry: crate::sfx_stream::LATE_DRY.load(Relaxed),
         waited_first: crate::sfx_stream::WAITED_FIRST.load(Relaxed),
         waited_dry: crate::sfx_stream::WAITED_DRY.load(Relaxed),
+        waited_ns: crate::sfx_stream::WAITED_NS.load(Relaxed),
     }
 }
 
@@ -246,7 +281,10 @@ impl Reporter {
         let (frame_max, drain) = (FRAME_MAX_NS.swap(0, Relaxed), take_longest_drain(DrainReader::Report));
         (self.last, self.at) = (now, Instant::now());
         let rendered = d(now.rendered, l.rendered);
-        let load = d(now.rendered_ns, l.rendered_ns) as f64 * 1e-9 / (rendered as f64 / f64::from(RATE)).max(1e-9);
+        let audio_s = (rendered as f64 / f64::from(RATE)).max(1e-9);
+        let load = d(now.rendered_ns, l.rendered_ns) as f64 * 1e-9 / audio_s;
+        let cpu = d(now.rendered_cpu_ns, l.rendered_cpu_ns) as f64 * 1e-9 / audio_s;
+        let reads = d(now.waited_ns, l.waited_ns) as f64 * 1e-9 / audio_s;
         let slow = rendered > 0 && load > 0.9;
         let mut parts = Vec::new();
         let mut count = |n: u64, what: &str| {
@@ -293,7 +331,15 @@ impl Reporter {
             parts.push(format!("the lead beyond a pull {} -> {} frames", l.lead, now.lead));
         }
         if slow && (!self.slow || !parts.is_empty()) {
-            parts.push(format!("the mixer needs {:.0} % of real time", load * 100.0));
+            let mut of = Vec::new();
+            if now.rendered_cpu_ns > 0 {
+                of.push(format!("on a CPU {:.0} %", cpu * 100.0));
+            }
+            if reads > 0.0 {
+                of.push(format!("waiting for stream reads {:.0} %", reads * 100.0));
+            }
+            let of = if of.is_empty() { String::new() } else { format!(" ({})", of.join(", ")) };
+            parts.push(format!("the mixer needs {:.0} % of real time{of}", load * 100.0));
         }
         self.slow = slow;
         if parts.is_empty() {
@@ -307,5 +353,26 @@ impl Reporter {
              commands: {drain}; {waiting} commands queued)",
             parts.join(", ")
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn the_thread_clock_counts_work_not_sleep() {
+        let start = thread_cpu().expect("the thread clock");
+        let t = Instant::now();
+        let mut x = 0u64;
+        while thread_cpu().is_some_and(|c| c == start) && t.elapsed() < Duration::from_secs(2) {
+            x = std::hint::black_box(x.wrapping_add(1));
+        }
+        let worked = thread_cpu().expect("the thread clock");
+        assert!(worked > start, "{start:?} -> {worked:?}");
+        std::thread::sleep(Duration::from_millis(100));
+        let slept = thread_cpu().expect("the thread clock").saturating_sub(worked);
+        assert!(slept < Duration::from_millis(50), "{slept:?} on a CPU over a 100 ms sleep");
     }
 }

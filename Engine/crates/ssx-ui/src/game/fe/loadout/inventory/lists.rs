@@ -65,7 +65,6 @@ impl Inventory {
             u.name = loc.text("TXT_MYSTERY_ITEM_NAME");
             u.description = loc.text("TXT_MYSTERY_ITEM_DESC");
             u.asset = MYSTERY_ICON.into();
-            u.flags |= flag::MYSTERY;
         } else {
             u.name = rec.name.clone();
             u.description = self.perk_description(loc, rec);
@@ -414,5 +413,27 @@ impl Inventory {
 
     pub fn rider_count(db: &CareerDb, profile: &Profile) -> usize {
         db.riders.iter().filter(|r| !r.locked || profile.owned_items.contains(&r.key)).count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::loc::{Language, Localization};
+
+    #[test]
+    fn a_mystery_entry_publishes_no_mystery_flag() {
+        let db = CareerDb::default();
+        let inv = Inventory::new(&db);
+        let profile = Profile::default();
+        let mut loc = Localization::empty(Language::English);
+        let rec =
+            Record { special: true, mystery: true, cost: 9_000, level: 3, rarity: 4, kind: 1, ..Default::default() };
+        let u = inv.ui_item(&db, &profile, &mut loc, None, &rec);
+        assert_eq!(u.asset, MYSTERY_ICON);
+        assert!(!u.has(flag::MYSTERY));
+        assert!(!u.has(flag::SHOW_STATS));
+        assert_eq!(u.flags & (flag::SPECIAL | flag::PURCHASEABLE), flag::SPECIAL | flag::PURCHASEABLE);
+        assert_eq!(u.rarity, 4);
     }
 }

@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 
 use anyhow::{Result, bail};
 
 use super::io::{Delivery, Msg, Request};
 use super::parse::{BlockKind, BlockType, HEAD_BYTES};
 use super::{Ring, StreamFile};
+use crate::sfx_queue::{Receiver, RecvTimeoutError, Sender, queue};
 
 #[derive(Debug)]
 pub struct Block<'a> {
@@ -84,7 +84,7 @@ impl Slot {
         }
         let max_block = (chunks - 1) * chunk;
         let id = NEXT_SLOT.fetch_add(1, Relaxed);
-        let (to, rx) = channel();
+        let (to, rx) = queue();
         let consumed = Arc::new(AtomicU64::new(0));
         let open = Msg::Open { slot: id, ring: ring.bytes, chunk, chunks, max_block, consumed: consumed.clone(), to };
         io.send(open).map_err(|_| anyhow::anyhow!("no file thread"))?;
@@ -223,11 +223,16 @@ impl Slot {
             let got = match self.find() {
                 Found::Pending if wait => self.rx.recv().map_err(|_| ()),
                 Found::Pending => match self.frame_due() {
-                    Some(left) => match self.rx.recv_timeout(left) {
-                        Ok(d) => Ok(d),
-                        Err(RecvTimeoutError::Timeout) => break Found::Pending,
-                        Err(RecvTimeoutError::Disconnected) => Err(()),
-                    },
+                    Some(left) => {
+                        let since = std::time::Instant::now();
+                        let got = self.rx.recv_timeout(left);
+                        super::wait::WAITED_NS.fetch_add(since.elapsed().as_nanos() as u64, Relaxed);
+                        match got {
+                            Ok(d) => Ok(d),
+                            Err(RecvTimeoutError::Timeout) => break Found::Pending,
+                            Err(RecvTimeoutError::Disconnected) => Err(()),
+                        }
+                    }
                     None => break Found::Pending,
                 },
                 f => break f,

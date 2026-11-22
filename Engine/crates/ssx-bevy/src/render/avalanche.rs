@@ -180,6 +180,14 @@ pub fn record_pose(p: &Particle, tr: &ParticleTraits) -> (ChunkPose, f32) {
 }
 
 impl AvalancheScene {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for p in self.models.iter_mut().filter_map(|m| m.part.as_mut()) {
+            p.queue_images(uploads, images);
+        }
+    }
+}
+
+impl AvalancheScene {
     pub fn step(&mut self, ride: &Ride) {
         if ride.steps == self.steps {
             return;

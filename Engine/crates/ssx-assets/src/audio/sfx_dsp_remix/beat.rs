@@ -1,6 +1,20 @@
 use super::*;
 
-fn fft(re: &mut [f32], im: &mut [f32]) {
+fn twiddles(n: usize) -> Vec<(f64, f64)> {
+    let mut t = Vec::with_capacity(n);
+    let mut len = 2;
+    while len <= n {
+        let ang = -std::f64::consts::TAU / len as f64;
+        t.extend((0..len / 2).map(|k| (ang * k as f64).sin_cos()));
+        len <<= 1;
+    }
+    t
+}
+
+// PORT(choice): the twiddles computed once with the detector (`twiddles`, the same `sin_cos` of the same arguments:
+// the same values) instead of 5 120 `sin_cos` calls per transform (one every two mixer blocks); the console's
+// transform 0x82A125E0 has its own tables.
+fn fft(re: &mut [f32], im: &mut [f32], twiddles: &[(f64, f64)]) {
     let n = re.len();
     let mut j = 0;
     for i in 1..n {
@@ -15,12 +29,12 @@ fn fft(re: &mut [f32], im: &mut [f32]) {
             im.swap(i, j);
         }
     }
-    let mut len = 2;
+    let (mut len, mut stage) = (2, twiddles);
     while len <= n {
-        let ang = -std::f64::consts::TAU / len as f64;
+        let (w, rest) = stage.split_at(len / 2);
+        stage = rest;
         for start in (0..n).step_by(len) {
-            for k in 0..len / 2 {
-                let (s, c) = (ang * k as f64).sin_cos();
+            for (k, &(s, c)) in w.iter().enumerate() {
                 let (a, b) = (start + k, start + k + len / 2);
                 let tr = re[b] * c as f32 - im[b] * s as f32;
                 let ti = re[b] * s as f32 + im[b] * c as f32;
@@ -44,6 +58,7 @@ pub struct BeatDetect {
     half: usize,
     filled: usize,
     window: Vec<f32>,
+    twiddles: Vec<(f64, f64)>,
     odf: Vec<f32>,
     odf_w: usize,
     odf_count: usize,
@@ -119,6 +134,7 @@ impl BeatDetect {
             half: 0,
             filled: 0,
             window,
+            twiddles: twiddles(1024),
             odf: vec![0.0; n + 8],
             odf_w: 0,
             odf_count: 0,
@@ -222,11 +238,15 @@ impl BeatDetect {
         let f = &mut self.frames[self.cur];
         let mut re: Vec<f32> = f[..1024].iter().zip(&self.window).map(|(x, w)| x * w).collect();
         let mut im = vec![0.0f32; 1024];
-        fft(&mut re, &mut im);
-        let mut hfc = 0.0f32;
-        for k in 0..=512 {
-            hfc = (re[k] * re[k] + im[k] * im[k]).mul_add((k + 1) as f32, hfc);
-        }
+        fft(&mut re, &mut im, &self.twiddles);
+        // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the 513 multiply-adds are the
+        // instruction in line instead of calls to the runtime's `fmaf` (the same single rounding: the same value bit
+        // for bit); the flag is not used (they stay fused without FMA too, as before); the console has the BeatDetect
+        // process 0x82A2F5D0 with its own transform.
+        let hfc = crate::sfx_dsp::fused(
+            #[inline(always)]
+            |_| (0..=512).fold(0.0f32, |hfc, k| (re[k] * re[k] + im[k] * im[k]).mul_add((k + 1) as f32, hfc)),
+        );
         self.filled = 0;
         self.odf[self.odf_w] = hfc / 513.0;
         self.odf_count += 1;

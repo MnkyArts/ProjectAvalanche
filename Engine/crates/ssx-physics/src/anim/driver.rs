@@ -1,6 +1,6 @@
 use glam::{Quat, Vec3};
-use ssx_assets::anim_eval::DriverEvent;
-use ssx_assets::anim_graph::DriverTag;
+use ssx_assets::anim_eval::{DriverEvent, PinEvent};
+use ssx_assets::anim_graph::{DriverTag, PinTag};
 use ssx_assets::tags::TagEvent;
 
 const MIN_REMAINING: f32 = 1.525_878_9e-5;
@@ -50,6 +50,61 @@ impl AttachmentDriver {
         let c = c.normalize();
         let source_full = p + q * (x * ts);
         Some(((q * c).normalize(), p + (pd - source_full) * f))
+    }
+}
+
+const PIN_ACTIVATION: f32 = 1.525_878_9e-5;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PinSignals {
+    pub position: Vec3,
+    pub orientation: Quat,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PinTrajectoryDriver {
+    pub tag: PinTag,
+    pub timer: f32,
+    pub active: bool,
+    pub position: Option<Vec3>,
+    pub orientation: Option<Quat>,
+}
+
+impl PinTrajectoryDriver {
+    pub fn new(tag: PinTag) -> Self {
+        let timer = tag.ticks_until_activation;
+        Self { tag, timer, active: false, position: None, orientation: None }
+    }
+
+    pub fn on_events(slot: &mut Option<PinTrajectoryDriver>, events: &[PinEvent]) {
+        let mut kept = false;
+        for e in events {
+            match e.event {
+                TagEvent::Enter => {
+                    *slot = Some(Self::new(e.tag.clone()));
+                    kept = true;
+                }
+                TagEvent::Apply(_) => kept |= slot.as_ref().is_some_and(|d| d.tag == e.tag),
+                TagEvent::Leave(_) => {}
+            }
+        }
+        if !kept {
+            *slot = None;
+        }
+    }
+
+    pub fn update(&mut self, dt: f32, signals: PinSignals) -> Option<(Option<Vec3>, Option<Quat>)> {
+        if !self.active {
+            self.timer -= dt;
+            if self.timer.partial_cmp(&PIN_ACTIVATION) == Some(std::cmp::Ordering::Greater) {
+                return None;
+            }
+            self.active = true;
+            self.position = (self.tag.position.as_deref() == Some("VEC_Position")).then_some(signals.position);
+            self.orientation =
+                (self.tag.orientation.as_deref() == Some("QUAT_Orientation")).then_some(signals.orientation);
+        }
+        Some((self.position, self.orientation))
     }
 }
 
@@ -113,6 +168,56 @@ mod tests {
         assert!(slot.is_none());
         AttachmentDriver::on_events(&mut slot, &[ev(TagEvent::Enter), ev(TagEvent::Apply(0.0))]);
         AttachmentDriver::on_events(&mut slot, &[]);
+        assert!(slot.is_none());
+    }
+
+    fn pin_tag(ticks: f32) -> PinTag {
+        PinTag {
+            window: ssx_assets::tags::TagWindow::new(0.0, 0.0, true),
+            position: Some("VEC_Position".into()),
+            orientation: Some("QUAT_Orientation".into()),
+            ticks_until_activation: ticks,
+        }
+    }
+
+    #[test]
+    fn the_pin_holds_the_values_of_its_activation() {
+        let mut d = PinTrajectoryDriver::new(pin_tag(30.0));
+        let at = |x: f32| PinSignals { position: Vec3::new(x, 1.0, 2.0), orientation: Quat::from_rotation_y(x) };
+        for k in 1..15 {
+            assert_eq!(d.update(2.0, at(k as f32)), None, "update {k}");
+        }
+        let held = (Some(at(15.0).position), Some(at(15.0).orientation));
+        assert_eq!(d.update(2.0, at(15.0)), Some(held));
+        assert!(d.active && d.timer == 0.0);
+        assert_eq!(d.update(2.0, at(16.0)), Some(held));
+        assert_eq!(d.timer, 0.0, "an active driver's timer stays");
+    }
+
+    #[test]
+    fn the_pin_captures_only_the_signals_its_tag_names() {
+        let mut t = pin_tag(0.0);
+        t.orientation = None;
+        let mut d = PinTrajectoryDriver::new(t);
+        let s = PinSignals { position: Vec3::X, orientation: Quat::from_rotation_z(0.5) };
+        assert_eq!(d.update(1.0, s), Some((Some(Vec3::X), None)));
+        let mut t = pin_tag(0.0);
+        t.position = Some("VEC_PrevPosition".into());
+        let mut d = PinTrajectoryDriver::new(t);
+        assert_eq!(d.update(1.0, s), Some((None, Some(s.orientation))));
+    }
+
+    #[test]
+    fn the_pin_tag_callbacks_drive_the_slot() {
+        let t = pin_tag(30.0);
+        let ev = |event| PinEvent { tag: t.clone(), event };
+        let mut slot = None;
+        PinTrajectoryDriver::on_events(&mut slot, &[ev(TagEvent::Enter), ev(TagEvent::Apply(0.0))]);
+        assert_eq!(slot.as_ref().map(|d| d.timer), Some(30.0));
+        slot.as_mut().unwrap().timer = 4.0;
+        PinTrajectoryDriver::on_events(&mut slot, &[ev(TagEvent::Apply(0.5))]);
+        assert_eq!(slot.as_ref().map(|d| d.timer), Some(4.0));
+        PinTrajectoryDriver::on_events(&mut slot, &[]);
         assert!(slot.is_none());
     }
 }

@@ -85,12 +85,29 @@ fn low_oxygen_drains_and_the_tank_refills() {
     s.update_oxygen(&t, &r, &d, RUN, 30.0, false, 0.0, 2.0);
     assert!((s.oxygen - (1.0 - 2.0 * 0.0105 * 0.1)).abs() < 1e-6, "{}", s.oxygen);
     let o = s.oxygen;
-    s.update_oxygen(&t, &r, &d, RUN, 30.0, true, 0.0, 2.0);
+    s.oxygen_pad.use_oxygen = true;
+    s.update_oxygen(&t, &r, &d, RUN, 30.0, false, 0.0, 2.0);
     assert!(s.oxygen > o && s.oxygen_tank < 1.0 && s.oxygen_use_requested);
     let mut calm = SurvivalState::default();
     calm.init_outputs(&t, &r);
     calm.update_oxygen(&t, &r, &d, RUN, 0.0, false, 0.0, 2.0);
     assert_eq!(calm.oxygen, 1.0);
+}
+
+#[test]
+fn the_classic_controls_use_the_tank_with_the_right_sticks_click() {
+    let (t, r, d) = (survival(), props(), DropSurvival::default());
+    for (classic, pad, uses) in [
+        (false, OxygenPad { use_oxygen: true, use_oxygen_classic: false }, true),
+        (false, OxygenPad { use_oxygen: false, use_oxygen_classic: true }, false),
+        (true, OxygenPad { use_oxygen: true, use_oxygen_classic: false }, false),
+        (true, OxygenPad { use_oxygen: false, use_oxygen_classic: true }, true),
+    ] {
+        let mut s = SurvivalState { low_oxygen: true, oxygen_pad: pad, ..Default::default() };
+        s.init_outputs(&t, &r);
+        s.update_oxygen(&t, &r, &d, RUN, 30.0, classic, 0.0, 2.0);
+        assert_eq!((s.oxygen_use_requested, s.oxygen_tank < 1.0), (uses, uses), "classic {classic}, {pad:?}");
+    }
 }
 
 #[test]

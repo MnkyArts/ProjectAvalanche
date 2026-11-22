@@ -12,7 +12,7 @@ none of its data.
 
 Generated from Cargo.lock by Engine/tools/notices/notices.py; do not edit by hand.
 
-619 packages.
+620 packages.
 
 ====================================================================================================
 INDEX
@@ -227,6 +227,7 @@ extended 0.1.0 — MIT
 fastrand 2.5.0 — MIT
 fdeflate 0.3.7 — MIT
 fearless_simd 0.4.1 — MIT
+FidelityFX Super Resolution 1 1.0 (a21ffb8f) — MIT
 filetime 0.2.29 — MIT
 fixed 1.31.0 — MIT
 fixedbitset 0.5.7 — MIT
@@ -6764,6 +6765,58 @@ Authors: Raph Levien <raph.levien@gmail.com>
 Repository: https://github.com/linebender/fearless_simd
 [LICENSE-APACHE: shared text 2]
 [LICENSE-MIT: shared text 33]
+
+----------------------------------------------------------------------------------------------------
+--- FidelityFX Super Resolution 1 1.0 (a21ffb8f) ---
+----------------------------------------------------------------------------------------------------
+License: MIT (used: MIT)
+Authors: Copyright (c) 2021 Advanced Micro Devices, Inc., Copyright (c) 2014 Michal Drobot (ffx_a.h's float approximations)
+Repository: https://github.com/GPUOpen-Effects/FidelityFX-FSR
+Not linked as a Rust package: shader code ported by hand into the game (ssx-bevy's render/post/post_fsr.wesl: EASU and RCAS of ffx_fsr1.h, the float approximations of ffx_a.h).
+
+[Engine/assets/licenses/FidelityFX-FSR.txt]
+AMD FidelityFX Super Resolution 1 (https://github.com/GPUOpen-Effects/FidelityFX-FSR at a21ffb8f): EASU and RCAS of
+ffx_fsr1.h and the float approximations of ffx_a.h, ported by hand into the game's post_fsr.wesl. Its license.txt:
+
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+ffx_a.h, whose float approximations the port uses, also carries:
+
+MIT LICENSE
+
+Copyright (c) 2014 Michal Drobot (for concepts used in "FLOAT APPROXIMATIONS").
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy,
+modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------------------------------
 --- filetime 0.2.29 ---

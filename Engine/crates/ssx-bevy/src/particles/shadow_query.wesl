@@ -2,7 +2,7 @@ import bevy_pbr::render::forward_io::VertexOutput;
 import bevy_pbr::render::mesh_view_bindings as view_bindings;
 import package::render::lighting::game_lighting as gl;
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> point: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<storage, read> point: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var<storage, read_write> result: array<vec4<f32>>;
 
 fn query_debug(p: vec3<f32>) -> vec2<f32> {
@@ -14,7 +14,7 @@ fn query_debug(p: vec3<f32>) -> vec2<f32> {
     let wp = vec4(p, 1.0);
     var cascade = 3u;
     var c = vec3(0.0);
-    let edge = 0.5 - gl::PCF_HALF_WIDTH / gl::SHADOW_SIZE;
+    let edge = 0.5 - gl::PCF_HALF_WIDTH / gl::shadow_size();
     for (var i = 0u; i < 3u; i++) {
         let clip = (*light).cascades[i].clip_from_world * wp;
         let ci = vec3(0.5 * clip.x, -0.5 * clip.y, 0.5 - clip.z);
@@ -28,7 +28,7 @@ fn query_debug(p: vec3<f32>) -> vec2<f32> {
     }
     let thr = 1.0 - (saturate(c.z + 0.5) - gl::shadow_bias(cascade));
     let layer = i32((*light).depth_texture_base_index + cascade);
-    let t = vec2<i32>(floor((c.xy + 0.5) * gl::SHADOW_SIZE + 1.0));
+    let t = vec2<i32>(floor((c.xy + 0.5) * gl::shadow_size() + 1.0));
 @if(NO_ARRAY_TEXTURES_SUPPORT) {
     return vec2(f32(cascade), 0.0);
 } @else {

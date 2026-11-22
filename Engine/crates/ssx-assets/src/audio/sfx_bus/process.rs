@@ -95,6 +95,7 @@ impl Graph {
                 i += 1;
                 continue;
             }
+            let t_stage = self.profile.is_some().then(std::time::Instant::now);
             match &mut p.stage {
                 Stage::Source => {
                     let mut ch = p.outputs;
@@ -251,6 +252,11 @@ impl Graph {
                     b.process(p.attrs[5], p.attrs[6], &mut buf);
                     p.attrs[..5].copy_from_slice(&b.outputs());
                 }
+            }
+            if let (Some(prof), Some(t0)) = (self.profile.as_mut(), t_stage) {
+                let e = prof.entry(format!("stage {}", String::from_utf8_lossy(&v.plugins[i].fourcc))).or_default();
+                e.0 += t0.elapsed().as_nanos() as u64;
+                e.1 += 1;
             }
             if still && !matches!(v.plugins[i].stage, Stage::Send { .. } | Stage::Route { .. }) {
                 still = quiet(&buf);
@@ -410,9 +416,18 @@ pub fn downmix(dac: &[Vec<f32>], out: &mut [f32]) {
 }
 
 pub fn fold_interleaved(six: &[f32], out: &mut [f32]) {
-    for (f, o) in six.as_chunks::<DAC_CHANNELS>().0.iter().zip(out.as_chunks_mut::<2>().0.iter_mut()) {
-        let (l, r) = fold(f[0], f[2], f[1], f[4], f[5]);
-        o[0] += l;
-        o[1] += r;
-    }
+    // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the fold's 2 multiply-adds a frame are
+    // the instruction in line instead of calls to the runtime's `fmaf` (the same single rounding: the same samples bit
+    // for bit); the flag is not used (they stay fused without FMA too, as before); the console's own fold is not on
+    // the disc (this is EAAudioCore's, see `fold`).
+    dsp::fused(
+        #[inline(always)]
+        |_| {
+            for (f, o) in six.as_chunks::<DAC_CHANNELS>().0.iter().zip(out.as_chunks_mut::<2>().0.iter_mut()) {
+                let (l, r) = fold(f[0], f[2], f[1], f[4], f[5]);
+                o[0] += l;
+                o[1] += r;
+            }
+        },
+    );
 }

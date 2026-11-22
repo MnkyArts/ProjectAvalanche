@@ -42,7 +42,7 @@ fn hud_projection(
 
 pub(super) fn prompt_step(
     mut keys: ResMut<ButtonInput<KeyCode>>,
-    pads: Query<&Gamepad>,
+    pads: Query<(Entity, &Gamepad)>,
     mode: Option<Res<crate::camera::CameraMode>>,
     mut level: ResMut<LevelGame>,
     ride: Option<ResMut<Ride>>,
@@ -52,7 +52,7 @@ pub(super) fn prompt_step(
     let Some(p) = l.prompts.as_mut().filter(|_| l.up && !l.results_posted && !ride.hold) else { return };
     p.step(f64::from(ride.seconds()), l.clock, &ui.0, &ride, keys.bypass_change_detection());
     let chase = mode.is_none_or(|m| *m == crate::camera::CameraMode::Chase);
-    crate::ride::read_live_controls(&mut ride, &keys, &pads, chase);
+    ride.read_by_test_player(&keys, &pads, chase);
 }
 
 pub(super) fn feed_step(
@@ -75,7 +75,8 @@ pub(super) fn feed_step(
         l.fed = ride.steps;
         if paused_frame {
             l.feed.camera = cams.iter().next().map(|(c, t)| hud_camera(c, t));
-            l.feed.paused_frame(&mut ui.0, &ride.state, &ride.session);
+            l.feed.paused_frame(&mut ui.0, &ride.state, &ride.session, ride.world());
+            ui.0.tutorial_paused_frame(&ride.session);
         }
         return;
     }
@@ -145,7 +146,7 @@ pub(super) fn feed_step(
     l.feed.camera = cams.iter().next().map(|(c, t)| hud_camera(c, t));
     match l.sim_hold.as_mut() {
         Some(hold) => {
-            l.feed.paused_frame(ui, &ride.state, &ride.session);
+            l.feed.frame_modules(ui, &ride.state, &ride.session);
             let feed = &mut l.feed;
             hold.run(ui, |ui| feed.feed(ui, &ride.state, &ride.session, ride.world(), Some(&e)));
         }

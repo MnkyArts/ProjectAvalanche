@@ -44,7 +44,7 @@ pub(super) fn load(spec: &LevelSpec, id: &ContentId) -> Result<LevelData> {
     let name = base_track.clone().unwrap_or_else(|| id.path().to_string());
     let (track, materials) = match &base_track {
         Some(t) => {
-            let mut track = terrain::load(&big_root.join(TRACKS).join(t), spec.subdivide, None)?;
+            let mut track = terrain::load(&big_root.join(TRACKS).join(t), Some(&big_root), spec.subdivide, None)?;
             let materials = map_terrain.add_to(&mut track);
             (track, materials)
         }
@@ -99,12 +99,17 @@ pub(super) fn load(spec: &LevelSpec, id: &ContentId) -> Result<LevelData> {
         base_track.as_deref(),
         ride.as_ref().and_then(ride::RideLoad::heli_intro),
     );
-    let particles = crate::particles::load_level(
+    let mut particles = crate::particles::load_level(
         &big_root,
         ride.as_ref().map(ride::RideLoad::ride),
         Some(&lighting),
         ride.as_ref().and_then(ride::RideLoad::avalanche),
     );
+    super::load_particle_effects(&mut particles, &big_root, Some(&lighting), ride.as_ref(), heli.as_ref());
+    let particles = Some(particles);
+    let local_lights =
+        lighting::local::load_level(Some(&big_root), Some(&lighting), ride.as_ref().map(ride::RideLoad::ride));
+    let reflection = Some(lighting::game::load_reflection(&lighting));
     Ok(LevelData {
         name,
         big_root: Some(big_root),
@@ -122,6 +127,8 @@ pub(super) fn load(spec: &LevelSpec, id: &ContentId) -> Result<LevelData> {
         geotags: None,
         bots,
         particles,
+        local_lights,
+        reflection,
         load_secs: start.elapsed().as_secs_f32(),
         map_music: toml.music.clone(),
     })

@@ -277,6 +277,7 @@ pub struct RiderGraph {
     gameplay: bool,
     signature: Option<SignatureTiming>,
     start: Option<LevelStartGraph>,
+    intro_ahead: Vec<(std::sync::Arc<crate::nis::IntroAssets>, IntroGraph)>,
     rewind: RewindGraph,
     block_joints: ([Option<usize>; 29], [Option<usize>; 12]),
     floats: Vec<String>,
@@ -335,6 +336,7 @@ impl RiderGraph {
             gameplay: false,
             signature,
             start: None,
+            intro_ahead: Vec::new(),
             rewind: RewindGraph { channels, ..RewindGraph::default() },
             block_joints,
             floats: floats.to_vec(),
@@ -352,6 +354,13 @@ impl RiderGraph {
     }
 
     pub fn set_intro_assets(&mut self, big_root: &Path, assets: Option<&crate::nis::IntroAssets>) -> Result<()> {
+        if let Some(a) = assets
+            && let Some(k) = self.intro_ahead.iter().position(|(from, _)| std::ptr::eq(std::sync::Arc::as_ptr(from), a))
+        {
+            let (_, intro) = self.intro_ahead.swap_remove(k);
+            self.put_intro(Some(intro));
+            return Ok(());
+        }
         match assets.and_then(|a| Some((&a.nis, a.loaded.as_deref()?))) {
             Some((nis, db)) => {
                 let bind = self.animator.bind.nodes.clone();
@@ -360,6 +369,14 @@ impl RiderGraph {
             }
             None => self.set_intro(big_root, assets.map(|a| &a.nis)),
         }
+    }
+
+    pub fn build_intro_ahead(&mut self, assets: &std::sync::Arc<crate::nis::IntroAssets>) -> Result<()> {
+        let Some(db) = assets.loaded.as_deref() else { return Ok(()) };
+        let bind = self.animator.bind.nodes.clone();
+        let intro = IntroGraph::from_db(db, &assets.nis, &self.rig, bind, &self.floats)?;
+        self.intro_ahead.push((assets.clone(), intro));
+        Ok(())
     }
 
     fn put_intro(&mut self, intro: Option<IntroGraph>) {

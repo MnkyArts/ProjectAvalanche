@@ -18,7 +18,7 @@ use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::ObjectMaterial;
 use crate::render::objects::{LoadedPart, MaterialHandle, part_from_mesh};
 use crate::rider::anim::{JointRecord, RiderAnimation, world_records};
-use crate::rider::material::{CharacterLightUniform, CharacterMaterial};
+use crate::rider::material::CharacterMaterial;
 
 pub(super) struct SkinnedPart {
     slot: String,
@@ -140,6 +140,20 @@ pub(super) fn load_parts(
 }
 
 impl LoadedRider {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for p in &mut self.parts {
+            p.part.queue_images(uploads, images);
+        }
+    }
+
+    pub fn rig(&self) -> &SceneGraph {
+        &self.rig
+    }
+
+    pub fn build_intro_ahead(&mut self, intro: &std::sync::Arc<ssx_physics::nis::IntroAssets>) -> Result<()> {
+        self.anim.graph_mut().build_intro_ahead(intro)
+    }
+
     pub fn has_board_part(&self) -> bool {
         self.parts.iter().any(|p| p.slot == "snowboard")
     }
@@ -213,7 +227,6 @@ pub(super) struct PartAssets<'a> {
     pub meshes: &'a mut Assets<Mesh>,
     pub images: &'a mut Assets<Image>,
     pub light: &'a GameLightAssets,
-    pub rider_light: &'a CharacterLightUniform,
     pub objects: &'a mut Assets<ObjectMaterial>,
     pub foreground: &'a mut Assets<ForegroundMaterial>,
     pub characters: &'a mut Assets<CharacterMaterial>,
@@ -240,7 +253,7 @@ pub(super) fn spawn_parts(
             ChildOf(root),
         );
         if p.part.is_character() {
-            let (mesh, material) = p.part.add_character(a.meshes, a.images, a.light, a.rider_light, a.characters);
+            let (mesh, material) = p.part.add_character(a.meshes, a.images, a.light, a.characters);
             if p.wingsuit {
                 if let Some(mut m) = a.characters.get_mut(&material) {
                     m.base.alpha_mode = AlphaMode::Mask(0.25);
@@ -353,7 +366,6 @@ pub fn spawn(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     light: &GameLightAssets,
-    rider_light: &CharacterLightUniform,
     objects: &mut Assets<ObjectMaterial>,
     foreground: &mut Assets<ForegroundMaterial>,
     characters: &mut Assets<CharacterMaterial>,
@@ -364,7 +376,7 @@ pub fn spawn(
     let nodes: Vec<Entity> = (rider.rig.nodes.iter().zip(&bind_records))
         .map(|(node, r)| commands.spawn((Name::new(node.name.clone()), record_transform(r), ChildOf(rig_root))).id())
         .collect();
-    let mut assets = PartAssets { meshes, images, light, rider_light, objects, foreground, characters, bindposes };
+    let mut assets = PartAssets { meshes, images, light, objects, foreground, characters, bindposes };
     let spawned = spawn_parts(commands, root, &nodes, rider.parts, &mut assets);
     let SpawnedParts { entities: part_entities, character_materials, wingsuit_materials } = spawned;
     let props = PROPS_IN_HANDS

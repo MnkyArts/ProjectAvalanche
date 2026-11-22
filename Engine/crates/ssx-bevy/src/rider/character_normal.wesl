@@ -9,38 +9,37 @@ struct CharacterParams {
     glow: vec4<f32>,
     lod_bias: vec4<f32>,
     board: vec4<f32>,
-    holo: vec4<f32>,
     holo_bloom: vec4<f32>,
 }
 
 struct CharacterLight {
-    rim_color: vec4<f32>,
-    rim: vec4<f32>,
-    rim_dir: vec4<f32>,
-    fill_color: vec4<f32>,
-    fill_dir: vec4<f32>,
     dynamic: vec4<f32>,
     shadow_point: vec4<f32>,
     frame: vec4<f32>,
 }
 
-struct RiderFrame {
+struct CharacterFrame {
     dynamic: vec4<f32>,
     shadow_point: vec4<f32>,
+    holo: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> rider: CharacterLight;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var<uniform> params: CharacterParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var normal_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var character_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(121) var<storage, read> rider_frame: RiderFrame;
+@group(constants::MATERIAL_BIND_GROUP) @binding(121) var<storage, read> character_frame: CharacterFrame;
 
 fn rider_dynamic() -> vec4<f32> {
-    return select(rider.dynamic, rider_frame.dynamic, rider.frame.x > 0.5);
+    return select(rider.dynamic, character_frame.dynamic, rider.frame.x > 0.5);
 }
 
 fn rider_shadow_point() -> vec4<f32> {
-    return select(rider.shadow_point, rider_frame.shadow_point, rider.frame.x > 0.5);
+    return select(rider.shadow_point, character_frame.shadow_point, rider.frame.x > 0.5);
+}
+
+fn holo() -> vec4<f32> {
+    return character_frame.holo;
 }
 
 const HAIR: u32 = 1u;
@@ -70,7 +69,8 @@ fn ps5_normal(world_normal: vec3<f32>, world_tangent: vec4<f32>, mapped: bool, t
 }
 
 fn holo_on(effect: u32) -> bool {
-    return (effect == SECONDARY || effect == BOARD) && params.holo.x + params.holo.y > 0.0;
+    let h = holo();
+    return (effect == SECONDARY || effect == BOARD) && h.x + h.y > 0.0;
 }
 
 fn holo_nz(n: vec3<f32>) -> f32 {
@@ -78,7 +78,8 @@ fn holo_nz(n: vec3<f32>) -> f32 {
 }
 
 fn holo_kill(nz: f32) {
-    if params.holo.y > 0.0 && 0.4 + nz - 1.4 * params.holo.y < 0.0 {
+    let y = holo().y;
+    if y > 0.0 && 0.4 + nz - 1.4 * y < 0.0 {
         discard;
     }
 }

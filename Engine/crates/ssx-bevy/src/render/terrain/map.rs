@@ -80,7 +80,8 @@ impl MapTerrain {
         let layers = MeshLayers::of_weights(&mesh.attributes);
         let (v, t) = (mesh.positions.len(), mesh.triangle_count());
         (self.vertices, self.triangles) = (self.vertices + v, self.triangles + t);
-        let piece = Piece { label, layers: vec![layers; v], groups: vec![0; t], parts: vec![(v, t)], mesh };
+        let piece =
+            Piece { label, layers: vec![layers; v], groups: vec![0; t], parts: vec![(v, t)], lods: vec![None], mesh };
         self.pieces.push((piece, material));
     }
 
@@ -105,8 +106,12 @@ impl MapTerrain {
             },
             bounds: Bounds { min: snow_box.0, max: snow_box.1 },
             pieces: Vec::new(),
+            draws: None,
             layer_counts: (0, 0),
             snow_box,
+            proxy: None,
+            proxy_cut: None,
+            tracks: None,
         };
         let materials = self.add_to(&mut track);
         track.stats.load_secs = start.elapsed().as_secs_f32();

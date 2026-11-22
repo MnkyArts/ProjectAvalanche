@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use ssx_formats::attrib::{Field, FieldData, Value};
 
 use crate::track_objects::Placement;
-use crate::vault_db::{Db, fnv1, refs, single, with_track_db};
+use crate::vault_db::{Db, FieldOverrides, fnv1, refs, single, with_track_db};
 
 pub mod text;
 pub mod truetype;
@@ -179,7 +179,8 @@ pub fn all_lights(db: &Db) -> Result<BTreeMap<&'static str, Vec<SceneLight>>> {
         [(CLASS_POINT, "ge_scene_pointlight"), (CLASS_SPOT, "ge_scene_spotlight"), (CLASS_BOX, "ge_scene_boxlight")]
     {
         let keys: Vec<u32> = db.collections_of_all(class).into_iter().map(|(k, _)| k).collect();
-        let lights = keys.into_iter().map(|k| scene_light(db, class, k)).collect::<Result<Vec<_>>>()?;
+        let lights =
+            keys.into_iter().map(|k| scene_light(db, class, k, FieldOverrides::none())).collect::<Result<Vec<_>>>()?;
         out.insert(name, lights);
     }
     Ok(out)
@@ -225,20 +226,24 @@ fn object_lights(db: &Db, class: u32, key: u32) -> Result<ObjectLights> {
 
 struct Fields<'a> {
     what: String,
+    at: (u32, u32),
     fields: Vec<&'a Field>,
+    overrides: &'a FieldOverrides,
 }
 
 impl<'a> Fields<'a> {
-    fn new(db: &'a Db, class: u32, key: u32) -> Result<Self> {
+    fn new(db: &'a Db, class: u32, key: u32, overrides: &'a FieldOverrides) -> Result<Self> {
         Ok(Fields {
             what: format!("{}/{}", db.class_name(class), db.collection_name(key)),
+            at: (class, key),
             fields: db.fields(class, key)?,
+            overrides,
         })
     }
 
     fn value(&self, name: &str, key: u32) -> Result<&'a Value> {
         let f = self.fields.iter().find(|f| f.key == key).with_context(|| format!("{}: no field {name}", self.what))?;
-        single(&f.data).with_context(|| format!("{}: {name} is an array", self.what))
+        self.overrides.single(self.at.0, self.at.1, f).with_context(|| format!("{}: {name} is an array", self.what))
     }
 
     fn float(&self, name: &str) -> Result<f32> {
@@ -272,10 +277,14 @@ impl<'a> Fields<'a> {
 }
 
 pub fn light_node(db: &Db, key: u32) -> Result<LightNode> {
-    let f = Fields::new(db, CLASS_LIGHT_NODE, key)?;
+    light_node_with(db, key, FieldOverrides::none())
+}
+
+pub fn light_node_with(db: &Db, key: u32, overrides: &FieldOverrides) -> Result<LightNode> {
+    let f = Fields::new(db, CLASS_LIGHT_NODE, key, overrides)?;
     let light = match f.value("Light", fnv1("Light"))? {
         Value::Ref(r) if r.collection == 0 => None,
-        Value::Ref(r) => Some(scene_light(db, r.class, r.collection)?),
+        Value::Ref(r) => Some(scene_light(db, r.class, r.collection, overrides)?),
         v => bail!("{}: Light = {v:?}", f.what),
     };
     let unk_77e1adcd = match f.value("0x77E1ADCD", 0x77E1_ADCD)? {
@@ -293,8 +302,8 @@ pub fn light_node(db: &Db, key: u32) -> Result<LightNode> {
     })
 }
 
-fn scene_light(db: &Db, class: u32, key: u32) -> Result<SceneLight> {
-    let f = Fields::new(db, class, key)?;
+fn scene_light(db: &Db, class: u32, key: u32, overrides: &FieldOverrides) -> Result<SceneLight> {
+    let f = Fields::new(db, class, key, overrides)?;
     let shape = match class {
         CLASS_POINT => {
             LightShape::Point { outer_radius: f.float("OuterRadius")?, inner_radius: f.float("InnerRadius")? }

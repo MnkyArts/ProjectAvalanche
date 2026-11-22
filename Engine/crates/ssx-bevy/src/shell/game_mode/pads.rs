@@ -236,6 +236,35 @@ pub fn pads_frame(
     }
 }
 
+// PORT(choice): every gamepad while the keyboard (the PC's) is signed in; none while the window has lost the focus
+// (outside a test run, as the system UI) or the exit waits, so a motor never runs behind the player's back. The
+// console's simulation module sends to `1 << USER_controllerid` (0x82AB2DE8), its signed-in pad, and the guide button's
+// pause stops the posts.
+pub(super) fn rumble_target(
+    slots: Res<PadSlots>,
+    ui: Res<GameUiRes>,
+    shell: Res<super::Shell>,
+    gamepads: Query<Entity, crate::ride::rumble::RealPad>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut target: ResMut<crate::ride::rumble::RumbleTarget>,
+) {
+    use crate::ride::rumble::RumbleTarget;
+    let focused = !slots.focus_follows || window.iter().all(|w| w.focused);
+    let next = if shell.exiting.is_some() || !focused {
+        RumbleTarget::Pads(Vec::new())
+    } else if slots.script_pad {
+        RumbleTarget::Unattended
+    } else {
+        RumbleTarget::Pads(match ui.active_pad() {
+            None => gamepads.iter().collect(),
+            Some(d) => slots.slots.get(d).copied().flatten().filter(|e| gamepads.contains(*e)).into_iter().collect(),
+        })
+    };
+    if *target != next {
+        *target = next;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +349,96 @@ mod tests {
         assert!(presses.iter().all(|p| p.0 != Button::DpadRight), "{presses:?}");
         let (presses, _) = read_pad(0.0, true);
         assert_eq!(presses, [(Button::DpadRight, 0)], "the D-pad itself");
+    }
+
+    #[test]
+    fn a_tap_within_one_frame_is_a_press() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::input::ButtonState;
+        use bevy::input::gamepad::{
+            GamepadConnection, GamepadConnectionEvent, RawGamepadButtonChangedEvent, RawGamepadEvent,
+        };
+        use bevy::input::keyboard::{Key, KeyboardInput};
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let (id, window) = (app.world_mut().spawn_empty().id(), app.world_mut().spawn_empty().id());
+        app.world_mut().write_message(GamepadConnectionEvent::new(
+            id,
+            GamepadConnection::Connected { name: "test pad".into(), vendor_id: None, product_id: None },
+        ));
+        app.update();
+        for (value, state) in [(1.0, ButtonState::Pressed), (0.0, ButtonState::Released)] {
+            let button = RawGamepadButtonChangedEvent::new(id, GamepadButton::South, value);
+            app.world_mut().write_message(RawGamepadEvent::Button(button));
+            let (key_code, logical_key, text, repeat) = (KeyCode::ArrowDown, Key::ArrowDown, None, false);
+            app.world_mut().write_message(KeyboardInput { key_code, logical_key, state, text, repeat, window });
+        }
+        app.update();
+        let mut slots = PadSlots { synced: true, ..Default::default() };
+        slots.update_with(&[(id, true, false)]);
+        let presses = app
+            .world_mut()
+            .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<(Entity, &Gamepad)>| {
+                assert!(!keys.pressed(KeyCode::ArrowDown), "released within the frame");
+                pad_presses(&keys, &pads, &slots, &mut StickDpad::default(), false)
+            })
+            .expect("the pad read");
+        let keyboard = ssx_ui::game::input::KEYBOARD_DEVICE;
+        assert_eq!(presses, [(Button::DpadDown, keyboard), (Button::DigitalOne, 0)]);
+    }
+
+    #[test]
+    fn a_tap_through_steams_virtual_pad_alone_is_one_press() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::input::gamepad::{
+            GamepadConnection, GamepadConnectionEvent, RawGamepadButtonChangedEvent, RawGamepadEvent,
+        };
+        let tap = |offered: &[(Option<u16>, Option<u16>)]| {
+            let mut app = App::new();
+            app.add_plugins(bevy::input::InputPlugin);
+            let ids: Vec<Entity> = offered.iter().map(|_| app.world_mut().spawn_empty().id()).collect();
+            for (&id, &(vendor_id, product_id)) in ids.iter().zip(offered) {
+                let connection = GamepadConnection::Connected { name: "pad".into(), vendor_id, product_id };
+                app.world_mut().write_message(GamepadConnectionEvent::new(id, connection));
+            }
+            app.update();
+            for &id in &ids {
+                for (button, value) in [
+                    (GamepadButton::LeftTrigger2, 0.0),
+                    (GamepadButton::RightTrigger2, 0.0),
+                    (GamepadButton::South, 1.0),
+                    (GamepadButton::South, 0.0),
+                ] {
+                    let event = RawGamepadButtonChangedEvent::new(id, button, value);
+                    app.world_mut().write_message(RawGamepadEvent::Button(event));
+                }
+            }
+            app.update();
+            let mut slots = PadSlots { synced: true, ..Default::default() };
+            let devices: Vec<(Entity, bool, bool)> = ids.iter().map(|&id| (id, true, false)).collect();
+            slots.update_with(&devices);
+            app.world_mut()
+                .run_system_once(move |keys: Res<ButtonInput<KeyCode>>, pads: Query<(Entity, &Gamepad)>| {
+                    let mut sticks = StickDpad::default();
+                    let mut presses = pad_presses(&keys, &pads, &slots, &mut sticks, false);
+                    presses.sort_by_key(|&(_, device)| device);
+                    let held = pads.iter().any(|(_, pad)| {
+                        pad.pressed(GamepadButton::LeftTrigger2)
+                            || pad.pressed(GamepadButton::RightTrigger2)
+                            || pad.get(GamepadButton::LeftTrigger2).unwrap_or(0.0) > 0.0
+                            || pad.get(GamepadButton::RightTrigger2).unwrap_or(0.0) > 0.0
+                    });
+                    (presses, sticks.take(), held)
+                })
+                .expect("the pads read")
+        };
+        let (steam, dualsense) = ((Some(0x28de), Some(0x11ff)), (Some(0x054c), Some(0x0ce6)));
+        let (presses, trigger_presses, held) = tap(&[steam, dualsense]);
+        assert_eq!(presses, [(Button::DigitalOne, 0), (Button::DigitalOne, 1)], "both pads offered: two presses");
+        assert_eq!((trigger_presses, held), (vec![], false));
+        let (presses, trigger_presses, held) = tap(&[steam]);
+        assert_eq!(presses, [(Button::DigitalOne, 0)], "Steam's pad alone: one press");
+        assert_eq!((trigger_presses, held), (vec![], false), "the triggers at rest are released");
     }
 
     #[test]

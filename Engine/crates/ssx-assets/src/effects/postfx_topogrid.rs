@@ -196,7 +196,7 @@ mod tests {
     use super::*;
     use crate::postfx::{ColourCubeBlend, PostFxPreset};
     use crate::postfx_overlay::OverlayState;
-    use crate::postfx_state::{GOGGLES_PRIORITY, Layer};
+    use crate::postfx_state::{GOGGLES_PRIORITY, PostFxService};
 
     fn whiteout_1() -> PostFxState {
         let mut p = PostFxPreset::default();
@@ -280,10 +280,13 @@ mod tests {
         let mut scene = PostFxScene { base, ..PostFxScene::default() };
         assert!(!can_run(&scene));
         let g = whiteout_1();
-        let v = TopogridValues::of(scene.frame(&[], &[(&g, 0.5)]));
+        let mut fx = PostFxService::default();
+        let handle = fx.request_state(7, g.clone(), GOGGLES_PRIORITY, 0.0, 0.5);
+        let v = TopogridValues::of(scene.frame(&fx));
         assert_eq!(v.on, (1.0f32 - 0.0).mul_add(0.5, 0.0));
         assert_eq!((v.scale, v.dist), (1.0, [0.0, 300.0, 20.0, 80.0]), "absent in default: copied at any weight");
-        let v = TopogridValues::of(scene.frame(&[], &[]));
+        fx.release(handle, 0.0);
+        let v = TopogridValues::of(scene.frame(&fx));
         assert_eq!((v.on, v.scale, v.dist[1]), (0.0, 1.0, 300.0));
         assert_eq!(v.shader_params(0.0, [0.0; 3]), None);
         scene.presets.insert("night".into(), (Some(GOGGLES_PRIORITY), g));
@@ -303,10 +306,10 @@ mod tests {
         d.vectors.insert("overlay_1_tintcolour".into(), vec![0.25, 0.5, 0.75, 0.0]);
         let mut scene = PostFxScene { base: PostFxState::of(&d), ..PostFxScene::default() };
         let g = GogglesTrack::begin((7, PostFxState::of(&p)), &[], 1, true);
-        let mut layer = Layer::<PostFxState>::default();
-        layer.start(g.key, g.holder.clone(), 1.0, 1.0);
-        layer.update(0.5);
-        let v = scene.frame(&[], &layer.blends()).clone();
+        let mut fx = PostFxService::default();
+        let handle = fx.request_state(g.key, g.holder.clone(), GOGGLES_PRIORITY, 1.0, 1.0);
+        fx.update(0.5);
+        let v = scene.frame(&fx).clone();
         let overlay = OverlayState::of(&v).shader_params().expect("the goggles' overlay field is drawn");
         assert_eq!(overlay.tint_intensity[0], [0.25, 0.5, 0.75, 1.0 / (1.0 - 0.25)]);
         let topogrid = TopogridValues::of(&v);
@@ -314,8 +317,8 @@ mod tests {
         assert!(topogrid.shader_params(0.0, [0.0; 3]).is_some());
         assert_eq!(v.colour_cubes.len(), 1);
         assert_eq!((v.colour_cubes[0].group.as_str(), v.colour_cubes[0].weight), ("night_vision", 0.5));
-        layer.stop(g.key, 0.0);
-        let v = scene.frame(&[], &layer.blends()).clone();
+        fx.release(handle, 0.0);
+        let v = scene.frame(&fx).clone();
         assert_eq!(OverlayState::of(&v).shader_params(), None);
         assert_eq!(TopogridValues::of(&v).shader_params(0.0, [0.0; 3]), None);
         assert!(v.colour_cubes.is_empty());

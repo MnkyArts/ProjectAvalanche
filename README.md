@@ -221,7 +221,7 @@ works too; the launcher lists the keys under **Settings, Controls**:
 | | Keys |
 |---|---|
 | In the menus | Enter = START, Space = A, Backspace = B, X, Y, arrow keys = D-pad, Q / E = LB / RB, W A S D = left stick (the globe), F1 skips a movie |
-| On the mountain | arrow keys or W A S D = left stick (steer, tuck, brake), Space = A (jump), I / J / L / K = Y / X / B / A, Shift = RT, Ctrl = LT, E = RB, Backspace = LB (rewind), Esc = START (pause) |
+| On the mountain | arrow keys or W A S D = left stick (steer, tuck, brake), Numpad 8 / 4 / 6 / 2 = right stick, Numpad 5 = right stick click (classic controls: oxygen), Space = A (jump), I / J / L / K = Y / X / B / A, Shift = RT, Ctrl = LT, E = RB (standard controls: wingsuit and oxygen), Backspace = LB (rewind), Esc = START (pause) |
 
 ## SSX 2012 on PC: questions
 

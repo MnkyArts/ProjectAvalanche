@@ -128,6 +128,8 @@ extern crate log;
 
 mod constants;
 mod gamepad;
+// Project Avalanche patch T26: the gamepads SDL would not open.
+mod ignore;
 mod mapping;
 mod utils;
 

@@ -1,3 +1,4 @@
+mod binding;
 mod gear;
 mod outfit;
 
@@ -11,7 +12,7 @@ use ssx_formats::crsf::{CrsfFile, Mat4, SceneGraph};
 
 use crate::object_mesh::ObjectMesh;
 use crate::track_objects::asset_file;
-use crate::vault_db::{Db, Material, fnv1, refs, single, single_text, with_track_db};
+use crate::vault_db::{Db, Material, fnv1, single, single_text, with_track_db};
 
 pub use gear::{SlotParts, equipped_parts, mesh_part};
 pub use outfit::gear_postfx_key;
@@ -268,8 +269,31 @@ pub fn bind_pose_of(rig: &SceneGraph, face_offsets: &HashMap<String, [f32; 3]>) 
 
 pub fn outfit_crsf_files(big_root: &Path, name: &str) -> Result<Vec<String>> {
     crate::vault_db::with_attribdb(big_root, |db| {
-        Ok(outfit(db, name, &EquippedRefs::new())?.meshes.into_iter().map(|m| m.crsf).collect())
+        Ok(outfit(db, name, &Equipment::default())?.meshes.into_iter().map(|m| m.crsf).collect())
     })
+}
+
+#[derive(Clone, Debug)]
+pub struct OutfitMaterial {
+    pub slot: String,
+    pub mesh: String,
+    pub material: Material,
+}
+
+pub fn outfit_materials(
+    big_root: &Path,
+    track: &str,
+    name: &str,
+    loadout: &Loadout,
+) -> Result<(Vec<OutfitMaterial>, Vec<String>)> {
+    let equipment = equipment_refs(big_root, name, loadout)?;
+    let outfit = with_track_db(big_root, track, |db| outfit(db, name, &equipment))?;
+    let meshes = outfit
+        .meshes
+        .into_iter()
+        .map(|m| OutfitMaterial { slot: m.slot, mesh: m.mesh_name, material: m.material })
+        .collect();
+    Ok((meshes, outfit.left_out))
 }
 
 fn bind_pose(rig: &SceneGraph, face_offsets: &HashMap<String, [f32; 3]>) -> Vec<Srt> {
@@ -294,15 +318,15 @@ pub fn load_character(big_root: &Path, track: &str, name: &str) -> Result<Charac
 }
 
 pub fn load_character_with(big_root: &Path, track: &str, name: &str, loadout: &Loadout) -> Result<Character> {
-    let (equipped, lamp_accessory) = equipment_refs(big_root, name, loadout)?;
-    let outfit = with_track_db(big_root, track, |db| outfit(db, name, &equipped))?;
-    dressed(big_root, name, loadout, outfit, lamp_accessory)
+    let equipment = equipment_refs(big_root, name, loadout)?;
+    let outfit = with_track_db(big_root, track, |db| outfit(db, name, &equipment))?;
+    dressed(big_root, name, loadout, outfit, equipment.lamp_accessory)
 }
 
 pub fn load_character_untracked(big_root: &Path, name: &str, loadout: &Loadout) -> Result<Character> {
-    let (equipped, lamp_accessory) = equipment_refs(big_root, name, loadout)?;
-    let outfit = crate::vault_db::with_attribdb(big_root, |db| outfit(db, name, &equipped))?;
-    dressed(big_root, name, loadout, outfit, lamp_accessory)
+    let equipment = equipment_refs(big_root, name, loadout)?;
+    let outfit = crate::vault_db::with_attribdb(big_root, |db| outfit(db, name, &equipment))?;
+    dressed(big_root, name, loadout, outfit, equipment.lamp_accessory)
 }
 
 fn dressed(

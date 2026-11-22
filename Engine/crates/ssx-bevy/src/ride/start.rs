@@ -105,10 +105,10 @@ impl Ride {
                             None
                         })
                 };
-                let first = prepare(path);
+                let first = prepare(path).map(|i| read_ahead(i, &setup.big_root));
                 let short = match path {
                     IntroPath::Short => None,
-                    _ => prepare(IntroPath::Short),
+                    _ => prepare(IntroPath::Short).map(|i| read_ahead(i, &setup.big_root)),
                 };
                 (first, short)
             }
@@ -154,7 +154,9 @@ impl Ride {
                 EventManager::new(EventSetup { free_ride: setup.free_ride, ..EventSetup::new(def.as_ref(), course) })
             }
         };
-        let mut session = Session { event, ..Session::default() };
+        let workers: std::sync::Arc<dyn ssx_physics::workers::Workers> =
+            std::sync::Arc::new(super::workers::PoolWorkers);
+        let mut session = Session { event, workers: Some(workers), ..Session::default() };
         if let Some(m) = setup.map.as_mut() {
             m.gates.reset(&mut session);
         }
@@ -195,14 +197,24 @@ impl Ride {
                     let seed: Option<u32> = std::env::var("SSX_BOT_SEED").ok().and_then(|v| v.parse().ok());
                     let mut rng = ssx_assets::career::random::Source::seeded(seed);
                     let course = session.event.setup.course;
-                    if let Some((race, problems)) =
-                        ssx_physics::session::bots::BotRace::for_event(&setup.big_root, d, &data, &mut rng, course)
-                    {
-                        for p in problems {
-                            warn!("bots: {p}");
+                    let free_ride = session.event.setup.free_ride;
+                    match ssx_physics::session::bots::BotRace::for_event(
+                        &setup.big_root,
+                        d,
+                        &data,
+                        &mut rng,
+                        course,
+                        free_ride,
+                    ) {
+                        Some((race, problems)) => {
+                            for p in problems {
+                                warn!("bots: {p}");
+                            }
+                            info!("bots: {} for {} (GlobalRandom_Below, seed {seed:?})", race.bots.len(), d.name);
+                            session.bots = Some(race);
                         }
-                        info!("bots: {} for {} (GlobalRandom_Below, seed {seed:?})", race.bots.len(), d.name);
-                        session.bots = Some(race);
+                        None if free_ride => info!("bots: none for {} (the title update's Freeride)", d.name),
+                        None => {}
                     }
                 }
                 Err(e) => warn!("bots unavailable: {e:#}"),
@@ -431,8 +443,10 @@ impl Ride {
             }
             None => None,
         };
+        let stream_start = stream_start(&setup.world, setup.drop_key, setup.spawn.0);
         Some(Self {
             world: std::sync::Arc::new(setup.world),
+            scripts_task: None,
             spawn: setup.spawn,
             intro,
             intro_short,
@@ -500,6 +514,7 @@ impl Ride {
             last_press_capture: 0.0,
             motion_blur_cue: 0,
             r1: false,
+            r3: false,
             wingsuit_script: wingsuit_script(),
             ws_pressed: None,
             ws_deployed: None,
@@ -513,6 +528,9 @@ impl Ride {
             classic: setup.classic,
             viewer_keys: !setup.game,
             a_lock: PadLock::default(),
+            latch: super::latch::PadLatch::default(),
+            flush_latch: false,
+            step_read: false,
             grind_since: None,
             grind_ended: None,
             messages_logged: 0.0,
@@ -523,8 +541,11 @@ impl Ride {
             chat_held: false,
             pose_blocks: setup.live.map(|_| ssx_physics::graph::LiveBlocks::default()),
             ghost_rumble: ssx_physics::graph::LandingRumble::default(),
+            rumble: super::rumble::RumblePost::default(),
             start_gate: super::live::StartGate::Free,
             go_step: None,
+            stream_start,
+            stream_from_start: true,
         })
     }
 }
@@ -590,6 +611,34 @@ pub(super) fn loop_ghost_start(loops: u32) -> Option<f32> {
     let list: Vec<&str> = v.split(',').map(str::trim).collect();
     let k = usize::try_from(loops).ok()?.checked_sub(1)?;
     list.get(k).or(list.last())?.parse().ok()
+}
+
+// PORT(choice): the level's intro and the short path a restart takes read their NIS bundles while the level loads, off
+// the game thread: the ride's first step read them (`AssetDb::load` in `IntroGraph::load`) on the game thread when the
+// loading screen went (part of a 73 ms step at alps0101's start, development laptop, `trace_chrome`), the first step
+// after a restart read the short path's and built its graph (60 ms of an 83 ms frame on alps0101), and the intro's
+// audio read them again. The bundles and what is built from them are the same; the console's loader threads are not
+// decoded.
+fn read_ahead(
+    intro: std::sync::Arc<ssx_physics::nis::IntroAssets>,
+    big_root: &std::path::Path,
+) -> std::sync::Arc<ssx_physics::nis::IntroAssets> {
+    let mut assets = match std::sync::Arc::try_unwrap(intro) {
+        Ok(a) => a,
+        Err(shared) => return shared,
+    };
+    if assets.loaded.is_none() {
+        let t0 = std::time::Instant::now();
+        let bundles: Vec<&str> = assets.nis.bundles.iter().map(String::as_str).collect();
+        match ssx_assets::anim_db::AssetDb::load(big_root, &bundles) {
+            Ok(db) => {
+                info!("intro: its {} NIS bundle(s) read ahead in {:.3} s", bundles.len(), t0.elapsed().as_secs_f32());
+                assets.loaded = Some(std::sync::Arc::new(db));
+            }
+            Err(e) => warn!("intro: its NIS bundles not read ahead ({e:#}): the ride's first step reads them"),
+        }
+    }
+    std::sync::Arc::new(assets)
 }
 
 fn explore_game_mode(game_mode: Option<i64>, def: Option<&ssx_physics::event::EventDef>) -> bool {
@@ -678,4 +727,15 @@ fn goggles_preset(
     }
     info!("goggles: post-FX preset {} ({:?})", preset.name, preset.chain);
     Some((key, PostFxState::of(&preset)))
+}
+
+fn stream_start(world: &PhysicsWorld, drop_key: Option<u32>, spawn: Vec3) -> Vec3 {
+    match drop_key {
+        Some(key) => {
+            world.starts.iter().find(|s| s.drop_key == key).and_then(|s| s.slot(0)).map_or(Vec3::ZERO, |s| s.0)
+        }
+        // PORT(choice): a ride without a drop (a map's track, a test ride) streams from its spawn; the game always
+        // rides a drop.
+        None => spawn,
+    }
 }

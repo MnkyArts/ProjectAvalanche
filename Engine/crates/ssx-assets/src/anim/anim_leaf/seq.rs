@@ -73,6 +73,7 @@ pub struct SeqInst {
     game_saved: Vec<SavedValue>,
     drivers: TagTracker,
     queries: TagTracker,
+    pins: TagTracker,
 }
 
 fn seq_anims<'a>(env: &Env<'a>, ctrl: CtrlId) -> &'a [crate::anim_graph::SeqAnim] {
@@ -93,6 +94,7 @@ impl SeqInst {
         let game_saved = Self::game_tags(env, ctrl).iter().map(|_| SavedValue::default()).collect();
         let driver_windows: Vec<TagWindow> = Self::driver_tags(env, ctrl).iter().map(|t| t.window).collect();
         let query_windows: Vec<TagWindow> = Self::query_tags(env, ctrl).iter().map(|t| t.window).collect();
+        let pin_windows: Vec<TagWindow> = Self::pin_tags(env, ctrl).iter().map(|t| t.window).collect();
         let mut s = SeqInst {
             ctrl,
             time: 0.0,
@@ -105,6 +107,7 @@ impl SeqInst {
             game_saved,
             drivers: TagTracker::new(&driver_windows),
             queries: TagTracker::new(&query_windows),
+            pins: TagTracker::new(&pin_windows),
         };
         s.jump(env, gs, start);
         // TODO(guess): a start tick above 0 (`DefaultInitParam.StartTick`) moves the trackers there with the
@@ -117,6 +120,7 @@ impl SeqInst {
             s.game.set_time(s.time);
             s.drivers.set_time(s.time);
             s.queries.set_time(s.time);
+            s.pins.set_time(s.time);
         }
         s
     }
@@ -169,6 +173,25 @@ impl SeqInst {
         for (i, event) in self.queries.process() {
             if let (Some(t), crate::tags::TagEvent::Apply(_)) = (tags.get(i), event) {
                 gs.queries.push(t.task.clone());
+            }
+        }
+    }
+
+    fn pin_tags<'a>(env: &Env<'a>, ctrl: CtrlId) -> &'a [crate::anim_graph::PinTag] {
+        match &env.g.ctrls[ctrl].1 {
+            Ctrl::Sequence { pins, .. } => pins,
+            _ => &[],
+        }
+    }
+
+    fn pins_entered(&mut self, env: &Env, gs: &mut GameState) {
+        let tags = Self::pin_tags(env, self.ctrl);
+        if tags.is_empty() || !self.pins.update(self.time) {
+            return;
+        }
+        for (i, event) in self.pins.process() {
+            if let Some(t) = tags.get(i) {
+                gs.pins.push(crate::anim_eval::PinEvent { tag: t.clone(), event });
             }
         }
     }
@@ -315,6 +338,7 @@ impl Controller for SeqInst {
         self.game_entered(env, gs);
         self.drivers_entered(env, gs);
         self.queries_applied(env, gs);
+        self.pins_entered(env, gs);
     }
     fn delta(&self, env: &Env, gs: &GameState) -> Delta {
         self.delta.unwrap_or_else(|| self.current.as_ref().map_or(Delta::None, |e| e.delta(env, gs)))
@@ -340,6 +364,7 @@ impl Controller for SeqInst {
         self.game.set_time(self.time);
         self.drivers.set_time(self.time);
         self.queries.set_time(self.time);
+        self.pins.set_time(self.time);
     }
     fn windows(&self, env: &Env) -> Vec<Window> {
         match &env.g.ctrls[self.ctrl].1 {

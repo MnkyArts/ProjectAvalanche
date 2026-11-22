@@ -8,6 +8,7 @@ struct PostUniform {
     blur_v_samples: vec4<f32>,
     blur_v_offsets: vec4<f32>,
     sizes: vec4<u32>,
+    grade: vec4<f32>,
 }
 
 struct Exposure {

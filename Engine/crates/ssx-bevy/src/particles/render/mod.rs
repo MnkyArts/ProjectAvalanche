@@ -4,9 +4,10 @@ use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::view::ExtractedView;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::shader::load_shader_library;
 
 use crate::particles::ParticleFrame;
-use crate::render::buffers::{QueuedUniform, filled_buffer};
+use crate::render::buffers::QueuedUniform;
 use crate::render::post::GamePostCamera;
 
 mod passes;
@@ -20,6 +21,7 @@ const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 const DEPTH_COPY_FORMAT: TextureFormat = TextureFormat::R32Float;
 
 pub fn build(app: &mut App) {
+    load_shader_library!(app, "particle_globals.wesl");
     embedded_asset!(app, "particles.wesl");
     embedded_asset!(app, "particles_pass.wesl");
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
@@ -72,12 +74,6 @@ struct DrawUniform {
     glare: [Vec4; 4],
 }
 
-#[derive(Clone, Copy, Debug, Default, ShaderType)]
-struct PassGlobals {
-    view_from_clip: Mat4,
-    sizes: Vec4,
-}
-
 struct Targets {
     pub(super) size: UVec2,
     half: UVec2,
@@ -104,18 +100,107 @@ struct DrawCmd {
     vertices: u32,
 }
 
+struct FrameDraw {
+    tech: Tech,
+    bin: Bin,
+    texture: usize,
+    vertices: u32,
+    uniform: DrawUniform,
+}
+
+#[derive(Default)]
+pub struct FrameDraws {
+    draws: Vec<FrameDraw>,
+    records: Vec<u8>,
+    pub drawn: usize,
+    pub vertices: usize,
+}
+
+// PORT(choice): the draws' uniforms and their records' bytes are made in the particles' update on Bevy's compute pool
+// (`update::step`), beside the frame's other systems, and the render world only copies them to the GPU. Made in the
+// render world's preparation they took 0.76 ms of the render thread an update on Mount Eddie (a traced build with
+// timers, round perf-x1), and the step spent 0.43 ms on each draw's list of named parameters (strings) and 0.29 ms on
+// the registry's snapshots. The registry keeps the 42 names the draw uniform reads (`REGISTRY_NAMES`); each draw
+// passes its own before its uniform reads them, a draw left out too, as before, so every uniform holds the same
+// values. wgpu's buffers are the port's renderer; the console gathered a draw's constants in
+// `LynxRender_GatherRenderState` 0x829B4140.
+pub fn frame_draws(
+    bufs: &crate::particles::sim::DrawBuffers,
+    registry: &mut crate::particles::sim::Registry,
+    light: &crate::particles::ParticleLight,
+    textures: &[crate::particles::ParticleTexture],
+    unported: &mut std::collections::HashSet<(String, String)>,
+) -> FrameDraws {
+    let mut texture_of: std::collections::HashMap<&str, usize> = Default::default();
+    for (i, t) in textures.iter().enumerate() {
+        texture_of.entry(t.name.as_str()).or_insert(i);
+    }
+    let mut out = FrameDraws {
+        draws: Vec::with_capacity(bufs.draws.len()),
+        records: Vec::new(),
+        drawn: bufs.draws.len(),
+        vertices: bufs.draws.iter().map(|d| d.records.len()).sum(),
+    };
+    for d in &bufs.draws {
+        for &(slot, v) in &bufs.extras[d.extras.clone()] {
+            registry[slot] = v;
+        }
+        let (shader, technique) = (&*d.render.shader, &*d.render.technique);
+        let Some(&texture) = texture_of.get(&*d.render.texture) else { continue };
+        let Some(tech) = Tech::of(shader, technique) else {
+            if unported.insert((shader.to_owned(), technique.to_owned())) {
+                warn!("particles: no port of {shader} / {technique}");
+            }
+            continue;
+        };
+        let bin = if d.tonemap {
+            Bin::Tonemapped
+        } else if d.half {
+            Bin::HalfRes
+        } else {
+            Bin::FullRes
+        };
+        if tech.is_ribbon() != (d.mesh_type == 2) {
+            if unported.insert((shader.to_owned(), format!("iType {}", d.mesh_type))) {
+                warn!("particles: {shader} with mesh builder {} not ported", d.mesh_type);
+            }
+            continue;
+        }
+        let n = d.records.len() as u32;
+        let vertices = match tech {
+            t if t.is_ribbon() && n < 2 => continue,
+            t if t.is_ribbon() => n * 2,
+            _ => n * 6,
+        };
+        let first = (d.records.start * 3) as u32;
+        let uniform = draw_uniform(d, registry, first, light, bin == Bin::FullRes);
+        out.draws.push(FrameDraw { tech, bin, texture, vertices, uniform });
+    }
+    out.records = record_bytes(&bufs.records);
+    out
+}
+
+fn record_bytes(records: &[crate::particles::sim::VertexRecord]) -> Vec<u8> {
+    const RECORD: usize = std::mem::size_of::<f32>() * 12;
+    let mut bytes = vec![0u8; records.len() * RECORD];
+    for (out, record) in bytes.as_chunks_mut::<RECORD>().0.iter_mut().zip(records) {
+        for (out, x) in out.as_chunks_mut::<4>().0.iter_mut().zip(record.iter().flat_map(|row| row.to_array())) {
+            *out = x.to_le_bytes();
+        }
+    }
+    bytes
+}
+
 #[derive(Resource, Default)]
 struct ParticleGpu {
     textures: Option<(usize, Vec<TextureView>)>,
     targets: Option<Targets>,
     globals: QueuedUniform<Globals>,
-    pass_globals: QueuedUniform<PassGlobals>,
     draws: DynamicUniformBuffer<DrawUniform>,
     records: Option<Buffer>,
     cmds: Vec<DrawCmd>,
     serial: u64,
     view_prev: Option<Mat4>,
-    unknown: std::collections::HashSet<(String, String)>,
 }
 
 fn texture(device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat, mips: u32) -> Texture {
@@ -135,18 +220,25 @@ fn view(t: &Texture) -> TextureView {
     t.create_view(&TextureViewDescriptor::default())
 }
 
-fn extra(d: &crate::particles::sim::Draw, name: &str) -> Vec4 {
-    let registry = d.registry.as_deref().map_or(&[][..], Vec::as_slice);
-    registry.iter().find(|(n, _)| n == name).map_or(Vec4::ZERO, |(_, v)| *v)
+macro_rules! slot {
+    ($name:literal) => {
+        const {
+            match crate::particles::sim::registry_slot($name) {
+                Some(i) => i,
+                None => panic!(concat!("not a registry name: ", $name)),
+            }
+        }
+    };
 }
 
 fn draw_uniform(
     d: &crate::particles::sim::Draw,
+    registry: &crate::particles::sim::Registry,
     first: u32,
     light: &crate::particles::ParticleLight,
     full_res: bool,
 ) -> DrawUniform {
-    let e = |n: &str| extra(d, n);
+    let e = |slot: usize| registry[slot];
     let (light_pos, light_col, radius, falloff) = if d.use_global_lighting {
         (light.position, light.colour, light.radius, light.falloff)
     } else {
@@ -154,61 +246,76 @@ fn draw_uniform(
     };
     DrawUniform {
         world: d.world,
-        time: Vec4::new(d.time_now as f32, d.age_max as f32, e("fTimeSpeed").x, d.age_warp_inv),
+        time: Vec4::new(d.time_now as f32, d.age_max as f32, e(slot!("fTimeSpeed")).x, d.age_warp_inv),
         stretch: d.stretch.extend(d.stretch_per_particle as u8 as f32),
         color_mult: d.color_mult,
-        color_spread: e("vColorMultSpread"),
+        color_spread: e(slot!("vColorMultSpread")),
         ramp: d.color_ramp,
-        ramp_times: e("vColorRampTimes"),
-        size_ramp: e("vSizeRamp"),
-        size_ramp_times: e("vSizeRampTimes"),
-        flags: Vec4::new(e("bUseColorRamp").x, e("bUseColorMult").x, e("bUseSizeRamp").x, e("bUseSizeMult").x),
-        size_mult: Vec4::new(e("fSizeMultX").x, e("fSizeMultY").x, e("iAlign").x, e("iScreenSpace").x),
-        pivot: e("vPivotShift"),
-        fade: Vec4::new(e("fNearFadeStart").x, e("fNearFadeEnd").x, e("fZBias").x, first as f32),
-        feather: Vec4::new(d.z_feather[2], d.z_feather[3], e("fContactShadowFalloff").x, e("fContactShadowOffset").x),
+        ramp_times: e(slot!("vColorRampTimes")),
+        size_ramp: e(slot!("vSizeRamp")),
+        size_ramp_times: e(slot!("vSizeRampTimes")),
+        flags: Vec4::new(
+            e(slot!("bUseColorRamp")).x,
+            e(slot!("bUseColorMult")).x,
+            e(slot!("bUseSizeRamp")).x,
+            e(slot!("bUseSizeMult")).x,
+        ),
+        size_mult: Vec4::new(
+            e(slot!("fSizeMultX")).x,
+            e(slot!("fSizeMultY")).x,
+            e(slot!("iAlign")).x,
+            e(slot!("iScreenSpace")).x,
+        ),
+        pivot: e(slot!("vPivotShift")),
+        fade: Vec4::new(e(slot!("fNearFadeStart")).x, e(slot!("fNearFadeEnd")).x, e(slot!("fZBias")).x, first as f32),
+        feather: Vec4::new(
+            d.z_feather[2],
+            d.z_feather[3],
+            e(slot!("fContactShadowFalloff")).x,
+            e(slot!("fContactShadowOffset")).x,
+        ),
         light_pos: light_pos.extend(radius),
         light_col,
         light_misc: Vec4::new(falloff, 0.0, 0.0, 0.0),
         anim: Vec4::new(
-            e("bUseAnimTexture").x,
-            e("iAnimTextureMode").x,
-            e("iAnimTextureCount").x,
-            e("iAnimTextureRows").x,
+            e(slot!("bUseAnimTexture")).x,
+            e(slot!("iAnimTextureMode")).x,
+            e(slot!("iAnimTextureCount")).x,
+            e(slot!("iAnimTextureRows")).x,
         ),
         anim2: Vec4::new(
-            e("fAnimTextureSpeed").x,
-            e("iAnimTextureRandomStart").x,
-            e("iTile").x,
-            d.vertices.len() as f32,
+            e(slot!("fAnimTextureSpeed")).x,
+            e(slot!("iAnimTextureRandomStart")).x,
+            e(slot!("iTile")).x,
+            d.records.len() as f32,
         ),
         modulo: d.dimensions.extend(d.modulo_position as u8 as f32),
         modulo2: Vec4::new(
-            e("fCameraPush").x,
-            e("iNoFadeFar").x,
+            e(slot!("fCameraPush")).x,
+            e(slot!("iNoFadeFar")).x,
             d.stretch_per_camera as u8 as f32,
             full_res as u8 as f32,
         ),
         glare: [
             Vec4::new(
-                e("fGlareBloomScale").x,
-                e("fGlareBloomSpread").x,
-                e("fGlareSensitivityCenter").x,
-                e("fGlareSensitivityEdge").x,
+                e(slot!("fGlareBloomScale")).x,
+                e(slot!("fGlareBloomSpread")).x,
+                e(slot!("fGlareSensitivityCenter")).x,
+                e(slot!("fGlareSensitivityEdge")).x,
             ),
             Vec4::new(
-                e("fGlareSensitivityPower").x,
-                e("fGlareRotationRate").x,
-                e("fGlareDirCenterPower").x,
-                e("fGlareDirEdgePower").x,
+                e(slot!("fGlareSensitivityPower")).x,
+                e(slot!("fGlareRotationRate")).x,
+                e(slot!("fGlareDirCenterPower")).x,
+                e(slot!("fGlareDirEdgePower")).x,
             ),
             Vec4::new(
-                e("fGlareDirOrientation").x,
-                e("fGlareSizeMultSpread").x,
-                e("fFlareOffsetScale").x,
-                e("fFlareEndScale").x,
+                e(slot!("fGlareDirOrientation")).x,
+                e(slot!("fGlareSizeMultSpread")).x,
+                e(slot!("fFlareOffsetScale")).x,
+                e(slot!("fFlareEndScale")).x,
             ),
-            Vec4::new(e("bUseGlareSeed").x, e("fFlareMovementRate").x, 0.0, 0.0),
+            Vec4::new(e(slot!("bUseGlareSeed")).x, e(slot!("fFlareMovementRate")).x, 0.0, 0.0),
         ],
     }
 }
@@ -273,6 +380,13 @@ fn prepare(
     let near = a * far / (1.0 + a);
     let game_proj = Vec4::new(far / (near - far), near * far / (near - far), 0.0, 0.0);
     let l = &frame.light;
+    // PORT(choice): one buffer of the view's constants for the draws and the half-resolution passes
+    // (`particle_globals.wesl`; the passes read its `view_from_clip` and `sizes`, the values their own buffer held), so
+    // one queue write a frame instead of two: wgpu 30 makes a staging buffer for every write. Traced on Mount Eddie
+    // (`--benchmark`) this system took 0.18 instead of 0.26 ms a frame, measured together with the camera schedules'
+    // single-threaded executor and the level's light buffer, which do not touch it and moved it 0.50 -> 0.45 ms on
+    // their own (an earlier build); this write's own share was not timed apart. Uniform buffers are the port's
+    // renderer; the console's GPU set shader constants.
     gpu.globals.write(
         &device,
         &queue,
@@ -293,60 +407,158 @@ fn prepare(
             game_proj,
         },
     );
-    let pass_globals = PassGlobals { view_from_clip: v.clip_from_view.inverse(), sizes };
-    gpu.pass_globals.write(&device, &queue, "ssx_particle_pass_globals", &pass_globals);
     if gpu.serial == frame.serial {
         return;
     }
     gpu.serial = frame.serial;
     let gpu = &mut *gpu;
+    let f = &*frame.draws;
     gpu.cmds.clear();
-    let mut records: Vec<Vec4> = Vec::new();
-    let mut uniforms: Vec<DrawUniform> = Vec::new();
-    for d in frame.draws.iter() {
-        let Some(texture) = frame.textures.iter().position(|t| t.name == d.texture) else { continue };
-        let Some(tech) = Tech::of(&d.shader, &d.technique) else {
-            if gpu.unknown.insert((d.shader.clone(), d.technique.clone())) {
-                warn!("particles: no port of {} / {}", d.shader, d.technique);
-            }
-            continue;
-        };
-        let bin = if d.tonemap {
-            Bin::Tonemapped
-        } else if d.half {
-            Bin::HalfRes
-        } else {
-            Bin::FullRes
-        };
-        if tech.is_ribbon() != (d.mesh_type == 2) {
-            if gpu.unknown.insert((d.shader.clone(), format!("iType {}", d.mesh_type))) {
-                warn!("particles: {} with mesh builder {} not ported", d.shader, d.mesh_type);
-            }
-            continue;
-        }
-        let vertices = match tech {
-            t if t.is_ribbon() && d.vertices.len() < 2 => continue,
-            t if t.is_ribbon() => d.vertices.len() as u32 * 2,
-            _ => d.vertices.len() as u32 * 6,
-        };
-        let first = records.len() as u32;
-        records.extend(d.vertices.iter().flatten());
-        uniforms.push(draw_uniform(d, first, &frame.global_light, bin == Bin::FullRes));
-        gpu.cmds.push(DrawCmd { tech, bin, texture, offset: 0, vertices });
-    }
-    if !uniforms.is_empty() {
-        match gpu.draws.get_writer(uniforms.len(), &device, &queue) {
+    gpu.cmds.extend(f.draws.iter().map(|d| DrawCmd {
+        tech: d.tech,
+        bin: d.bin,
+        texture: d.texture,
+        offset: 0,
+        vertices: d.vertices,
+    }));
+    if !f.draws.is_empty() {
+        match gpu.draws.get_writer(f.draws.len(), &device, &queue) {
             Some(mut writer) => {
-                for (cmd, u) in gpu.cmds.iter_mut().zip(&uniforms) {
-                    cmd.offset = writer.write(u);
+                for (cmd, d) in gpu.cmds.iter_mut().zip(&f.draws) {
+                    cmd.offset = writer.write(&d.uniform);
                 }
             }
             None => gpu.cmds.clear(),
         }
     }
-    if records.is_empty() {
-        records.push(Vec4::ZERO);
+    let bytes = if f.records.is_empty() { &[0u8; 16][..] } else { &f.records[..] };
+    // PORT(choice): the records' buffer lives across frames and is written through the queue (16 bytes a record, so
+    // whole words); it grows (a new buffer, a power of two of at least 64 KiB) only when a frame's records do not fit,
+    // so the draws' bind groups (`passes::ParticleBinds`) stay valid. Every draw reads only its own records (the
+    // shaders' `first` and its particles), never the tail past the frame's; the copies of a `bFollowCamera` draw read
+    // their original's (one copy of the records each before: 8 for `fx_falling_snow`, `iPeriodicBoxNum` 2), and a draw
+    // left out keeps its records unread. A new buffer each update made the draws' bind groups (two a texture) anew
+    // each time. wgpu's buffers and bind groups are the port's renderer; the console's GPU had no bind groups.
+    let size = bytes.len() as u64;
+    if gpu.records.as_ref().is_none_or(|b| b.size() < size) {
+        gpu.records = Some(device.create_buffer(&BufferDescriptor {
+            label: Some("ssx_particle_records"),
+            size: size.next_power_of_two().max(1 << 16),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
     }
-    let bytes: Vec<u8> = records.iter().flat_map(|v| v.to_array()).flat_map(f32::to_le_bytes).collect();
-    gpu.records = Some(filled_buffer(&device, &queue, "ssx_particle_records", &bytes, BufferUsages::STORAGE));
+    if let Some(buffer) = &gpu.records {
+        queue.write_buffer(buffer, 0, bytes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bevy::prelude::*;
+    use ssx_formats::lynx::ParticleSystem;
+
+    use super::{Bin, frame_draws, record_bytes};
+    use crate::particles::sim::{Draw, DrawBuffers, EffectDef, REGISTRY_NAMES, RenderConsts};
+    use crate::particles::{ParticleLight, ParticleTexture};
+
+    fn consts(texture: &str, extra: &str) -> Arc<RenderConsts> {
+        let xml = format!(
+            r#"<particleSystem><particleEffect name="e"><particleGroup name="g">
+               <particleAction className="ParticleActionRender"><parameter name="sShader" value="lynx.fx" />
+               <parameter name="sTechnique" value="AdditiveBlend" /><parameter name="sTexture" value="{texture}" />
+               {extra}</particleAction></particleGroup></particleEffect></particleSystem>"#
+        );
+        let sys = ParticleSystem::parse(xml.as_bytes()).unwrap();
+        let def = EffectDef::compile(&sys.effects[0]);
+        def.groups[0].actions[0].render.clone().unwrap()
+    }
+
+    fn draw(render: Arc<RenderConsts>, bufs: &mut DrawBuffers, particles: usize, extras: &[(usize, Vec4)]) {
+        let first = bufs.records.len();
+        bufs.records.extend((first..first + particles).map(|i| [Vec4::splat(i as f32), Vec4::ONE, Vec4::ZERO]));
+        let e = bufs.extras.len();
+        bufs.extras.extend_from_slice(extras);
+        bufs.draws.push(Draw {
+            effect: 0,
+            world: Mat4::IDENTITY,
+            layer: 0,
+            half: true,
+            tonemap: false,
+            render,
+            time_now: 0,
+            age_max: 0,
+            age_warp_inv: 1.0,
+            stretch: Vec3::ZERO,
+            stretch_per_particle: false,
+            color_mult: Vec4::ONE,
+            color_ramp: [Vec4::ZERO; 4],
+            z_feather: [0.0; 4],
+            use_global_lighting: false,
+            light: (Vec3::ZERO, Vec4::ZERO, 1.0, 1.0),
+            modulo_position: false,
+            dimensions: Vec3::ZERO,
+            stretch_per_camera: false,
+            mesh_type: 0,
+            extras: e..bufs.extras.len(),
+            records: first..bufs.records.len(),
+            aabb: (Vec3::ZERO, Vec3::ZERO),
+        });
+    }
+
+    #[test]
+    fn draws_pass_and_read_the_registry_in_order() {
+        let speed = REGISTRY_NAMES.iter().position(|n| *n == "fTimeSpeed").unwrap();
+        let passing =
+            consts("t.dds", r#"<parameter name="fTimeSpeed" value="2.5" /><parameter name="fOwn" value="7" />"#);
+        assert_eq!(passing.extras_slots().collect::<Vec<_>>(), vec![speed]);
+        let missing = consts("none.dds", r#"<parameter name="fTimeSpeed" value="4.0" />"#);
+        let plain = consts("t.dds", "");
+        let mut bufs = DrawBuffers::default();
+        draw(plain.clone(), &mut bufs, 2, &[]);
+        draw(missing, &mut bufs, 3, &[(speed, Vec4::splat(4.0))]);
+        draw(plain.clone(), &mut bufs, 1, &[]);
+        draw(passing, &mut bufs, 2, &[(speed, Vec4::splat(2.5))]);
+        let textures = vec![ParticleTexture { name: "t.dds".into(), size: UVec2::ONE, levels: vec![vec![0; 4]] }];
+        let mut registry = [Vec4::ZERO; REGISTRY_NAMES.len()];
+        let mut unported = Default::default();
+        let f = frame_draws(&bufs, &mut registry, &ParticleLight::default(), &textures, &mut unported);
+        assert_eq!((f.drawn, f.vertices, f.draws.len()), (4, 8, 3));
+        let speeds: Vec<f32> = f.draws.iter().map(|d| d.uniform.time.z).collect();
+        assert_eq!(speeds, vec![0.0, 4.0, 2.5]);
+        let firsts: Vec<f32> = f.draws.iter().map(|d| d.uniform.fade.w).collect();
+        assert_eq!(firsts, vec![0.0, 15.0, 18.0]);
+        assert!(f.draws.iter().all(|d| d.bin == Bin::HalfRes && d.texture == 0));
+        assert_eq!(f.records.len(), 8 * 48);
+        assert_eq!(f.records[15 * 16..15 * 16 + 4], 5.0f32.to_le_bytes());
+        let f = frame_draws(&bufs, &mut registry, &ParticleLight::default(), &textures, &mut unported);
+        assert_eq!(f.draws[0].uniform.time.z, 2.5);
+    }
+
+    #[test]
+    fn record_bytes_are_the_floats_in_order() {
+        let specials =
+            [0.0, -0.0, f32::MIN_POSITIVE / 2.0, f32::INFINITY, f32::NEG_INFINITY, f32::from_bits(0x7FC0_1234)];
+        let mut state = 0x1234_5678u32;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            f32::from_bits(state)
+        };
+        let mut records: Vec<crate::particles::sim::VertexRecord> =
+            (0..97).map(|_| [0; 3].map(|_| Vec4::new(next(), next(), next(), next()))).collect();
+        records[3][1] = Vec4::from_array([specials[0], specials[1], specials[2], specials[3]]);
+        records[50][2] = Vec4::new(specials[4], specials[5], 1.5, -2.25);
+        let mut expected = Vec::new();
+        for v in records.iter().flatten() {
+            for x in v.to_array() {
+                expected.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        assert_eq!(record_bytes(&records), expected);
+        assert!(record_bytes(&[]).is_empty());
+    }
 }

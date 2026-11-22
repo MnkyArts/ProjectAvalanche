@@ -10,12 +10,11 @@ use bevy::prelude::{
 use ssx_assets::vault_db::{fnv1, single};
 use ssx_formats::attrib::Value;
 
-use crate::render::lighting::GameLighting;
 use crate::render::lighting::game::GameLightAssets;
 use crate::render::objects::foreground::ForegroundMaterial;
 use crate::render::objects::material::ObjectMaterial;
 use crate::render::objects::{LoadedPart, load_part};
-use crate::rider::material::{CharacterLightUniform, CharacterMaterial, RiderShading};
+use crate::rider::material::{CharacterMaterial, RiderShading};
 use crate::rider::skin::{self as rider_skin, LoadedRider};
 
 pub const BOARD_MESH: &str = "common_board_mesh";
@@ -44,6 +43,10 @@ pub struct LoadedBoard {
 }
 
 impl LoadedBoard {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        self.part.queue_images(uploads, images);
+    }
+
     pub fn into_part(self) -> LoadedPart {
         self.part
     }
@@ -66,13 +69,19 @@ pub fn load_board(big_root: &Path, track: Option<&str>) -> Result<LoadedBoard> {
         let m = reference("Material")?;
         Ok((geom, db.material(m.class, m.collection)?))
     })?;
+    board_part(big_root, &geom, &material)
+}
+
+pub fn board_part(big_root: &Path, geom: &str, material: &ssx_assets::vault_db::Material) -> Result<LoadedBoard> {
     let content = ssx_assets::content::GameContent::of(big_root);
-    let id = ssx_assets::content::models::model_id(&geom)
+    let id = ssx_assets::content::models::model_id(geom)
         .filter(|id| content.has(id))
         .with_context(|| format!("{geom} not found under {}", big_root.display()))?;
-    let def = content.material_for(&material, ssx_assets::content::resolve::MaterialUse::Riders);
+    let def = content.material_for(material, ssx_assets::content::resolve::MaterialUse::Riders);
     let part = load_part(big_root, &id, ssx_assets::content::resolve::ModelUse::Rider, &def)?;
-    let source = format!("{geom} ({}, {})", material.name, material.effect.as_deref().unwrap_or("no effect"));
+    let diffuse = material.textures.get("diffuseTexture").map_or("no diffuse", String::as_str);
+    let source =
+        format!("{geom} ({}, {}, {diffuse})", material.name, material.effect.as_deref().unwrap_or("no effect"));
     Ok(LoadedBoard { part, source })
 }
 
@@ -109,11 +118,8 @@ fn spawn_rider(
     mut standard: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     light: Res<GameLightAssets>,
-    lighting: Option<Res<GameLighting>>,
 ) {
     let root = commands.spawn((Name::new("rider"), RiderRoot, Transform::default(), Visibility::default())).id();
-    let rider_light =
-        lighting.as_deref().map_or_else(CharacterLightUniform::viewer_default, CharacterLightUniform::from_preset);
     let mut board_material = None;
     let separate = pending.board.take().filter(|_| !pending.body.as_ref().is_some_and(|b| b.has_board_part()));
     let board_entity = match separate {
@@ -124,8 +130,7 @@ fn spawn_rider(
             }
             let (lo, hi) = board.part.bounds;
             let offset = -Vec3::new((lo.x + hi.x) * 0.5, lo.y, (lo.z + hi.z) * 0.5);
-            let (mesh, material) =
-                board.part.add_character(&mut meshes, &mut images, &light, &rider_light, &mut characters);
+            let (mesh, material) = board.part.add_character(&mut meshes, &mut images, &light, &mut characters);
             board_material = Some(material.clone());
             let entity = commands.spawn((
                 Name::new("snowboard"),
@@ -165,7 +170,6 @@ fn spawn_rider(
             &mut meshes,
             &mut images,
             &light,
-            &rider_light,
             &mut objects,
             &mut foreground,
             &mut characters,

@@ -22,9 +22,11 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 
 use super::adapt::{AdaptMode, HdrAdaptation};
+use super::fsr::ScaledScene;
 use super::overlay::{OverlayUniform, PostOverlay};
 use super::topogrid::{PostTopogrid, TopogridUniform};
-use super::{GamePostCamera, PostSettings, PostUniform};
+use super::{GamePostCamera, PostLevels, PostSettings, PostUniform};
+use crate::render::bind_cache::BindGroupCache;
 use crate::render::buffers::QueuedUniform;
 use crate::render::objects::material::{
     LDR_PIPELINE_LABEL, LDR_POST_PARTICLES_LABEL, LDR_TONEMAP_BUFFER, LDR_TONEMAP_EXPOSURE_OFFSET,
@@ -40,6 +42,7 @@ const EXPOSURE_BYTES: u64 = 16;
 pub(super) fn build(app: &mut App) {
     app.add_plugins((
         ExtractResourcePlugin::<PostSettings>::default(),
+        ExtractResourcePlugin::<PostLevels>::default(),
         ExtractComponentPlugin::<GamePostCamera>::default(),
     ));
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -49,6 +52,7 @@ pub(super) fn build(app: &mut App) {
         .init_resource::<PostTargets>()
         .init_resource::<HdrAdaptation>()
         .init_resource::<LdrTranslucents>()
+        .init_resource::<PostHandoff>()
         .add_systems(RenderStartup, init_pipelines)
         .add_systems(Render, prepare_targets.in_set(RenderSystems::PrepareResources))
         .add_systems(
@@ -56,7 +60,8 @@ pub(super) fn build(app: &mut App) {
             (
                 take_ldr_translucents.in_set(Core3dSystems::MainPass).before(main_transparent_pass_3d),
                 post_chain.in_set(Core3dSystems::PostProcess).before(tonemapping),
-                restore_ldr_translucents.in_set(Core3dSystems::PostProcess).after(post_chain),
+                post_rest.in_set(Core3dSystems::PostProcess).after(post_chain).before(tonemapping),
+                restore_ldr_translucents.in_set(Core3dSystems::PostProcess).after(post_rest),
             ),
         );
 }
@@ -81,7 +86,9 @@ struct PostPipelines {
     tonemap: CachedRenderPipelineId,
     fxaa: CachedRenderPipelineId,
     composite: CachedRenderPipelineId,
+    composite_codes: CachedRenderPipelineId,
     adapt: CachedComputePipelineId,
+    reduce_levels: [CachedComputePipelineId; 2],
     reduce: CachedComputePipelineId,
 }
 
@@ -191,7 +198,18 @@ fn init_pipelines(
         tonemap: render("ssx_post_tonemap", &final_layout, "post_final", "tonemap_pass", FRAME_FORMAT),
         fxaa: render("ssx_post_fxaa", &fxaa_layout, "post_fxaa", "fxaa_pass", FRAME_FORMAT),
         composite: render("ssx_post_composite", &final_layout, "post_final", "composite_pass", HDR_FORMAT),
+        composite_codes: render(
+            "ssx_post_composite_codes",
+            &final_layout,
+            "post_final",
+            "composite_codes_pass",
+            HDR_FORMAT,
+        ),
         adapt: compute("ssx_post_adapt", "adapt"),
+        reduce_levels: [
+            compute("ssx_post_reduce_level1", "reduce_level1"),
+            compute("ssx_post_reduce_level2", "reduce_level2"),
+        ],
         reduce: compute("ssx_post_reduce", "reduce"),
         downsample_layout,
         adapt_layout,
@@ -279,10 +297,12 @@ fn prepare_targets(
     shader_buffers: Res<RenderAssets<GpuShaderBuffer>>,
     mut targets: ResMut<PostTargets>,
     mut adapt: ResMut<HdrAdaptation>,
+    levels: Option<Res<PostLevels>>,
 ) {
     let Some(settings) = settings else {
         return;
     };
+    let levels = levels.as_deref().copied().unwrap_or_default();
     if let Some(ldr) = shader_buffers.get(&LDR_TONEMAP_BUFFER) {
         let u = &settings.uniform;
         let words: Vec<f32> =
@@ -302,6 +322,12 @@ fn prepare_targets(
         let q = quarter_size(size);
         let mut u = settings.uniform;
         u.sizes = UVec4::new(size.x, size.y, q.x, q.y);
+        if !levels.bloom_drawn() {
+            u.bloom.z = 0.0;
+        }
+        if !levels.post {
+            u.grade.x = 0.0;
+        }
         let base = adapt.begin(&device, &queue, q, &t.adapted, t.fresh);
         // TODO(guess): the port's view counts as "sky not ready" until it first draws a complete scene (no pipeline compiling, meshes spawned): the adaptation runs toward black (L = 1) as main.scrape's `ifnot skyrenderobj ready` draws black, later it adapts every frame (until 2026-10-21 the port cleared it on every frame with a pipeline compiling: a bright second mid-ride); settle: the sky render object's ready test and how long a level's loading frames run the scrape.
         let starting = loading && !t.complete;
@@ -341,7 +367,7 @@ fn blank_view(device: &RenderDevice, label: &'static str, format: TextureFormat)
         .create_view(&TextureViewDescriptor::default())
 }
 
-fn fullscreen_pass(
+pub(super) fn fullscreen_pass(
     ctx: &mut RenderContext,
     label: &str,
     target: &TextureView,
@@ -366,10 +392,13 @@ fn fullscreen_pass(
     pass.draw(0..3, 0..1);
 }
 
+type PostView =
+    (&'static ViewTarget, &'static ViewDepthStencilTexture, Option<&'static ViewPrepassTextures>, Has<ScaledScene>);
+
 #[allow(clippy::too_many_arguments)]
 fn post_chain(
     world: &World,
-    view: ViewQuery<(&ViewTarget, &ViewDepthStencilTexture, Option<&ViewPrepassTextures>), With<GamePostCamera>>,
+    view: ViewQuery<PostView, With<GamePostCamera>>,
     pipelines: Option<Res<PostPipelines>>,
     targets: Res<PostTargets>,
     settings: Option<Res<PostSettings>>,
@@ -380,16 +409,22 @@ fn post_chain(
     ldr: Res<LdrTranslucents>,
     cache: Res<PipelineCache>,
     session: Res<HdrAdaptation>,
+    levels: Option<Res<PostLevels>>,
+    handoff: Res<PostHandoff>,
+    mut binds: Local<BindGroupCache>,
     mut ctx: RenderContext,
 ) {
+    handoff.put(None);
     let (Some(p), Some(settings)) = (pipelines, settings) else {
         return;
     };
+    let levels = levels.as_deref().copied().unwrap_or_default();
+    let bloom_on = levels.bloom_drawn() && settings.uniform.bloom.z != 0.0;
     let view_entity = view.entity();
     let Some(t) = targets.0.get(&view_entity) else {
         return;
     };
-    let (target, depth, prepass) = view.into_inner();
+    let (target, depth, prepass, scaled) = view.into_inner();
     if target.main_texture_format() != HDR_FORMAT {
         return;
     }
@@ -402,7 +437,15 @@ fn post_chain(
     let (Some(tonemap), Some(fxaa), Some(composite)) = (render(p.tonemap), render(p.fxaa), render(p.composite)) else {
         return;
     };
-    let (Some(adapt), Some(reduce)) = (cache.get_compute_pipeline(p.adapt), cache.get_compute_pipeline(p.reduce))
+    let composite = if scaled {
+        let Some(codes) = render(p.composite_codes) else { return };
+        codes
+    } else {
+        composite
+    };
+    let compute = |id| cache.get_compute_pipeline(id);
+    let (Some(adapt), Some(level1), Some(level2), Some(reduce)) =
+        (compute(p.adapt), compute(p.reduce_levels[0]), compute(p.reduce_levels[1]), compute(p.reduce))
     else {
         return;
     };
@@ -420,22 +463,36 @@ fn post_chain(
     let device = ctx.render_device().clone();
     let layout = |l: &BindGroupLayoutDescriptor| cache.get_bind_group_layout(l);
     let post = target.post_process_write();
-    let bind = |label: &'static str, l: &BindGroupLayoutDescriptor, src: &TextureView| {
-        device.create_bind_group(
+    // PORT(choice): the chain's bind groups (its own and the particle passes', about fifty a frame on Mount Eddie) are
+    // kept across frames and made again only when what they bind changes (`BindGroupCache`: the same layout and the
+    // same buffers, views and samplers give the kept group), instead of made and freed every frame: the same resources
+    // bound, so the same passes. wgpu's bind groups are the port's renderer; the console's GPU had none.
+    let binds = &mut *binds;
+    binds.next_frame();
+    let mut bind = |label: &'static str, l: &BindGroupLayoutDescriptor, src: &TextureView| {
+        binds.get(
+            &device,
             label,
             &layout(l),
             &BindGroupEntries::sequential((&t.uniform, src, &p.sampler, t.exposure.as_entire_binding())),
         )
     };
+    let bloom_binds = [
+        bind("ssx_post_threshold", &p.bloom_layout, &t.quarter),
+        bind("ssx_post_blur_h", &p.bloom_layout, &t.bloom_a),
+        bind("ssx_post_blur_v", &p.bloom_layout, &t.bloom_b),
+    ];
 
-    let down_bg = device.create_bind_group(
+    let down_bg = binds.get(
+        &device,
         "ssx_post_downsample",
         &layout(&p.downsample_layout),
         &BindGroupEntries::sequential((&t.uniform, post.source)),
     );
     fullscreen_pass(&mut ctx, "ssx_post_downsample", &t.quarter, downsample, &down_bg);
 
-    let adapt_bg = device.create_bind_group(
+    let adapt_bg = binds.get(
+        &device,
         "ssx_post_adapt",
         &layout(&p.adapt_layout),
         &BindGroupEntries::sequential((
@@ -453,37 +510,26 @@ fn post_chain(
         pass.set_bind_group(0, &adapt_bg, &[]);
         pass.set_pipeline(adapt);
         pass.dispatch_workgroups(q.x.div_ceil(8), q.y.div_ceil(8), 1);
+        let mut level = q;
+        for pipeline in [level1, level2] {
+            level = (level / 2).max(UVec2::ONE);
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups((level.x * level.y).div_ceil(256), 1, 1);
+        }
         pass.set_pipeline(reduce);
         pass.dispatch_workgroups(1, 1, 1);
     }
     session.store(ctx.command_encoder(), quarter_size(t.size), &t.adapted);
 
-    if settings.uniform.bloom.z != 0.0 {
-        fullscreen_pass(
-            &mut ctx,
-            "ssx_post_threshold",
-            &t.bloom_a,
-            threshold,
-            &bind("ssx_post_threshold", &p.bloom_layout, &t.quarter),
-        );
-        fullscreen_pass(
-            &mut ctx,
-            "ssx_post_blur_h",
-            &t.bloom_b,
-            blur_h,
-            &bind("ssx_post_blur_h", &p.bloom_layout, &t.bloom_a),
-        );
-        fullscreen_pass(
-            &mut ctx,
-            "ssx_post_blur_v",
-            &t.bloom_a,
-            blur_v,
-            &bind("ssx_post_blur_v", &p.bloom_layout, &t.bloom_b),
-        );
+    if bloom_on {
+        fullscreen_pass(&mut ctx, "ssx_post_threshold", &t.bloom_a, threshold, &bloom_binds[0]);
+        fullscreen_pass(&mut ctx, "ssx_post_blur_h", &t.bloom_b, blur_h, &bloom_binds[1]);
+        fullscreen_pass(&mut ctx, "ssx_post_blur_v", &t.bloom_a, blur_v, &bloom_binds[2]);
     }
 
-    let final_bg = |label: &'static str, src: &TextureView| {
-        device.create_bind_group(
+    let mut final_bg = |label: &'static str, src: &TextureView| {
+        binds.get(
+            &device,
             label,
             &layout(&p.final_layout),
             &BindGroupEntries::sequential((
@@ -505,7 +551,9 @@ fn post_chain(
             )),
         )
     };
-    fullscreen_pass(&mut ctx, "ssx_post_tonemap", &t.frame, tonemap, &final_bg("ssx_post_tonemap", post.source));
+    let tonemap_bg = final_bg("ssx_post_tonemap", post.source);
+    let composite_bg = final_bg("ssx_post_composite", if levels.fxaa_drawn() { &t.frame_aa } else { &t.frame });
+    fullscreen_pass(&mut ctx, "ssx_post_tonemap", &t.frame, tonemap, &tonemap_bg);
     if let Some(tonemap_buffer) = shader_buffers.get(&LDR_TONEMAP_BUFFER)
         && !ldr.pre.items.is_empty()
     {
@@ -513,19 +561,77 @@ fn post_chain(
         ctx.command_encoder().copy_buffer_to_buffer(&t.exposure, 8, tonemap, LDR_TONEMAP_EXPOSURE_OFFSET, 4);
         draw_ldr_translucents(world, &mut ctx, &ldr.pre, LDR_PIPELINE_LABEL, view_entity, depth, &t.frame);
     }
+    let fxaa = levels.fxaa_drawn().then(|| {
+        let bind = binds.get(
+            &device,
+            "ssx_post_fxaa",
+            &layout(&p.fxaa_layout),
+            &BindGroupEntries::sequential((&t.uniform, &t.frame, &p.fxaa_sampler)),
+        );
+        (fxaa.clone(), bind)
+    });
+    handoff.put(Some(PostRest {
+        view: view_entity,
+        bloom: bloom_on,
+        fxaa,
+        composite: (composite.clone(), composite_bg),
+        destination: post.destination.clone(),
+    }));
+}
+
+struct PostRest {
+    view: Entity,
+    bloom: bool,
+    fxaa: Option<(RenderPipeline, BindGroup)>,
+    composite: (RenderPipeline, BindGroup),
+    destination: TextureView,
+}
+
+#[derive(Resource, Default)]
+struct PostHandoff(std::sync::Mutex<Option<PostRest>>);
+
+impl PostHandoff {
+    fn put(&self, rest: Option<PostRest>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = rest;
+    }
+
+    fn take(&self) -> Option<PostRest> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+// PORT(choice): the post chain records into two encoders, its second half (RenderParticleFX's passes,
+// TranslucentPass_PostParticles, FXAA, the composite) in a system of its own right after the first, so Bevy finishes
+// the two in parallel (`finish_command_buffers`) and submits them in the systems' order. In one encoder the post chain
+// was the frame's last to finish (wgpu 30 records the real commands at `finish`) in 79 % of Mount Eddie's frames
+// (alps0101: 86 %), 1.05 ms of the 1.23 ms the render thread waited for the finishes (traced). The same passes in the
+// same order; wgpu places the transitions between two command buffers of a submission as it does within one.
+// Command encoders are the port's renderer; the console's post chain was one command stream.
+fn post_rest(
+    world: &World,
+    view: ViewQuery<PostView, With<GamePostCamera>>,
+    targets: Res<PostTargets>,
+    ldr: Res<LdrTranslucents>,
+    handoff: Res<PostHandoff>,
+    mut binds: Local<BindGroupCache>,
+    mut ctx: RenderContext,
+) {
+    let view_entity = view.entity();
+    let Some(rest) = handoff.take().filter(|r| r.view == view_entity) else { return };
+    let Some(t) = targets.0.get(&view_entity) else { return };
+    let (_, depth, _, _) = view.into_inner();
+    let binds = &mut *binds;
+    binds.next_frame();
     if let Some(post_uniform) = t.uniform.binding() {
-        let bloom = (settings.uniform.bloom.z != 0.0).then_some(&t.bloom_a);
-        crate::particles::render::draw(world, &mut ctx, depth, &t.frame, bloom, post_uniform, &t.exposure);
+        let bloom = rest.bloom.then_some(&t.bloom_a);
+        crate::particles::render::draw(world, &mut ctx, depth, &t.frame, bloom, post_uniform, &t.exposure, binds);
     }
     draw_ldr_translucents(world, &mut ctx, &ldr.post, LDR_POST_PARTICLES_LABEL, view_entity, depth, &t.frame);
-    let fxaa_bg = device.create_bind_group(
-        "ssx_post_fxaa",
-        &layout(&p.fxaa_layout),
-        &BindGroupEntries::sequential((&t.uniform, &t.frame, &p.fxaa_sampler)),
-    );
-    fullscreen_pass(&mut ctx, "ssx_post_fxaa", &t.frame_aa, fxaa, &fxaa_bg);
-    let composite_bg = final_bg("ssx_post_composite", &t.frame_aa);
-    fullscreen_pass(&mut ctx, "ssx_post_composite", post.destination, composite, &composite_bg);
+    if let Some((fxaa, bind)) = &rest.fxaa {
+        fullscreen_pass(&mut ctx, "ssx_post_fxaa", &t.frame_aa, fxaa, bind);
+    }
+    let (composite, bind) = &rest.composite;
+    fullscreen_pass(&mut ctx, "ssx_post_composite", &rest.destination, composite, bind);
 }
 
 fn fxaa_sampler() -> SamplerDescriptor<'static> {

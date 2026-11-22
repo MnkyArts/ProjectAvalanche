@@ -15,6 +15,7 @@ use crate::render::lighting::game::GameLightUniform;
 use crate::render::shadows::{ShadowPassKey, specialize_shadow_pass};
 
 const SHADER_PATH: &str = "embedded://ssx_bevy/render/objects/object.wesl";
+const PREPASS_PATH: &str = "embedded://ssx_bevy/render/objects/object_prepass.wesl";
 const GBUFFER_PATH: &str = "embedded://ssx_bevy/render/objects/object_gbuffer.wesl";
 
 pub const PLACEMENT_BUFFER: Handle<ShaderBuffer> = uuid_handle!("4b5d0a52-8a3e-4f63-9a51-1d9e1f2c6b70");
@@ -116,6 +117,7 @@ pub struct ObjectExtension {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Reflect)]
 pub struct ObjectPipelineKey {
     pub shadow: ShadowPassKey,
+    pub shadow_only: bool,
     pub ldr: bool,
     pub tangent_sign: bool,
     pub hook: Option<u64>,
@@ -126,6 +128,7 @@ impl From<&ObjectExtension> for ObjectPipelineKey {
     fn from(e: &ObjectExtension) -> Self {
         ObjectPipelineKey {
             shadow: e.shadow_pass,
+            shadow_only: e.params.shading.x == f32::from(ObjectShading::ShadowOnly as u8),
             ldr: e.ldr,
             tangent_sign: e.tangent_sign,
             hook: e.hook,
@@ -153,6 +156,10 @@ impl MaterialExtension for ObjectExtension {
         SHADER_PATH.into()
     }
 
+    fn prepass_vertex_shader() -> ShaderRef {
+        PREPASS_PATH.into()
+    }
+
     fn prepass_fragment_shader() -> ShaderRef {
         GBUFFER_PATH.into()
     }
@@ -164,9 +171,23 @@ impl MaterialExtension for ObjectExtension {
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         specialize_shadow_pass(descriptor, key.mesh_key, key.bind_group_data.shadow);
+        let key_data = key.bind_group_data;
+        let blend = key.mesh_key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS) == MeshPipelineKey::BLEND_ALPHA;
+        if !key_data.shadow_only
+            && key_data.hook.is_none()
+            && !key.mesh_key.contains(MeshPipelineKey::MORPH_TARGETS)
+            && !blend
+        {
+            if crate::render::gbuffer::is_depth_prepass(descriptor, key.mesh_key) {
+                crate::render::gbuffer::depth_prepass_writes(descriptor, true);
+                if let Some(fragment) = descriptor.fragment.as_mut() {
+                    fragment.shader_defs.push("SSX_DEPTH_PREPASS".into());
+                }
+            }
+            crate::render::gbuffer::invariant_main_pass(descriptor);
+        }
         crate::render::gbuffer::specialize_main_pass(descriptor);
         crate::render::lighting::game::specialize_game_vertex(descriptor, 100);
-        let blend = key.mesh_key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS) == MeshPipelineKey::BLEND_ALPHA;
         if blend && let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_write_enabled = Some(true);
         }

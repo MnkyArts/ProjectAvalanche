@@ -30,6 +30,11 @@
 					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
 					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
 				] },
+			{ "viewname": "ava_opt_view_distance", "type": "object", "dpname": "dp_ava_opt_view_distance", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
 			{ "viewname": "ava_opt_shading", "type": "object", "dpname": "dp_ava_opt_shading", "actions":
 				[
 					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
@@ -40,7 +45,32 @@
 					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
 					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
 				] },
-			{ "viewname": "ava_opt_objects", "type": "object", "dpname": "dp_ava_opt_objects", "actions":
+			{ "viewname": "ava_opt_frame_limit", "type": "object", "dpname": "dp_ava_opt_frame_limit", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
+			{ "viewname": "ava_opt_preset", "type": "object", "dpname": "dp_ava_opt_preset", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
+			{ "viewname": "ava_opt_resolution_scale", "type": "object", "dpname": "dp_ava_opt_resolution_scale", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
+			{ "viewname": "ava_opt_shadow_quality", "type": "object", "dpname": "dp_ava_opt_shadow_quality", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
+			{ "viewname": "ava_opt_bloom", "type": "object", "dpname": "dp_ava_opt_bloom", "actions":
+				[
+					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
+					{ "viewname": "next", "actionname": "A_ToggleNextItem" }
+				] },
+			{ "viewname": "ava_opt_fxaa", "type": "object", "dpname": "dp_ava_opt_fxaa", "actions":
 				[
 					{ "viewname": "prev", "actionname": "A_TogglePreviousItem" },
 					{ "viewname": "next", "actionname": "A_ToggleNextItem" }

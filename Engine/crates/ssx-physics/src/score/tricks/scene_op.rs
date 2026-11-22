@@ -25,7 +25,7 @@ impl TrickState {
         self.is_tricking = false;
     }
 
-    pub fn script_tags(&mut self) {
+    pub fn script_tags(&mut self) -> ScriptCalls {
         let c = self.scripts.take();
         if c.grab_exit {
             self.grab_exit();
@@ -39,11 +39,12 @@ impl TrickState {
         if c.air_trick_enter {
             self.input_index_on_enter = self.input_index;
         }
+        c
     }
 
     pub fn begin_step(&mut self) {
         self.node_tags.begin_step();
-        for t in [&mut self.ride_tags, &mut self.jump_tags].into_iter().flatten() {
+        for t in [&mut self.ride_tags, &mut self.jump_tags, &mut self.riding_tags].into_iter().flatten() {
             t.begin_step();
         }
         for l in &mut self.left_sets {
@@ -68,6 +69,20 @@ impl TrickState {
         } else {
             self.restart_flow();
         }
+    }
+
+    pub fn riding_node_update(&mut self, dt: f32) {
+        self.riding_tags
+            .get_or_insert_with(|| NodeTags::new(NodeScript::OnExit(Script::BailExit)))
+            .update(dt, &mut self.scripts.now);
+    }
+
+    pub fn leave_riding_node(&mut self) {
+        let Some(mut own) = self.riding_tags.take() else { return };
+        if own.updates == 0 {
+            own.update(0.0, &mut self.scripts.now);
+        }
+        own.exit(&mut self.scripts);
     }
 
     pub fn air_node_update(&mut self, dt: f32) {
@@ -177,7 +192,7 @@ impl TrickState {
     }
 
     pub fn fresh_ride(&mut self) {
-        (self.scripts, self.ride_tags, self.jump_tags) = (ScriptQueue::default(), None, None);
+        (self.scripts, self.ride_tags, self.jump_tags, self.riding_tags) = (ScriptQueue::default(), None, None, None);
         self.left_sets.clear();
         self.set_node(Node::AirStates);
         (self.phase_ticks, self.rate) = (0.0, 1.0);

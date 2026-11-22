@@ -15,7 +15,14 @@ pub fn draw() -> (Transform, NoFrustumCulling, WarmUp) {
     (Transform::from_translation(NOWHERE).with_scale(Vec3::splat(1.0e-3)), NoFrustumCulling, WarmUp(FRAMES))
 }
 
-pub fn end(mut commands: Commands, mut draws: Query<(Entity, &mut WarmUp)>) {
+pub fn end(
+    mut commands: Commands,
+    mut draws: Query<(Entity, &mut WarmUp)>,
+    uploads: Option<Res<crate::render::uploads::LevelUploads>>,
+) {
+    if uploads.is_some_and(|u| u.pending()) {
+        return;
+    }
     for (e, mut w) in &mut draws {
         if w.0 == 0 {
             commands.entity(e).despawn();

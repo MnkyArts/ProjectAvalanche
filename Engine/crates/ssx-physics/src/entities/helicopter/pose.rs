@@ -1,11 +1,13 @@
 use glam::{Quat, Vec3};
-use ssx_assets::helicopter::HeliPose;
-use ssx_assets::nis::{NisActor, ROLE_HELICOPTER1};
+use ssx_assets::helicopter::{HeliPose, blend_rotation, blend_translation};
+use ssx_assets::nis::{NisActor, ROLE_HELICOPTER1, Rig};
 
 use super::{HeliNode, HeliPhase, Helicopter, MoveController};
 use crate::nis::Scene;
 
 const HANDOVER_TICKS: f32 = 20.0;
+
+pub type JointLocal = (Option<[f32; 4]>, Option<[f32; 3]>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct NisLast {
@@ -79,15 +81,24 @@ impl Helicopter {
     }
 
     pub fn gameplay_pose(&self) -> HeliPose {
+        let side = self.gameplay_side();
+        let mut pose = HeliPose::defaults(&self.assets.nis.heli);
+        pose.q.extend(side.q);
+        pose.t.extend(side.t);
+        pose
+    }
+
+    pub(super) fn gameplay_side(&self) -> HeliPose {
         let mut side = self.node_side(self.node, self.ctrl.as_ref());
         if let Some((ctrl, node, elapsed)) = &self.blend {
             let w = self.blend_weight(elapsed.max(0.0));
             side = self.node_side(*node, ctrl.as_ref()).blend_valid(&side, w);
         }
-        let mut pose = HeliPose::defaults(&self.assets.nis.heli);
-        pose.q.extend(side.q);
-        pose.t.extend(side.t);
-        pose
+        side
+    }
+
+    pub fn gameplay_joint(&self, joint: &str) -> JointLocal {
+        over_defaults(&self.assets.nis.heli, &self.gameplay_side(), joint)
     }
 
     fn node_side(&self, node: HeliNode, ctrl: Option<&MoveController>) -> HeliPose {
@@ -121,14 +132,62 @@ impl Helicopter {
     pub fn joint_world(&self, joint: &str) -> Option<(Quat, Vec3)> {
         let rig = &self.assets.nis.heli;
         let chain = rig.chain(joint, "AITrajectory")?;
-        let pose = self.base_pose();
+        let locals = if self.clip().is_some() {
+            let pose = self.base_pose();
+            chain.iter().map(|j| (pose.q.get(j).copied(), pose.t.get(j).copied())).collect()
+        } else {
+            self.base_joints(&chain)
+        };
         let (mut q, mut p) = self.traj;
-        for j in chain.iter().rev() {
-            let lq = pose.q.get(j).map_or(Quat::IDENTITY, |v| Quat::from_array(*v));
-            let lt = pose.t.get(j).map_or(Vec3::ZERO, |v| Vec3::from_array(*v));
+        for (lq, lt) in locals.iter().rev() {
+            let lq = lq.map_or(Quat::IDENTITY, Quat::from_array);
+            let lt = lt.map_or(Vec3::ZERO, Vec3::from_array);
             p += q * lt;
             q = (q * lq).normalize();
         }
         Some((q, p))
     }
+
+    // PORT(choice): a joint's world transform (the downwash query's, the objectives' targets) reads one chain of the
+    // helicopter's pose, so its joints are computed alone by the same per-joint arithmetic (`blend_rotation` /
+    // `blend_translation`, `HeliPose::default_of`) instead of the whole string-keyed pose (0.39 ms of a 3.25 ms step on
+    // Mount Eddie, traced), the same values; how the console evaluated these joints was not decoded.
+    fn base_joints(&self, joints: &[String]) -> Vec<JointLocal> {
+        let rig = &self.assets.nis.heli;
+        let side = self.gameplay_side();
+        let handover = match (self.phase, self.nis_last) {
+            (HeliPhase::Gameplay { ticks, .. }, Some(last)) => self.nis_actor(last.cabin, last.scene).map(|actor| {
+                let w = 1.0 - ssx_assets::anim_eval::curve_weight(ticks / HANDOVER_TICKS, 1);
+                let (clip, at) = actor.clip_at(last.ticks);
+                (w, clip, clip.sample(at).ok())
+            }),
+            _ => None,
+        };
+        let joint = |j: &String| {
+            if j == "AITrajectory" {
+                return (Some([0.0, 0.0, 0.0, 1.0]), Some([0.0; 3]));
+            }
+            let (gq, gt) = over_defaults(rig, &side, j);
+            let Some((w, clip, sampled)) = &handover else { return (gq, gt) };
+            let d = HeliPose::default_of(rig, j);
+            let cq = sampled.as_ref().and_then(|p| clip.quat(p, &format!("{j}.q"))).or(d.map(|d| d.0));
+            let ct = sampled.as_ref().and_then(|p| clip.vec3(p, &format!("{j}.t"))).or(d.map(|d| d.1));
+            let blends = *w > 0.0 || w.is_nan();
+            let q = match gq {
+                Some(b) if blends => Some(blend_rotation(cq.unwrap_or([0.0, 0.0, 0.0, 1.0]), b, *w)),
+                _ => cq,
+            };
+            let t = match gt {
+                Some(b) if blends => Some(blend_translation(ct.unwrap_or([0.0; 3]), b, *w)),
+                _ => ct,
+            };
+            (q, t)
+        };
+        joints.iter().map(joint).collect()
+    }
+}
+
+pub(super) fn over_defaults(rig: &Rig, side: &HeliPose, j: &str) -> JointLocal {
+    let d = HeliPose::default_of(rig, j);
+    (side.q.get(j).copied().or(d.map(|d| d.0)), side.t.get(j).copied().or(d.map(|d| d.1)))
 }

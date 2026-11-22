@@ -8,6 +8,7 @@ use crate::testutil::{add_floor, add_quad, world};
 fn floor_world() -> World {
     let mut c = CollisionWorld::default();
     add_floor(&mut c, [-400.0, 400.0], [-400.0, 400.0], 0.0, 0);
+    c.set_cluster_entry_box(Vec3::new(-400.0, 0.0, -400.0), Vec3::new(400.0, 1.0, 400.0));
     c.finish();
     world(c)
 }
@@ -41,6 +42,34 @@ fn contact_time_is_the_stepped_path_meeting_the_ground() {
     assert!(b.moving_towards_impact == (v0.y < 0.0));
     assert!((b.normal_proj_distance - 12.0).abs() < 1e-3, "{b:?}");
     assert!(b.landing().is_some_and(|l| l.ticks == b.ticks));
+}
+
+#[test]
+fn a_flat_floor_is_found_in_the_step_whose_path_reaches_it() {
+    let mut c = CollisionWorld::default();
+    add_floor(&mut c, [-400.0, 400.0], [-400.0, 400.0], 0.0, 0);
+    c.finish();
+    let w = world(c);
+    let (p0, v0) = (Vec3::new(0.0, 12.0, 0.0), Vec3::new(0.3, 0.1, 0.0));
+    let flat = w.ballistic_probe(p0, v0, Vec3::ZERO, true, 2.0);
+    let r = &w.props;
+    let (mut p, mut v, mut t) = (p0, v0, 0.0f32);
+    let (touch, reach) = loop {
+        let mut a = drag_accel(r.k_h_air, r.k_v_air, v, Vec3::ZERO, 2.0);
+        a.y -= r.g_air.y.abs();
+        let v1 = v + a * 2.0;
+        let p1 = p + v1 * 2.0;
+        if p1.y <= 0.0 {
+            break (p.y < BALLISTIC_PROBE_RADIUS, t);
+        }
+        (p, v, t) = (p1, v1, t + 2.0);
+    };
+    assert!(touch, "the sphere touches the floor before its path reaches it");
+    assert!(flat.valid && flat.ticks == reach, "{} vs {reach}", flat.ticks);
+    assert!(
+        flat.hit.is_some_and(|h| h.t == 0.0) && flat.normal.y > 0.999 && flat.end_position.y.abs() < 1e-4,
+        "{flat:?}"
+    );
 }
 
 #[test]

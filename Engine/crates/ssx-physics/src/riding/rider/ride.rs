@@ -335,6 +335,16 @@ pub(super) fn ride(s: &mut RiderState, w: &World, input: &Input, flags: (bool, b
     s.ice_axe.chop_update(ia, s.steering.lean_norm);
     s.nose_tail = outputs::nose_tail_factor(n, q_traj, s.goofy);
     s.board_velocity_angle = outputs::angle_between_board_and_velocity(board_axes(s).1, out.v, n);
+    let rumble = CarvingRumbleInputs {
+        surface: s.surface.surface_rumble_value,
+        uber_sliding: uber,
+        dead_on_ground,
+        speed,
+        avalanche_vel: av.vel,
+        avalanche_mass: av.mass,
+        grind_state: s.grind.carving.state,
+    };
+    s.rumble.carving(&rumble, &c.surface_rumble, &at.rumble);
     {
         let gc = &mut s.grind.carving;
         grind::veering_update(
@@ -409,7 +419,7 @@ pub(super) fn ride(s: &mut RiderState, w: &World, input: &Input, flags: (bool, b
             let r = r + dt;
             s.landing.uber_recovery = UberRecovery::GettingUp(r);
             s.board_particle.recover_tag(r);
-            if r >= UBER_RECOVER_TRIGGER_CLEAR_TICKS {
+            if !s.board_particle.stay_dead && r >= UBER_RECOVER_TRIGGER_CLEAR_TICKS {
                 s.landing.uber_crash = false;
             }
         }

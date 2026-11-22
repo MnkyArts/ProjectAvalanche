@@ -20,6 +20,8 @@ pub mod tutorial;
 mod execute;
 mod scripts;
 
+pub use scripts::{ScriptsBuild, ScriptsInputs};
+
 #[derive(Clone, Debug)]
 pub struct Session {
     pub buffer: RewindBuffer,
@@ -49,9 +51,12 @@ pub struct Session {
     pub objectives: Option<crate::objectives::LevelObjectives>,
     pub controllers: Option<crate::controllers::Controllers>,
     pub controllers_log: bool,
+    pub workers: Option<std::sync::Arc<dyn crate::workers::Workers>>,
     pub named_entities: Vec<crate::controllers::NamedEntity>,
     pub flag_overrides: Vec<(String, bool)>,
     pub objectives_loaded: bool,
+    pub scripts_ahead: Option<ScriptsBuild>,
+    pub scripts_built_ahead: bool,
     pub objectives_log: bool,
     pub screen: crate::outro::ScreenFade,
     pub stats: crate::stats::StatsStore,
@@ -66,6 +71,7 @@ pub struct Session {
     pub last_sim_dt_s: f32,
     pub downwash: Option<crate::helicopter::downwash::Downwash>,
     pub presentation: i32,
+    pub postfx: ssx_assets::postfx_state::PostFxService,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -117,9 +123,12 @@ impl Session {
             objectives: None,
             controllers: None,
             controllers_log: false,
+            workers: None,
             named_entities: Vec::new(),
             flag_overrides: Vec::new(),
             objectives_loaded: false,
+            scripts_ahead: None,
+            scripts_built_ahead: false,
             objectives_log: false,
             screen: crate::outro::ScreenFade::default(),
             rewind_backwards: false,
@@ -134,6 +143,7 @@ impl Session {
             last_sim_dt_s: 0.0,
             downwash: None,
             presentation: 0,
+            postfx: ssx_assets::postfx_state::PostFxService::default(),
         }
     }
 
@@ -165,9 +175,10 @@ impl Session {
 
     pub fn reset(&mut self) {
         if let Some(o) = self.objectives.as_mut() {
-            let mut load = crate::objectives::LoadWorld::default();
-            o.runner.restart_set(crate::objectives::SetId::Level, &mut load);
-            o.effects.extend(load.effects);
+            o.restart_level();
+        }
+        if let Some(t) = self.tutorial.as_mut() {
+            t.message.request(tutorial::HudMessage::READY, 0.0);
         }
         self.manager.restart(&mut self.buffer);
         self.recorder.rewind_node_rebuilt();
@@ -209,6 +220,9 @@ impl Session {
 
     pub fn paused_frame(&mut self, s: &mut RiderState, w: &World) -> EventUpdate {
         let rewinding = self.rewind_backwards;
+        if let Some(t) = self.tutorial.as_mut() {
+            t.update(LOOP_STEP_S);
+        }
         self.recorder.sample(s.traj, s.score.score);
         self.recorder.after_execution(None);
         self.score_manager(s, w, self.last_sim_dt_s, rewinding, true)

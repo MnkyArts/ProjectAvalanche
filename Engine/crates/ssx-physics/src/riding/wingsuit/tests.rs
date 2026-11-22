@@ -530,13 +530,15 @@ fn an_uber_crash_that_slides_off_an_edge_deploys_again() {
     let w = crate::testutil::world(ledge(open.traj.z / cos + 10.0));
     let mut s = land(&w);
     assert!(s.traj.distance(open.traj) < 0.01, "the same touchdown (the shorter slope's plane rounds apart)");
-    let mut slid = 0;
+    let (mut slid, mut wiping_out) = (0, false);
     while s.state == RideState::Riding && slid < 120 {
+        wiping_out = s.landing.tumbling;
         step_ws(&mut s, &w, false, started);
         slid += 1;
     }
     assert_eq!(s.state, RideState::Airborne, "off the edge within {slid} updates");
     assert!(s.board_particle.enabled && s.landing.uber_recovery == UberRecovery::Sliding, "still the crash's slide");
+    assert!(wiping_out && !s.landing.tumbling, "BLN_State_Wipeout {wiping_out} on the ground, cleared at the take");
     step_ws(&mut s, &w, true, started);
     assert_eq!(s.state, RideState::WingsuitEnter, "R1 deploys {slid} updates after the touchdown");
 }

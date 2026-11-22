@@ -623,6 +623,27 @@ impl Vm {
         (!cur.is_nullish()).then_some(cur)
     }
 
+    pub fn peek_path(&mut self, lib: &mut Library, player: &mut Player, path: &str) -> Option<Value> {
+        let cx = self.ctx(lib, player);
+        let level = |n: i32| {
+            let o = *cx.vm.display_objs.get(cx.player.levels.get(&n)?)?;
+            cx.vm.heap.get(o).map(|_| Value::Object(o))
+        };
+        let mut parts = path.split('.');
+        let first = parts.next()?;
+        let mut cur = if first == "_global" {
+            Value::Object(cx.vm.global)
+        } else if let Some(l) = first.strip_prefix("_level").and_then(|n| n.parse::<i32>().ok()) {
+            level(l)?
+        } else {
+            cx.peek_member(&level(0)?, first)?
+        };
+        for p in parts {
+            cur = cx.peek_member(&cur, p)?;
+        }
+        (!cur.is_nullish()).then_some(cur)
+    }
+
     pub fn member_names(&mut self, lib: &mut Library, player: &mut Player, v: &Value) -> Vec<String> {
         self.ctx(lib, player).enumerate(v).iter().map(|s| s.to_string()).collect()
     }

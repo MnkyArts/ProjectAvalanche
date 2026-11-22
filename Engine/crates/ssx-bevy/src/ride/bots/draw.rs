@@ -1,12 +1,10 @@
 use bevy::prelude::{Assets, Mat3, Mat4, Query, ResMut, Transform, Vec3, Visibility, debug, info};
-use ssx_assets::career::random::GameRandom;
+use bevy::render::storage::ShaderBuffer;
 use ssx_assets::character::model_matrix;
 use ssx_assets::ghosts::GhostRig;
 
 use super::{BotVisual, record_transform};
 use crate::rider::anim::JointRecord;
-use crate::rider::ghosts::GhostMaterial;
-use crate::rider::material::CharacterMaterial;
 
 pub(in crate::ride::bots) fn board_transform(rig: &GhostRig, board: usize, w: &JointRecord) -> Transform {
     let m = Mat4::from_scale_rotation_translation(w.s, w.q, w.p);
@@ -19,8 +17,7 @@ pub(in crate::ride::bots) struct RacerDraw<'w, 's> {
     lights: ResMut<'w, crate::render::lighting::local::DynamicLocalLights>,
     transforms: Query<'w, 's, &'static mut Transform>,
     visibility: Query<'w, 's, &'static mut Visibility>,
-    characters: ResMut<'w, Assets<CharacterMaterial>>,
-    ghosts: ResMut<'w, Assets<GhostMaterial>>,
+    buffers: ResMut<'w, Assets<ShaderBuffer>>,
 }
 
 #[derive(Clone, Copy)]
@@ -37,44 +34,20 @@ impl RacerDraw<'_, '_> {
         }
     }
 
-    pub(in crate::ride::bots) fn holo(
-        &mut self,
-        v: &mut BotVisual,
-        dt_s: f32,
-        d2: f32,
-        racers: usize,
-        rng: &mut dyn GameRandom,
-    ) {
-        let holo = v.fade.update(v.racer_type, dt_s, d2, racers, |max| rng.range_f(0.0, max));
-        for m in &v.materials {
-            if let Some(mut m) = self.characters.get_mut(m)
-                && m.extension.params.holo != holo
-            {
-                m.extension.params.holo = holo;
-            }
+    pub(in crate::ride::bots) fn holo(&mut self, v: &mut BotVisual) {
+        if let Some(f) = v.frame.as_mut() {
+            f.set_holo(v.holo, &mut self.buffers);
         }
-        for m in &v.ghost_materials {
-            if let Some(mut m) = self.ghosts.get_mut(m)
-                && m.params.hologlitch != holo
-            {
-                m.params.hologlitch = holo;
-            }
+        if let Some(g) = v.ghost.as_mut() {
+            g.set_hologlitch(v.holo, &mut self.buffers);
         }
     }
 
-    pub(in crate::ride::bots) fn tint(&mut self, v: &BotVisual) {
-        if v.ghost_materials.is_empty() {
-            return;
-        }
+    pub(in crate::ride::bots) fn tint(&mut self, v: &mut BotVisual) {
+        let Some(g) = v.ghost.as_mut() else { return };
         let a = (v.alpha.clamp(0.0, 1.0) * 255.0) as u32;
         let tint = bevy::prelude::Vec4::from_array(ssx_assets::ghosts::tint_rgba((v.tint & 0x00FF_FFFF) | (a << 24)));
-        for m in &v.ghost_materials {
-            if let Some(mut m) = self.ghosts.get_mut(m)
-                && m.params.tint != tint
-            {
-                m.params.tint = tint;
-            }
-        }
+        g.set_tint(tint, &mut self.buffers);
     }
 
     pub(in crate::ride::bots) fn place(

@@ -130,6 +130,33 @@ pub fn dof_list(stream: &Stream, rig: &str, hierarchy: &str) -> Result<Vec<Dof>>
     invalid("RigAsset", format!("{rig} has no layout hierarchy {hierarchy}"))
 }
 
+pub fn rig_hierarchies(stream: &Stream, rig: &str) -> Result<HashSet<Guid>> {
+    let schema = &stream.schema;
+    let by_guid = stream.guid_index();
+    let guids = |o: &Object, f: &str| -> Vec<Guid> {
+        o.get(schema, f)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_guid).collect())
+            .unwrap_or_default()
+    };
+    let rig_obj = stream
+        .assets_of_class("RigAsset")
+        .map(|a| &a.object)
+        .find(|o| o.name(schema) == Some(rig))
+        .ok_or_else(|| Error::invalid(format!("no RigAsset {rig}")))?;
+    let mut queue = guids(rig_obj, "DofSetLists");
+    let mut out = HashSet::new();
+    while let Some(g) = queue.pop() {
+        if !out.insert(g) {
+            continue;
+        }
+        if let Some(&i) = by_guid.get(&g) {
+            queue.extend(guids(&stream.assets[i].object, "Children"));
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Skeleton {
     pub name: String,

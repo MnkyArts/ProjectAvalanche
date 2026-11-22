@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use glam::Vec3;
 use ssx_content::model::{Collision, CollisionCluster, TriangleEdges};
 use ssx_content::object::RigidBody;
-use ssx_formats::pob::{Matrix, ObjectData, PobFile, Volume, VolumeKind};
+use ssx_formats::pob::{ObjectData, PobFile, Volume, VolumeKind};
 
 pub const DEFAULT_PART_MATERIAL: [f32; 3] = [0.5, 0.3, 0.4];
 
@@ -68,11 +68,6 @@ pub fn pob_part_material(pob: &PobFile) -> [f32; 3] {
         .unwrap_or(DEFAULT_PART_MATERIAL)
 }
 
-pub fn transform_point(m: &Matrix, p: Vec3) -> Vec3 {
-    let row = |i: usize| Vec3::from_array(m[i]);
-    row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3)
-}
-
 pub fn pob_collision(pob: &PobFile) -> Result<Collision> {
     let mut out = Collision::default();
     let material = pob_part_material(pob);
@@ -84,7 +79,6 @@ pub fn pob_collision(pob: &PobFile) -> Result<Collision> {
             bail!("outer volume does not point at a SimpleMappedArray");
         };
         for child in &sma.volumes {
-            let xf = |p: Vec3| transform_point(&ov.transform, transform_point(&child.transform, p));
             match child.kind {
                 VolumeKind::Aggregate => {
                     let at = child.aggregate.context("aggregate child without target")?;
@@ -92,8 +86,7 @@ pub fn pob_collision(pob: &PobFile) -> Result<Collision> {
                         bail!("SMA child aggregate is not a ClusteredMesh");
                     };
                     for c in &cm.clusters {
-                        let vertices: Vec<[f32; 3]> =
-                            c.vertices.iter().map(|&p| xf(Vec3::from_array(p)).to_array()).collect();
+                        let vertices = c.vertices.clone();
                         let mut triangles = Vec::new();
                         let mut edges = Vec::new();
                         for u in &c.units {

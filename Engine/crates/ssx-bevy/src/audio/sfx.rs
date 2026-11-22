@@ -24,7 +24,7 @@ pub struct Sfx {
     last_steps: u64,
     tags_through: u64,
     tag_log: bool,
-    pending: Option<SpeechPending>,
+    pending: Option<FirstLoads>,
     speech_time: f32,
     intro: Option<crate::audio::sfx_input::IntroAudio>,
     big_root: std::path::PathBuf,
@@ -140,6 +140,7 @@ impl RideSide {
         part(1, &mut from);
         let now_ms = f.time * 1000.0;
         if let Some(m) = f.nis_message {
+            self.rider.nis_state(engine, m);
             self.heli.nis_state(engine, m, now_ms);
         }
         if !f.paused {
@@ -205,8 +206,34 @@ struct Carried {
     trick_update: Option<(i32, i32)>,
     rider_dead: bool,
     geotags: usize,
+    intro: std::collections::VecDeque<crate::audio::sfx_input::IntroFrame>,
 }
 
+const INTRO_FRAMES_HELD: usize = 30;
+
+// PORT(choice): the port observes the ride once per Bevy frame with new steps and runs the audio frames on their own
+// 30 Hz clock, so a Bevy frame can end with no audio frame (at 40+ frames a second about one in four): its intro frame
+// waits for the next audio frame, in order, instead of being dropped (before, a scene's tags of such a frame never
+// fired — the Rockies Deadly Descent's `trigger_DD_Bed` and `trigger_DD_Seq_1` at tick 1 of sc01). Past 30 waiting
+// frames a new one joins the newest (its tags appended, a message only where it had none, the newest helicopter).
+// The console runs one audio frame per game frame (0x8236E098 → 0x83084DC0 → 0x83088418) after its simulation step,
+// so nothing waits there.
+fn hold_intro_frame(
+    q: &mut std::collections::VecDeque<crate::audio::sfx_input::IntroFrame>,
+    f: crate::audio::sfx_input::IntroFrame,
+) {
+    let full = q.len() >= INTRO_FRAMES_HELD;
+    match q.back_mut() {
+        Some(last) if full => {
+            last.tags.extend(f.tags);
+            last.nis_message = last.nis_message.or(f.nis_message);
+            last.heli = f.heli.or(last.heli);
+        }
+        _ => q.push_back(f),
+    }
+}
+
+#[derive(Clone)]
 struct SpeechPending {
     big_root: std::path::PathBuf,
     rider: RiderAudioInfo,
@@ -229,6 +256,7 @@ pub struct SfxLevel {
     event_key: Option<u32>,
     lang: SpeechLanguage,
     objects: ssx_assets::sfx_game::audio_objects::AudioObjects,
+    first: Option<FirstLoads>,
 }
 
 pub fn register(app: &mut App) {
@@ -301,7 +329,13 @@ pub fn load_level(
     lang: SpeechLanguage,
     screenshot: bool,
 ) -> Option<SfxLevel> {
-    load_level_event(big_root, track, character, max_boost, None, lang, screenshot)
+    load_level_event(big_root, track, character, max_boost, SfxLaunch::default(), lang, screenshot)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SfxLaunch<'a> {
+    pub event_key: Option<u32>,
+    pub block: Option<&'a ssx_assets::sfx::speech::launch::LaunchBlock>,
 }
 
 pub fn load_level_event(
@@ -309,7 +343,7 @@ pub fn load_level_event(
     track: &str,
     character: &str,
     max_boost: f32,
-    event_key: Option<u32>,
+    launch: SfxLaunch,
     lang: SpeechLanguage,
     screenshot: bool,
 ) -> Option<SfxLevel> {
@@ -329,7 +363,9 @@ pub fn load_level_event(
         ssx_core::eprintln!("warning: sfx: no audio game info for {character} ({e:#}); the generic one");
         RiderAudioInfo::generic()
     });
-    let mut banks = match riding_banks(big_root, &info, &rider, &mut |_, n| ssx_assets::career::random::below(n)) {
+    let nis = launch.block.and_then(|b| ssx_assets::sfx::dd_nis_descr(b, &info, lang.name()));
+    let below = &mut |_: &str, n| ssx_assets::career::random::below(n);
+    let mut banks = match riding_banks(big_root, &info, &rider, nis.as_deref(), below) {
         Ok(b) => b,
         Err(e) => {
             ssx_core::eprintln!("warning: sfx unavailable: {e:#}");
@@ -397,9 +433,39 @@ pub fn load_level_event(
         max_boost,
         volume,
         verbose,
-        event_key,
+        event_key: launch.event_key,
         lang,
+        first: None,
     })
+}
+
+fn speech_pending(world: &mut World, l: &SfxLevel, deadly_descent: bool) -> SpeechPending {
+    SpeechPending {
+        big_root: l.big_root.clone(),
+        rider: l.rider.clone(),
+        track: l.info.clone(),
+        speech: speech_enabled(),
+        lang: l.lang,
+        deadly_descent,
+        rng: world.get_resource_or_insert_with(SpeechRng::default).0.clone(),
+    }
+}
+
+// PORT(choice): the first ride frame's loads start when the level's data arrives, before its textures go up, instead of
+// at its spawn: the spawn frame waited 16-38 ms for them in `drive_sfx` (alps0101, the heli drop; development laptop,
+// `trace_chrome`) once the rest of its work had left it. Their inputs are the ones the spawn would hand them (the same
+// ride, remix type and drop; the run's speech RNG handle, cloned, not drawn from) and the first ride frame applies their
+// result as before; the console's loader threads are not decoded.
+pub fn start_first_loads(
+    world: &mut World,
+    level: Option<&mut SfxLevel>,
+    ride: Option<&Ride>,
+    remix_event_type: Option<i32>,
+    drop: Option<u32>,
+) {
+    let (Some(l), Some(ride)) = (level, ride) else { return };
+    let pending = speech_pending(world, l, remix_event_type == Some(3));
+    l.first = Some(FirstLoads::start(pending, RideInputs::of(ride, l.event_key), drop));
 }
 
 pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
@@ -408,6 +474,10 @@ pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
         l.engine.apply_settings(&s.0);
     }
     let deadly_descent = world.get_resource::<crate::audio::music::RemixEventType>().is_some_and(|r| r.0 == 3);
+    let first = match l.first.take() {
+        Some(first) => Ok(first),
+        None => Err(speech_pending(world, &l, deadly_descent)),
+    };
     let side = Arc::new(Mutex::new(RideSide::new(&l.info, l.verbose)));
     if let Some(g) = world.get_resource::<GameAudio>() {
         let (mut engine, volume) = (l.engine, l.volume);
@@ -418,14 +488,15 @@ pub fn start_level(world: &mut World, level: Option<SfxLevel>) {
         });
     }
     let character = l.character;
-    let pending = Some(SpeechPending {
-        big_root: l.big_root.clone(),
-        rider: l.rider.clone(),
-        track: l.info.clone(),
-        speech: speech_enabled(),
-        lang: l.lang,
-        deadly_descent,
-        rng: world.get_resource_or_insert_with(SpeechRng::default).0.clone(),
+    let pending = Some(match first {
+        Ok(first) => first,
+        Err(pending) => {
+            let drop = world.get_resource::<crate::audio::music::AudioDrop>().and_then(|d| d.0);
+            match world.get_resource::<Ride>() {
+                Some(ride) => FirstLoads::start(pending, RideInputs::of(ride, l.event_key), drop),
+                None => FirstLoads::Waiting(Box::new(pending)),
+            }
+        }
     });
     world.insert_resource(Sfx {
         side,
@@ -514,6 +585,52 @@ fn ride_event(ride: &Ride, launched: Option<u32>) -> Option<ssx_physics::event::
     ssx_physics::event::level_event(&ride.world().events, launched, crate::ride::viewer_event_choice).cloned()
 }
 
+struct RideInputs {
+    event: Option<ssx_physics::event::EventDef>,
+    kind: ssx_assets::sfx::speech::game::EventKind,
+    intro: Option<Arc<ssx_physics::nis::IntroAssets>>,
+}
+
+impl RideInputs {
+    fn of(ride: &Ride, launched: Option<u32>) -> Self {
+        Self {
+            event: ride_event(ride, launched),
+            kind: crate::audio::sfx_input::speech_kind(&ride.session),
+            intro: ride.intro.clone(),
+        }
+    }
+}
+
+enum FirstLoads {
+    Waiting(Box<SpeechPending>),
+    Loading(std::thread::JoinHandle<(FirstFrameLoads, IntroLoad)>),
+}
+
+impl FirstLoads {
+    // PORT(choice): the first ride frame's loads (the helicopter's bank with its RAM sounds decoded, the speech's
+    // tables and banks, the intro's scripts and NIS scenes) run on their own thread from the level's spawn (the game's
+    // shell starts them when the level's data arrives, before its textures go up: `start_first_loads`), and the
+    // first ride frame takes their result (waiting for the rest if any): on the game thread they were 0.23 s of the
+    // 0.52 s spawn frame (alps0101, development laptop, `trace_chrome`), and the level's startup schedules (0.18 s) now
+    // run beside them. The loads read only the level's data and the run's speech RNG handle (cloned, not drawn from),
+    // so their results are the same; the frame that applies them is the same. The console's loader threads are not
+    // decoded.
+    fn start(p: SpeechPending, ride: RideInputs, drop: Option<u32>) -> Self {
+        let fallback = p.clone();
+        let spawned = std::thread::Builder::new().name("sfx-first-loads".into()).spawn(move || {
+            let big_root = p.big_root.clone();
+            (FirstFrameLoads::load(p, &ride, drop), IntroLoad::load(&big_root, &ride))
+        });
+        match spawned {
+            Ok(thread) => FirstLoads::Loading(thread),
+            Err(e) => {
+                warn!("sfx: no thread for the first ride frame's loads ({e}): that frame loads them");
+                FirstLoads::Waiting(Box::new(fallback))
+            }
+        }
+    }
+}
+
 struct FirstFrameLoads {
     heli: u32,
     bank: anyhow::Result<(ssx_assets::sfx_aems::Bank, ssx_assets::sfx_mixer::DecodedRam)>,
@@ -521,8 +638,8 @@ struct FirstFrameLoads {
 }
 
 impl FirstFrameLoads {
-    fn load(p: SpeechPending, ride: &Ride, drop: Option<u32>, launched: Option<u32>) -> Self {
-        let heli = drop_audio_helicopter(&p.big_root, ride_event(ride, launched).as_ref());
+    fn load(p: SpeechPending, ride: &RideInputs, drop: Option<u32>) -> Self {
+        let heli = drop_audio_helicopter(&p.big_root, ride.event.as_ref());
         let bank = ssx_assets::sfx::heli::helicopter_bank(&p.big_root, heli).and_then(|name| {
             let bank = ssx_assets::sfx_aems::Bank::load(&p.big_root, &name)?;
             let ram = ssx_assets::sfx_mixer::decode_ram_sounds(&bank)?;
@@ -535,7 +652,7 @@ impl FirstFrameLoads {
                 rider: &p.rider,
                 track: &p.track,
                 pilot,
-                session: &ride.session,
+                kind: ride.kind,
                 drop,
                 deadly_descent: p.deadly_descent,
                 rng: p.rng,
@@ -581,14 +698,14 @@ struct IntroLoad {
 }
 
 impl IntroLoad {
-    fn load(big_root: &Path, ride: &Ride, launched: Option<u32>) -> Self {
-        let def = ride_event(ride, launched);
+    fn load(big_root: &Path, ride: &RideInputs) -> Self {
+        let def = ride.event.as_ref();
         let drop_warning =
-            def.as_ref().and_then(|d| ssx_assets::sfx_avalanche::ui_drop_warning(big_root, d.key).ok()).unwrap_or(0);
-        let tutorial = def.as_ref().is_some_and(|d| ssx_assets::musicbox::TUTORIAL_DROPS.contains(&d.key));
-        let scripts: Vec<String> = def.map(|d| d.scripts).unwrap_or_default();
+            def.and_then(|d| ssx_assets::sfx_avalanche::ui_drop_warning(big_root, d.key).ok()).unwrap_or(0);
+        let tutorial = def.is_some_and(|d| ssx_assets::musicbox::TUTORIAL_DROPS.contains(&d.key));
+        let scripts: &[String] = def.map_or(&[], |d| &d.scripts);
         let intro =
-            crate::audio::sfx_input::IntroAudio::load(big_root, ride.intro.as_ref(), &scripts).unwrap_or_else(|e| {
+            crate::audio::sfx_input::IntroAudio::load(big_root, ride.intro.as_ref(), scripts).unwrap_or_else(|e| {
                 warn!("intro audio: {e:#}");
                 Default::default()
             });
@@ -615,15 +732,35 @@ fn drive_sfx(
     let Some(ride) = ride else { return };
     let _timer = DriveTimer { start: std::time::Instant::now() };
     let launched = sfx.event_key;
-    let loads = sfx.pending.take().map(|p| FirstFrameLoads::load(p, &ride, drop.as_ref().and_then(|d| d.0), launched));
+    let (loads, first_intro) = match sfx.pending.take() {
+        Some(FirstLoads::Waiting(p)) => {
+            let inputs = RideInputs::of(&ride, launched);
+            let big_root = p.big_root.clone();
+            let loads = FirstFrameLoads::load(*p, &inputs, drop.as_ref().and_then(|d| d.0));
+            (Some(loads), Some(IntroLoad::load(&big_root, &inputs)))
+        }
+        Some(FirstLoads::Loading(thread)) => match thread.join() {
+            Ok((loads, intro)) => (Some(loads), Some(intro)),
+            Err(_) => {
+                error!(
+                    "sfx: the first ride frame's loads failed (their thread panicked): no helicopter bank or speech"
+                );
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
     let respawn = ride.steps < sfx.last_steps;
-    let intro_load =
-        (sfx.intro.is_none() || respawn).then(|| IntroLoad::load(&sfx.big_root, &ride, launched)).map(|i| {
+    let intro_load = first_intro
+        .or_else(|| {
+            (sfx.intro.is_none() || respawn).then(|| IntroLoad::load(&sfx.big_root, &RideInputs::of(&ride, launched)))
+        })
+        .map(|i| {
             sfx.intro = Some(i.intro);
             (i.drop_warning, i.tutorial)
         });
     let fresh = ride.steps != sfx.last_steps;
-    let mut intro = if fresh { sfx.intro.as_mut().map(|i| i.frame(&ride.state, ride.heli.as_ref())) } else { None };
+    let fresh_intro = if fresh { sfx.intro.as_mut().map(|i| i.frame(&ride.state, ride.heli.as_ref())) } else { None };
     acc.0 += time.delta_secs();
     let sfx = &mut *sfx;
     if respawn {
@@ -645,6 +782,10 @@ fn drive_sfx(
         sfx.tags_through = 0;
     }
     let carried = std::mem::take(&mut sfx.carried);
+    let mut intro_frames = carried.intro;
+    if let Some(f) = fresh_intro {
+        hold_intro_frame(&mut intro_frames, f);
+    }
     rider_dead |= carried.rider_dead;
     speech_events = crate::audio::sfx_input::SpeechStep::merge(carried.speech, speech_events);
     let mut trick_update = gathered.trick_update.or(carried.trick_update);
@@ -673,7 +814,7 @@ fn drive_sfx(
             ground_material: crate::audio::sfx_input::ground_material(&ride.state, ride.world(), &sfx.objects),
         };
         rider_dead = false;
-        let nis = intro.take().unwrap_or_default();
+        let nis = if paused { Default::default() } else { intro_frames.pop_front().unwrap_or_default() };
         let (r, events) = match sfx.held.clone().filter(|_| paused) {
             Some(mut r) => {
                 r.paused = true;
@@ -696,6 +837,11 @@ fn drive_sfx(
                     events.push(tag.name.clone());
                 }
                 sfx.tags_through = ride.steps;
+                if sfx.tag_log {
+                    for tag in &nis.tags {
+                        info!("nis tag {tag} (the rider's AudioEventTag of the playing NIS scene)");
+                    }
+                }
                 events.extend(nis.tags.iter().cloned());
                 sfx.held = Some(r.clone());
                 (r, events)
@@ -728,7 +874,8 @@ fn drive_sfx(
             presentation: ride.session.presentation,
         });
     }
-    sfx.carried = Carried { speech: speech_events, trick_update, rider_dead, geotags: geotag_pickups };
+    sfx.carried =
+        Carried { speech: speech_events, trick_update, rider_dead, geotags: geotag_pickups, intro: intro_frames };
     if loads.is_none() && !respawn && intro_load.is_none() && frames.is_empty() {
         return;
     }

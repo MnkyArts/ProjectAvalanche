@@ -303,6 +303,13 @@ impl RamSound {
         self.sections[s].len() / self.channels
     }
 
+    pub(super) fn reader(&self) -> RamReader<'_> {
+        let frames = |s: usize| self.sections.get(s).map_or(0, |x| x.len() / self.channels);
+        let (n0, ls) = (frames(0), self.sections.len().saturating_sub(1));
+        let base = if ls == 0 { 0 } else { n0 };
+        RamReader { sound: self, n0, ls, base, nl: frames(ls).max(1), last: None }
+    }
+
     pub(super) fn frame(&self, i: usize) -> Option<&[f32]> {
         let ch = self.channels;
         let n0 = self.frames(0);
@@ -317,6 +324,41 @@ impl RamSound {
             (ls, (i - base) % nl)
         };
         self.sections[s].get(j * ch..j * ch + ch)
+    }
+}
+
+// PORT(choice): the layout worked out once a block and the loop position carried from read to read (the same frames:
+// sfx_ride, fe_audio, movie_audio renders identical as raw floats) instead of up to three 64-bit divisions for each
+// of a voice's two reads a sample; the console's SndPlayer1 (0x82A39778) reads its own buffers.
+pub(super) struct RamReader<'a> {
+    sound: &'a RamSound,
+    n0: usize,
+    ls: usize,
+    base: usize,
+    nl: usize,
+    last: Option<(usize, usize)>,
+}
+
+impl RamReader<'_> {
+    #[inline(always)]
+    pub(super) fn frame(&mut self, i: usize) -> Option<&[f32]> {
+        let ch = self.sound.channels;
+        let (s, j) = if i < self.n0 {
+            (0, i)
+        } else if !self.sound.looped {
+            return None;
+        } else {
+            let j = match self.last {
+                Some((li, lj)) if i >= li && i - li < self.nl => {
+                    let j = lj + (i - li);
+                    if j >= self.nl { j - self.nl } else { j }
+                }
+                _ => (i - self.base) % self.nl,
+            };
+            self.last = Some((i, j));
+            (self.ls, j)
+        };
+        self.sound.sections.get(s)?.get(j * ch..j * ch + ch)
     }
 }
 
@@ -405,9 +447,24 @@ impl Source {
         let step = Resampler::step(pitch * self.rate as f32 / MIXER_RATE as f32);
         let mut native = vec![vec![0.0f32; BLOCK]; ch];
         let (mut a, mut b) = ([0f32; 8], [0f32; 8]);
+        let ram = match &self.frames {
+            Frames::Ram(r) => Some(r.clone()),
+            _ => None,
+        };
+        let mut ram = ram.as_deref().map(RamSound::reader);
         sfx_dsp::fused(
             #[inline(always)]
             |f| {
+                let mut read = |src: &mut Self, i: usize, out: &mut [f32; 8]| match ram.as_mut() {
+                    Some(r) => match r.frame(i) {
+                        Some(fr) => {
+                            out[..ch].copy_from_slice(fr);
+                            Got::Frame
+                        }
+                        None => Got::End,
+                    },
+                    None => src.frame(i, out),
+                };
                 for k in 0..BLOCK {
                     let i = self.resampler.index as usize;
                     // TODO(guess): a stream whose next block is not read yet holds its position and is silent for the
@@ -417,7 +474,7 @@ impl Source {
                     // loop first runs zeros through the chain (0x82A177D0, up to voice +0x30 / +0x28 frames), moving
                     // the resampler's phase and history, where this resampler waits on its last frames; settle: the
                     // stream voice's +0x28 (the plug-ins' tails summed) and the Resample plug-in on zero input.
-                    match self.frame(i, &mut a) {
+                    match read(self, i, &mut a) {
                         Got::Frame => {}
                         Got::End => {
                             self.finished = true;
@@ -425,7 +482,7 @@ impl Source {
                         }
                         Got::Starved => break,
                     }
-                    match self.frame(i + 1, &mut b) {
+                    match read(self, i + 1, &mut b) {
                         Got::Frame => {}
                         Got::End => b = a,
                         Got::Starved => break,
@@ -482,27 +539,38 @@ impl SourceHost for Sources {
             }
             let step = Resampler::step(pitch * rate as f32 / MIXER_RATE as f32);
             let mut native = vec![vec![0.0f32; BLOCK]; 2];
-            for k in 0..BLOCK {
-                let i = self.music_pos.index as usize;
-                while self.music_buf.len() / 2 < i + 2 {
-                    let n = self.music_buf.len();
-                    self.music_buf.resize(n + 2048, 0.0);
-                    if let Some(m) = self.music.as_mut() {
-                        m.render(&mut self.music_buf[n..]);
-                    }
-                    if let Some(t) = self.music_tail.as_mut() {
-                        self.tail_buf.resize(2048, 0.0);
-                        t.render(&mut self.tail_buf);
-                        for (o, x) in self.music_buf[n..].iter_mut().zip(&self.tail_buf) {
-                            *o += x;
+            let (music, tail) = (&mut self.music, &mut self.music_tail);
+            let (buf, tail_buf, pos) = (&mut self.music_buf, &mut self.tail_buf, &mut self.music_pos);
+            // PORT(choice): run in the FMA build of `fused` where the CPU has FMA, so the interpolation's multiply-add
+            // a sample is the instruction in line instead of a call to the runtime's `fmaf` (the same single rounding:
+            // the same samples bit for bit); the flag is not used (it stays fused without FMA too, as before); the
+            // console has the Resample kernel 0x82A17360, whose multiply-add this is.
+            sfx_dsp::fused(
+                #[inline(always)]
+                |_| {
+                    for k in 0..BLOCK {
+                        let i = pos.index as usize;
+                        while buf.len() / 2 < i + 2 {
+                            let n = buf.len();
+                            buf.resize(n + 2048, 0.0);
+                            if let Some(m) = music.as_mut() {
+                                m.render(&mut buf[n..]);
+                            }
+                            if let Some(t) = tail.as_mut() {
+                                tail_buf.resize(2048, 0.0);
+                                t.render(tail_buf);
+                                for (o, x) in buf[n..].iter_mut().zip(tail_buf.iter()) {
+                                    *o += x;
+                                }
+                            }
                         }
+                        for (c, n) in native.iter_mut().enumerate() {
+                            n[k] = pos.sample_in(true, buf[2 * i + c], buf[2 * i + 2 + c]);
+                        }
+                        pos.advance(step);
                     }
-                }
-                for (c, n) in native.iter_mut().enumerate() {
-                    n[k] = self.music_pos.sample(self.music_buf[2 * i + c], self.music_buf[2 * i + 2 + c]);
-                }
-                self.music_pos.advance(step);
-            }
+                },
+            );
             let used = (self.music_pos.index as usize).min(self.music_buf.len() / 2);
             self.music_buf.drain(..used * 2);
             self.music_pos.index -= used as u64;

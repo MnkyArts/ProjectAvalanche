@@ -7,5 +7,6 @@ pub mod sfx_dsp_remix;
 pub mod sfx_game;
 pub mod sfx_mixer;
 pub mod sfx_override;
+pub mod sfx_queue;
 pub mod sfx_stream;
 pub mod sfx_tuna;

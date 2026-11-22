@@ -56,7 +56,7 @@ pub struct MidgroundViewUniform {
 
 pub struct PartLoad {
     pub mesh: Arc<MeshData>,
-    pub images: Vec<(Image, Option<crate::render::reload::Recipe>)>,
+    pub images: Vec<crate::render::uploads::LevelImage>,
     pub uniform: MidgroundPartUniform,
 }
 
@@ -82,13 +82,19 @@ pub struct PartSettings {
 }
 
 impl MidgroundLoad {
+    pub fn queue_images(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        for i in self.parts.iter_mut().flat_map(|p| &mut p.images) {
+            i.queue(uploads, images);
+        }
+    }
+
     pub fn into_settings(self, images: &mut Assets<Image>) -> MidgroundSettings {
         let parts = self
             .parts
             .into_iter()
             .map(|p| PartSettings {
                 mesh: p.mesh,
-                textures: p.images.into_iter().map(|(i, r)| crate::render::reload::add(images, i, r)).collect(),
+                textures: p.images.into_iter().map(|i| i.into_handle(images)).collect(),
                 uniform: p.uniform,
             })
             .collect();
@@ -138,6 +144,7 @@ pub fn load(l: &GameLighting, root: &Path) -> Result<Option<MidgroundLoad>> {
             m.material.float("snowBias").unwrap_or(0.0),
         );
         uniform.ao_tile = Vec4::new(mv("aoTile", 0), mv("aoTile", 1), 0.0, 0.0);
+        let images = images.into_iter().map(|(i, r)| crate::render::uploads::LevelImage::built(i, r)).collect();
         parts.push(PartLoad { mesh: Arc::new(mesh), images, uniform });
     }
     let cull = crate::render::fx_states::cull(EFFECT, TECHNIQUE)?;
@@ -198,14 +205,14 @@ pub(super) mod gpu {
     use bevy::render::render_asset::RenderAssets;
     use bevy::render::render_resource::binding_types::{sampler, texture_2d, texture_depth_2d, uniform_buffer};
     use bevy::render::render_resource::*;
-    use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
+    use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
     use bevy::render::texture::{CachedTexture, GpuImage, TextureCache};
     use bevy::render::view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewTarget};
     use bevy::shader::Shader;
 
     use super::super::SkySettings;
     use super::{EFFECT, MeshData, MidgroundPartUniform, MidgroundViewUniform, TECHNIQUE};
-    use crate::render::buffers::{filled_buffer, filled_uniform};
+    use crate::render::buffers::{QueuedUniform, filled_buffer};
 
     const SHADER: &str = "embedded://ssx_bevy/render/sky/midground.wgsl";
 
@@ -313,9 +320,15 @@ pub(super) mod gpu {
         pub(super) count: u32,
     }
 
+    // PORT(choice): the views' and the parts' uniforms live across frames (one buffer each, written when their bytes
+    // change: `QueuedUniform`) instead of two buffers made, filled and freed every frame (Mount Eddie: 2 buffers, 2
+    // staging buffers of wgpu's a frame). The pass reads the same values. GPU buffers are the port's renderer; the
+    // console's mid-ground set its constants on the device.
     #[derive(Resource, Default)]
     pub struct MidgroundBuffers {
         meshes: HashMap<usize, (Arc<MeshData>, MeshBuffers)>,
+        views: HashMap<Entity, QueuedUniform<MidgroundViewUniform>>,
+        parts: Vec<QueuedUniform<MidgroundPartUniform>>,
     }
 
     #[derive(Component)]
@@ -343,6 +356,8 @@ pub(super) mod gpu {
         let mg = settings.as_ref().and_then(|s| s.midground.as_ref());
         let (Some(mg), Some(pipeline)) = (mg, pipeline) else {
             buffers.meshes.clear();
+            buffers.views.clear();
+            buffers.parts.clear();
             for (entity, ..) in &views {
                 commands.entity(entity).remove::<ViewMidground>();
             }
@@ -368,6 +383,12 @@ pub(super) mod gpu {
                 (p.mesh.clone(), MeshBuffers { streams, indices, count: m.indices.len() as u32 })
             });
         }
+        buffers.views.retain(|e, _| views.contains(*e));
+        buffers.parts.resize_with(mg.parts.len(), QueuedUniform::default);
+        for (uniform, p) in buffers.parts.iter_mut().zip(&mg.parts) {
+            uniform.write(&device, &queue, "ssx_midground_part", &p.uniform);
+        }
+        let MidgroundBuffers { views: view_uniforms, parts: part_uniforms, .. } = &mut *buffers;
         let layout = cache.get_bind_group_layout(&pipeline.layout);
         for (entity, view, target, scene_depth, msaa) in &views {
             let sampled = scene_depth.attachment.depth_stencil_views().depth_only_view();
@@ -401,7 +422,8 @@ pub(super) mod gpu {
                     view_formats: &[],
                 },
             );
-            let view_uniform = filled_uniform(
+            let view_uniform = view_uniforms.entry(entity).or_default();
+            view_uniform.write(
                 &device,
                 &queue,
                 "ssx_midground_view",
@@ -412,16 +434,15 @@ pub(super) mod gpu {
                 },
             );
             let mut draws = Vec::new();
-            for p in &mg.parts {
+            for (p, part_uniform) in mg.parts.iter().zip(part_uniforms.iter()) {
                 let tex: Option<Vec<&GpuImage>> = p.textures.iter().map(|h| images.get(h)).collect();
                 let Some(tex) = tex else { continue };
-                let part_uniform = filled_uniform(&device, &queue, "ssx_midground_part", &p.uniform);
                 let bind_group = device.create_bind_group(
                     "ssx_midground",
                     &layout,
                     &BindGroupEntries::sequential((
-                        view_uniform.as_entire_binding(),
-                        part_uniform.as_entire_binding(),
+                        &*view_uniform,
+                        part_uniform,
                         &tex[0].texture_view,
                         &tex[1].texture_view,
                         &tex[2].texture_view,
@@ -442,13 +463,13 @@ pub(super) mod gpu {
         v.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
-    pub fn draw(
-        view: ViewQuery<(&ViewTarget, &ViewMidground)>,
-        buffers: Res<MidgroundBuffers>,
-        cache: Res<PipelineCache>,
-        mut ctx: RenderContext,
+    pub fn record(
+        ctx: &mut RenderContext,
+        target: &ViewTarget,
+        mg: &ViewMidground,
+        buffers: &MidgroundBuffers,
+        cache: &PipelineCache,
     ) {
-        let (target, mg) = view.into_inner();
         let Some(pipeline) = cache.get_render_pipeline(mg.pipeline) else { return };
         let prepass = match mg.prepass {
             Some(id) => match cache.get_render_pipeline(id) {
@@ -475,7 +496,7 @@ pub(super) mod gpu {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            draw_all(&mut pass, prepass, &mg.draws, &buffers);
+            draw_all(&mut pass, prepass, &mg.draws, buffers);
         }
         let color = [Some(target.get_color_attachment())];
         let load = if prepass.is_some() { LoadOp::Load } else { LoadOp::Clear(0.0) };
@@ -491,7 +512,7 @@ pub(super) mod gpu {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        draw_all(&mut pass, pipeline, &mg.draws, &buffers);
+        draw_all(&mut pass, pipeline, &mg.draws, buffers);
     }
 
     fn draw_all<'a>(

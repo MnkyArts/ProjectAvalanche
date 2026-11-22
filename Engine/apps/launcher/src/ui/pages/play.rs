@@ -1,38 +1,19 @@
 use eframe::egui::{self, Color32, CursorIcon, Sense, Ui};
+use ssx_assets::port_options::{GraphicsLevers, GraphicsPreset};
 
 use crate::app::Launcher;
 use crate::art::Slot;
 use crate::catalog;
+use crate::jobs::Program;
 use crate::ui::icons::Icon;
 use crate::ui::layout::Layout;
 use crate::ui::tiles::{self, Hero, Tile};
 use crate::ui::{Page, theme};
 
-const TILES: [(Slot, Icon, &str, &str, Page, &str); 3] = [
-    (
-        Slot::TileMods,
-        Icon::Mountain,
-        "MODS",
-        "Texture packs: install them,\norder them, switch them on and off.",
-        Page::Mods,
-        "tile_mods",
-    ),
-    (
-        Slot::TileSettings,
-        Icon::Gear,
-        "SETTINGS",
-        "Game data, graphics, audio\nand the controls.",
-        Page::Settings,
-        "tile_settings",
-    ),
-    (
-        Slot::TileExtras,
-        Icon::Wrench,
-        "EXTRAS",
-        "Tools, the output of what was started,\ncredits, updates and where the files are.",
-        Page::Extras,
-        "tile_extras",
-    ),
+const TILES: [(Slot, Icon, &str, Page, &str); 3] = [
+    (Slot::TileExtras, Icon::Globe, "ONLINE", Page::Online, "tile_online"),
+    (Slot::TileMods, Icon::Layers, "CONTENT", Page::Content, "tile_content"),
+    (Slot::TileSettings, Icon::Gear, "SETTINGS", Page::Settings, "tile_settings"),
 ];
 
 struct HeroText {
@@ -72,20 +53,20 @@ impl Launcher {
                 enabled: true,
             };
         }
-        let name = if self.started_game { "Game" } else { "Viewer" };
+        let name = self.started.name();
         match self.viewer.as_ref().map(|v| (v.pid, v.status())) {
             Some((pid, None)) => {
-                let more = if self.started_game {
-                    "The boot movies come first; F1 skips one."
-                } else {
-                    "Loading a track takes a few seconds."
+                let more = match self.started {
+                    Program::Game => "The boot movies come first; F1 skips one.",
+                    Program::Viewer => "Loading a track takes a few seconds.",
+                    Program::Benchmark => "Its scenes open the game's window one after another.",
                 };
                 let line = (format!("{name} running (process {pid}). {more}"), theme::CYAN_SOFT);
                 HeroText { title, line, tab: ("RUNNING", theme::CYAN), enabled: false }
             }
             Some((_, Some(status))) => {
                 let ok = status == "exited normally";
-                let more = if ok { "" } else { " See Extras, Output." };
+                let more = if ok { "" } else { " See Extras, Log." };
                 let line = (format!("{name} {status}.{more}"), if ok { theme::GOOD } else { theme::ERROR });
                 HeroText { title, line, tab: ("READY", theme::GOOD), enabled: true }
             }
@@ -152,7 +133,7 @@ impl Launcher {
         let r = self.mods.snapshot.as_ref()?.report.as_ref()?;
         let problems = !r.skipped.is_empty() || !r.registry.conflicts.is_empty() || r.list_error.is_some();
         let colour = if problems { theme::WARN } else { theme::TEXT_SOFT };
-        let more = if problems { " See Mods, Before play." } else { "" };
+        let more = if problems { " See Content, Mods: What the game will mount." } else { "" };
         Some((format!("{}{more}", super::mods_report::summary(r)), colour))
     }
 
@@ -164,34 +145,87 @@ impl Launcher {
         }
     }
 
+    fn tile_line(&self, page: Page) -> String {
+        match page {
+            Page::Online => {
+                let server = match self.host.server_running() {
+                    true => format!("Server running on port {}.", self.settings.host.port),
+                    false => "Server: off.".to_owned(),
+                };
+                format!("Host a server for friends. {server}")
+            }
+            Page::Content => {
+                let mods = self.mods.snapshot.as_ref().map_or(0, |s| s.rows.iter().filter(|r| r.enabled).count());
+                let mut parts = vec![match mods {
+                    0 => "No mods on".to_owned(),
+                    1 => "1 mod on".to_owned(),
+                    n => format!("{n} mods on"),
+                }];
+                let dlc = self.dlc.snapshot.as_ref().map_or(0, |s| s.set.packages.iter().filter(|p| p.enabled).count());
+                if dlc > 0 {
+                    parts.push(format!("{dlc} DLC"));
+                }
+                if let Some(tu) = self.tu.snapshot.as_ref().and_then(|s| s.set.mounted()) {
+                    parts.push(format!("title update {}", tu.version_text()));
+                }
+                if !self.data_ready {
+                    parts.push("game data: set up first".to_owned());
+                }
+                parts.join("  ·  ")
+            }
+            _ => {
+                let s = &self.settings;
+                let levers = GraphicsLevers {
+                    resolution_scale: s.resolution_scale,
+                    shadow_quality: s.shadow_quality,
+                    bloom: s.bloom,
+                    fxaa: s.fxaa,
+                    view_distance: s.view_distance,
+                };
+                let preset = GraphicsPreset::of(&levers).map_or("Custom", GraphicsPreset::name);
+                let mode = match s.display.mode {
+                    ssx_assets::display::WindowMode::Windowed => "window",
+                    ssx_assets::display::WindowMode::Borderless => "borderless",
+                    ssx_assets::display::WindowMode::Exclusive => "exclusive fullscreen",
+                };
+                format!("{preset} preset  ·  {mode}  ·  VSync {}", if s.vsync { "on" } else { "off" })
+            }
+        }
+    }
+
     pub fn play_page(&mut self, ui: &mut Ui, l: &Layout) {
         let painter = ui.painter().clone();
         let forced = self.forced_hover.clone();
         let words = self.hero_text();
-        let mut response = ui.interact(l.hero, ui.id().with("hero"), Sense::CLICK);
+        let mut response = ui.interact(l.hero, ui.id().with("hero"), Sense::click());
         if words.enabled {
             response = response.on_hover_cursor(CursorIcon::PointingHand);
         }
         if response.clicked() {
             self.hero_clicked(ui.ctx());
+            if !response.clicked_by(egui::PointerButton::Primary) && self.page != Page::Play {
+                self.enter_page = true;
+            }
         }
         let hero = Hero {
             title: words.title,
             line: (&words.line.0, words.line.1),
             tab: words.tab,
-            hovered: response.hovered() || forced.as_deref() == Some("hero"),
+            hovered: response.hovered() || response.has_focus() || forced.as_deref() == Some("hero"),
             enabled: words.enabled,
         };
         tiles::hero(&painter, l, l.hero, self.gallery.get(Slot::Hero), &hero);
-        for (i, (slot, icon, title, text, page, name)) in TILES.into_iter().enumerate() {
+        for (i, (slot, icon, title, page, name)) in TILES.into_iter().enumerate() {
             let rect = l.tiles[i];
             let response =
-                ui.interact(rect, ui.id().with(name), Sense::CLICK).on_hover_cursor(CursorIcon::PointingHand);
+                ui.interact(rect, ui.id().with(name), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
             if response.clicked() {
+                self.enter_page = !response.clicked_by(egui::PointerButton::Primary);
                 self.go(page);
             }
-            let hovered = response.hovered() || forced.as_deref() == Some(name);
-            tiles::tile(&painter, l, rect, self.gallery.get(slot), &Tile { icon, title, text, hovered });
+            let hovered = response.hovered() || response.has_focus() || forced.as_deref() == Some(name);
+            let text = self.tile_line(page);
+            tiles::tile(&painter, l, rect, self.gallery.get(slot), &Tile { icon, title, text: &text, hovered });
         }
     }
 }

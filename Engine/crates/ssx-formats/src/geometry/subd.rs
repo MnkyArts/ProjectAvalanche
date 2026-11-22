@@ -66,6 +66,36 @@ impl SubdFile {
         self.meshes.get(mesh as usize)
     }
 
+    pub fn meshes_in_tree_order(&self) -> Result<Vec<usize>> {
+        let Some(root) = self.nodes.first() else { return Ok(Vec::new()) };
+        let mut out = Vec::with_capacity(self.meshes.len());
+        let mut seen = vec![false; self.nodes.len()];
+        let mut stack = vec![0usize];
+        while let Some(i) = stack.pop() {
+            let node = self.nodes.get(i).ok_or_else(|| Error::invalid(format!("tree child {i} past the nodes")))?;
+            if std::mem::replace(&mut seen[i], true) {
+                return Err(Error::invalid(format!("the tree reaches node {i} twice")));
+            }
+            let [first, second] = node.children.map(usize::from);
+            if first == 0 && second == 0 {
+                let slot = usize::from(root.index) + usize::from(node.index);
+                let mesh = self
+                    .leaf_mesh
+                    .get(slot)
+                    .ok_or_else(|| Error::invalid(format!("leaf slot {slot} past the table")))?;
+                out.push(usize::from(*mesh));
+                continue;
+            }
+            if second != 0 {
+                stack.push(second);
+            }
+            if first != 0 {
+                stack.push(first);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::be(data);
         let mut preamble = ([r.u16()?, r.u16()?], [0u32; 7]);
@@ -166,4 +196,38 @@ fn parse_mesh(r: &mut Reader) -> Result<SubdMesh> {
     let unk_tail = [r.u16()?, r.u16()?];
 
     Ok(SubdMesh { version, unk_header, vertices, edges, faces, unk_face_flags, unk_tail })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(index: u16, children: [u16; 2]) -> SubdNode {
+        SubdNode { center: [0.0; 3], half_extents: [0.0; 3], index, leaf_count: 1, children }
+    }
+
+    fn file(nodes: Vec<SubdNode>, leaf_mesh: Vec<u16>) -> SubdFile {
+        SubdFile { nodes, leaf_mesh, meshes: Vec::new() }
+    }
+
+    #[test]
+    fn tree_order_is_pre_order_first_child_first() {
+        let f = file(
+            vec![node(0, [1, 2]), node(9, [3, 4]), node(1, [0, 0]), node(2, [0, 0]), node(0, [0, 0])],
+            vec![7, 5, 6],
+        );
+        assert_eq!(f.meshes_in_tree_order().unwrap(), [6, 7, 5]);
+        let f = file(vec![node(0, [0, 1]), node(1, [0, 0])], vec![3, 4]);
+        assert_eq!(f.meshes_in_tree_order().unwrap(), [4]);
+        let f = file(vec![node(1, [1, 2]), node(0, [0, 0]), node(1, [0, 0])], vec![9, 8, 7]);
+        assert_eq!(f.meshes_in_tree_order().unwrap(), [8, 7]);
+        assert!(file(Vec::new(), Vec::new()).meshes_in_tree_order().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tree_order_rejects_loops_and_bad_indices() {
+        assert!(file(vec![node(0, [1, 0]), node(0, [1, 0])], vec![0]).meshes_in_tree_order().is_err());
+        assert!(file(vec![node(0, [5, 0])], vec![0]).meshes_in_tree_order().is_err());
+        assert!(file(vec![node(0, [1, 0]), node(3, [0, 0])], vec![0]).meshes_in_tree_order().is_err());
+    }
 }

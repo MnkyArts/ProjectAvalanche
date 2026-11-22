@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 use bevy::asset::embedded_asset;
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, MeshPipelineKey,
+};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy::shader::ShaderRef;
@@ -38,11 +40,14 @@ impl Plugin for TerrainMaterialPlugin {
         embedded_asset!(app, "terrain.wesl");
         embedded_asset!(app, "terrain_prepass.wesl");
         embedded_asset!(app, "terrain_normal.wesl");
+        embedded_asset!(app, "proxy.wesl");
+        embedded_asset!(app, "proxy_vertex.wesl");
         bevy::shader::load_shader_library!(app, "terrain_gbuffer.wesl");
         bevy::shader::load_shader_library!(app, "terrain_ripple.wesl");
         app.add_plugins((
             GameLightingPlugin,
             MaterialPlugin::<TerrainMaterial>::default(),
+            MaterialPlugin::<crate::render::terrain::proxy::ProxyMaterial>::default(),
             ObjectMaterialPlugin,
             CharacterMaterialPlugin,
         ))
@@ -116,7 +121,7 @@ fn toggle_fades(
 }
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
-#[bind_group_data(ShadowPassKey)]
+#[bind_group_data(TerrainKey)]
 pub struct TerrainExtension {
     #[uniform(100)]
     pub params: TerrainParams,
@@ -156,13 +161,22 @@ pub struct TerrainExtension {
     #[uniform(117)]
     pub ripple: TerrainRippleUniform,
     pub shadow_pass: ShadowPassKey,
+    pub simple: bool,
 }
 
-impl From<&TerrainExtension> for ShadowPassKey {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerrainKey {
+    shadow_pass: ShadowPassKey,
+    simple: bool,
+}
+
+impl From<&TerrainExtension> for TerrainKey {
     fn from(e: &TerrainExtension) -> Self {
-        e.shadow_pass
+        TerrainKey { shadow_pass: e.shadow_pass, simple: e.simple }
     }
 }
+
+pub const SIMPLE_SET: usize = 3;
 
 impl MaterialExtension for TerrainExtension {
     fn vertex_shader() -> ShaderRef {
@@ -187,11 +201,30 @@ impl MaterialExtension for TerrainExtension {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        specialize_shadow_pass(descriptor, key.mesh_key, key.bind_group_data);
+        let shadow = key.mesh_key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO);
+        specialize_shadow_pass(descriptor, key.mesh_key, key.bind_group_data.shadow_pass);
+        if crate::render::gbuffer::is_depth_prepass(descriptor, key.mesh_key) {
+            crate::render::gbuffer::depth_prepass_writes(descriptor, true);
+        }
+        crate::render::gbuffer::invariant_main_pass(descriptor);
         crate::render::gbuffer::specialize_main_pass(descriptor);
         crate::render::lighting::game::specialize_game_vertex(descriptor, 106);
         descriptor.vertex.shader_defs.push("SSX_RAW_NORMAL".into());
-        descriptor.vertex.shader_defs.push("SSX_TERRAIN_RIPPLE".into());
+        if !key.bind_group_data.simple || shadow {
+            descriptor.vertex.shader_defs.push("SSX_TERRAIN_RIPPLE".into());
+        }
+        // PORT(choice): the simple techniques' set (3) is compiled into its own fragment shaders (the main pass and
+        // the normal prepass) instead of read from `snowFallDirection.w` at run time: with the set a constant the
+        // compiler drops what set 3 never runs (the snow detail and its fade, the reflection that set 3 multiplies by
+        // a fade of 0, the sparkle), the same values on what it runs. The key already splits the simple materials'
+        // pipelines (the ripple), so no pipeline is added. The console drew set 3 with terrain_default_simple.fxo's
+        // own techniques (0x829BE6FC / 0x829BE788).
+        if key.bind_group_data.simple
+            && !shadow
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push("SSX_TERRAIN_SIMPLE".into());
+        }
         Ok(())
     }
 }
@@ -259,7 +292,7 @@ fn terrain_samplers() -> anyhow::Result<[crate::render::fx_states::SamplerStates
 
 pub struct PreparedLooks {
     looks: Vec<(TerrainParams, LookImages)>,
-    images: crate::render::reload::BuiltImages,
+    images: crate::render::uploads::PartImages,
 }
 
 struct LookImages {
@@ -333,7 +366,11 @@ impl PreparedLooks {
             params.reflect.z = scatter_s.lod_bias;
             out.push((params, ids));
         }
-        Ok(PreparedLooks { looks: out, images })
+        Ok(PreparedLooks { looks: out, images: crate::render::uploads::PartImages::Built(images) })
+    }
+
+    pub fn queue_textures(&mut self, uploads: &mut crate::render::uploads::LevelUploads, images: &mut Assets<Image>) {
+        self.images.queue(uploads, images);
     }
 
     pub fn into_materials(
@@ -341,12 +378,8 @@ impl PreparedLooks {
         images: &mut Assets<Image>,
         light: &GameLightAssets,
         tracks: &SnowTrackTextures,
-    ) -> Vec<[TerrainMaterial; 3]> {
-        let handles: Vec<Handle<Image>> = self
-            .images
-            .into_iter()
-            .map(|(image, recipe)| crate::render::reload::add(images, image, Some(recipe)))
-            .collect();
+    ) -> Vec<[TerrainMaterial; SIMPLE_SET + 1]> {
+        let handles = self.images.into_handles(images);
         let shadow_pass = shadow_pass();
         self.looks
             .into_iter()
@@ -371,6 +404,7 @@ impl PreparedLooks {
                         track_tiles: tracks.tiles.clone(),
                         ripple: TerrainRippleUniform::default(),
                         shadow_pass,
+                        simple: group == SIMPLE_SET,
                     },
                 })
             })

@@ -126,6 +126,7 @@ impl Args {
                     };
                     out.keys = names.split(',').map(one).collect::<Result<_, _>>()?;
                 }
+                other if other.starts_with("--game=") => out.game = Some(PathBuf::from(&other["--game=".len()..])),
                 _ => {}
             }
         }
@@ -178,6 +179,9 @@ mod tests {
         assert!(prepare.prepare && !a.prepare);
         assert_eq!(prepare.game, Some(PathBuf::from("ssx.iso")));
         assert!(parse("--game").is_err());
+        let joined = Args::parse(&["--prepare".into(), "--game=D:\\My Games\\ssx.iso".into()]).unwrap();
+        assert!(joined.prepare);
+        assert_eq!(joined.game, Some(PathBuf::from("D:\\My Games\\ssx.iso")));
     }
 
     #[test]

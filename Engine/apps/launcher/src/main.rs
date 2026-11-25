@@ -17,6 +17,7 @@ mod main_screen;
 mod masters;
 mod mod_list;
 mod pads;
+mod prepare;
 mod retired;
 mod settings;
 mod settings_flow;
@@ -66,6 +67,9 @@ fn main() -> eframe::Result {
     }
     if args.print {
         std::process::exit(print(&settings));
+    }
+    if args.prepare {
+        std::process::exit(prepare::run(&settings, args.game.as_deref()));
     }
     if let Some(dir) = &args.dump_art {
         std::process::exit(dump_art(&settings, dir));

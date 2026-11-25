@@ -17,6 +17,14 @@ impl Launcher {
             ui.label(RichText::new(footer::version()).color(theme::TEXT_DIM));
         });
         ui.add_space(8.0);
+        if crate::update::from_recomplauncher() {
+            widgets::status(
+                ui,
+                theme::TEXT_DIM,
+                "Updates come from RecompLauncher: it installs each new release, so this launcher doesn't update itself.",
+            );
+            return;
+        }
         let mut repair = false;
         if !self.program_missing.is_empty() {
             let names = self.program_missing.join(", ");

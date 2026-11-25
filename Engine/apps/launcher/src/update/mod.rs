@@ -27,7 +27,12 @@ pub fn current_version() -> Version {
 }
 
 pub fn auto_check_enabled() -> bool {
-    std::env::var_os("SSX_NO_UPDATE_CHECK").is_none()
+    std::env::var_os("SSX_NO_UPDATE_CHECK").is_none() && !from_recomplauncher()
+}
+
+/// RecompLauncher installs every release itself, so the launcher never updates when it starts us.
+pub fn from_recomplauncher() -> bool {
+    std::env::var_os("RECOMPLAUNCHER").is_some_and(|v| v == "1")
 }
 
 pub fn tag_url(version: &Version) -> String {

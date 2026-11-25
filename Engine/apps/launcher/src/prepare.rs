@@ -6,11 +6,15 @@ use ssx_assets::setup::{self, DiscCheck, Progress};
 use crate::settings::Settings;
 
 pub fn run(settings: &Settings, iso: Option<&Path>) -> i32 {
+    let out = settings.game_data();
     let Some(iso) = iso else {
+        if already_set_up(&out, None) {
+            ssx_core::println!("progress 1 Already set up");
+            return 0;
+        }
         ssx_core::eprintln!("error: --prepare needs --game <your SSX (2012) Xbox 360 disc image>");
         return 2;
     };
-    let out = settings.game_data();
     ssx_core::println!("progress 0 Checking your disc image");
     let check = match setup::inspect(iso) {
         Ok(check) => check,
@@ -19,7 +23,7 @@ pub fn run(settings: &Settings, iso: Option<&Path>) -> i32 {
             return 1;
         }
     };
-    if already_set_up(&out, &check) {
+    if already_set_up(&out, Some(&check)) {
         ssx_core::println!("progress 1 Already set up");
         return 0;
     }
@@ -49,9 +53,11 @@ pub fn run(settings: &Settings, iso: Option<&Path>) -> i32 {
     }
 }
 
-fn already_set_up(out: &Path, check: &DiscCheck) -> bool {
+fn already_set_up(out: &Path, check: Option<&DiscCheck>) -> bool {
     let Some(marker) = setup::read_marker(out) else { return false };
-    marker["fingerprint"].as_str() == Some(check.fingerprint.as_str())
-        && marker["iso_size"].as_u64() == Some(check.image_size)
-        && ssx_assets::folder::state(out).is_complete()
+    let same_disc = check.is_none_or(|check| {
+        marker["fingerprint"].as_str() == Some(check.fingerprint.as_str())
+            && marker["iso_size"].as_u64() == Some(check.image_size)
+    });
+    same_disc && ssx_assets::folder::state(out).is_complete()
 }

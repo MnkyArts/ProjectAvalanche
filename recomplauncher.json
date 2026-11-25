@@ -1,0 +1,142 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Project Avalanche",
+  "repo": "MnkyArts/ProjectAvalanche",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your disc image (.iso) of SSX (2012) for Xbox 360, dumped from the retail disc.",
+      "formats": [{ "type": "file", "extensions": ["iso"] }],
+      "check": { "ids": ["4541096D"] }
+    }
+  ],
+  "prepare": {
+    "program": ["Project Avalanche.exe", "project-avalanche"],
+    "args": ["--prepare", "--game", "{input:game}"],
+    "env": { "PROJECT_AVALANCHE_HOME": "{data}" },
+    "label": "The game data from your disc (about 4.7 GB)",
+    "done": ["{data}/GameData/content.tsv"]
+  },
+  "start": {
+    "program": ["Project Avalanche.exe", "project-avalanche"],
+    "args": ["--play", "--no-update-check"],
+    "env": { "PROJECT_AVALANCHE_HOME": "{data}" }
+  },
+  "system": {
+    "linux": { "glibc": "2.39" }
+  },
+  "saves": ["{data}/Saves", "{data}/settings.json"],
+  "config": [
+    {
+      "id": "main",
+      "format": "json",
+      "file": [{ "path": "{data}/settings.json" }]
+    }
+  ],
+  "folders": {
+    "saves": [{ "path": "{data}/Saves" }],
+    "logs": [{ "path": "{data}" }]
+  },
+  "settings": [
+    {
+      "id": "window", "label": "Window", "group": "Display",
+      "help": "Borderless fills your screen and lets you switch apps quickly. Exclusive gives the game the screen to itself.",
+      "choices": [
+        { "label": "Windowed", "set": { "display/mode": "\"Windowed\"" } },
+        { "label": "Borderless", "set": { "display/mode": "\"Borderless\"" } },
+        { "label": "Exclusive", "set": { "display/mode": "\"Exclusive\"" } }
+      ],
+      "defaults": { "display/mode": "\"Windowed\"" }
+    },
+    {
+      "id": "vsync", "label": "VSync", "group": "Display",
+      "help": "Waits for your screen's refresh, so the picture never tears.",
+      "choices": [
+        { "label": "On", "set": { "vsync": "true" } },
+        { "label": "Off", "set": { "vsync": "false" } }
+      ],
+      "defaults": { "vsync": "true" }
+    },
+    {
+      "id": "frame_limit", "label": "Frame Limiter", "group": "Display",
+      "help": "The most frames a second the game draws. Off draws as many as your PC can (or your screen's refresh with VSync).",
+      "choices": [
+        { "label": "Off", "set": { "frame_limit": "0" } },
+        { "label": "30", "set": { "frame_limit": "30" } },
+        { "label": "60", "set": { "frame_limit": "60" } },
+        { "label": "120", "set": { "frame_limit": "120" } },
+        { "label": "144", "set": { "frame_limit": "144" } }
+      ],
+      "defaults": { "frame_limit": "0" }
+    },
+    {
+      "id": "resolution_scale", "label": "Resolution Scale", "group": "Graphics",
+      "help": "Draws below your screen's resolution and upscales with AMD FSR 1. Native is the sharpest.",
+      "choices": [
+        { "label": "Native", "set": { "resolution_scale": "\"Native\"" } },
+        { "label": "Ultra Quality", "set": { "resolution_scale": "\"UltraQuality\"" } },
+        { "label": "Quality", "set": { "resolution_scale": "\"Quality\"" } },
+        { "label": "Balanced", "set": { "resolution_scale": "\"Balanced\"" } },
+        { "label": "Performance", "set": { "resolution_scale": "\"Performance\"" } }
+      ],
+      "defaults": { "resolution_scale": "\"Native\"" }
+    },
+    {
+      "id": "shadow_quality", "label": "Shadows", "group": "Graphics",
+      "help": "Original is the console's. Medium and Low are faster on older graphics cards.",
+      "choices": [
+        { "label": "Original", "set": { "shadow_quality": "\"Original\"" } },
+        { "label": "Medium", "set": { "shadow_quality": "\"Medium\"" } },
+        { "label": "Low", "set": { "shadow_quality": "\"Low\"" } }
+      ],
+      "defaults": { "shadow_quality": "\"Original\"" }
+    },
+    {
+      "id": "view_distance", "label": "View Distance", "group": "Graphics",
+      "help": "How far the mountain is drawn, in metres. 600 is the original.",
+      "slider": { "key": "view_distance", "min": 200, "max": 8000, "step": 100, "format": "%d" },
+      "defaults": { "view_distance": "600" }
+    },
+    {
+      "id": "bloom", "label": "Bloom", "group": "Graphics",
+      "help": "The glow around bright snow and lights, as on the console.",
+      "choices": [
+        { "label": "On", "set": { "bloom": "true" } },
+        { "label": "Off", "set": { "bloom": "false" } }
+      ],
+      "defaults": { "bloom": "true" }
+    },
+    {
+      "id": "fxaa", "label": "FXAA", "group": "Graphics",
+      "help": "Smooths jagged edges. Costs next to nothing.",
+      "choices": [
+        { "label": "On", "set": { "fxaa": "true" } },
+        { "label": "Off", "set": { "fxaa": "false" } }
+      ],
+      "defaults": { "fxaa": "true" }
+    },
+    {
+      "id": "boot_movie", "label": "Boot Movies", "group": "Game",
+      "help": "The logos and the intro when the game starts.",
+      "choices": [
+        { "label": "Play them", "set": { "boot_movie": "\"EveryStart\"" } },
+        { "label": "Skip them", "set": { "boot_movie": "\"Skip\"" } }
+      ],
+      "defaults": { "boot_movie": "\"EveryStart\"" }
+    },
+    {
+      "id": "discord_presence", "label": "Discord Rich Presence", "group": "Game",
+      "help": "Shows on your Discord profile that you're playing.",
+      "choices": [
+        { "label": "On", "set": { "discord_presence": "\"On\"" } },
+        { "label": "Off", "set": { "discord_presence": "\"Off\"" } }
+      ],
+      "defaults": { "discord_presence": "\"On\"" }
+    }
+  ],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your profile, your ghosts and the launcher's settings.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "game.log, the game's output from its last start.", "open": "logs" }
+  ]
+}

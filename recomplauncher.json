@@ -13,10 +13,11 @@
   ],
   "prepare": {
     "program": ["Project Avalanche.exe", "project-avalanche"],
-    "args": ["--prepare", "--game", "{input:game}"],
+    "args": ["--prepare", "--game={input:game}"],
     "env": { "PROJECT_AVALANCHE_HOME": "{data}" },
     "label": "The game data from your disc (about 4.7 GB)",
-    "done": ["{data}/GameData/content.tsv"]
+    "done": ["{data}/GameData/content.tsv"],
+    "keeps_copy": true
   },
   "start": {
     "program": ["Project Avalanche.exe", "project-avalanche"],
@@ -35,6 +36,7 @@
     }
   ],
   "folders": {
+    "game": [{ "path": "{data}/GameData" }],
     "saves": [{ "path": "{data}/Saves" }],
     "logs": [{ "path": "{data}" }]
   },

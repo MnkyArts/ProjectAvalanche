@@ -258,6 +258,7 @@ jobs:
           # programs carry); a test keeps assets/fonts to exactly the set, its license and its manifest
           New-Item -ItemType Directory -Force -Path "$dist/fonts" | Out-Null
           Copy-Item assets/fonts/* "$dist/fonts/"
+          Copy-Item ../recomplauncher.json "$dist/recomplauncher.json"
           @"
           Project Avalanche — native PC port of SSX (2012), test build $env:GITHUB_SHA
 
@@ -418,7 +419,7 @@ jobs:
         run: |
           cp server/avalanche-server.exe dist/ProjectAvalanche/avalanche-server.exe
           for f in "Project Avalanche.exe" avalanche-game.exe avalanche-movie.exe avalanche-server.exe \
-              THIRD_PARTY_NOTICES.txt THIRD_PARTY_NOTICES-server.txt README.txt fonts; do
+              THIRD_PARTY_NOTICES.txt THIRD_PARTY_NOTICES-server.txt README.txt fonts recomplauncher.json; do
             if [ ! -e "dist/ProjectAvalanche/$f" ]; then echo "the package has no $f"; exit 1; fi
           done
           ls -l dist/ProjectAvalanche
@@ -558,6 +559,7 @@ jobs:
           # programs carry); a test keeps assets/fonts to exactly the set, its license and its manifest
           mkdir -p "$dist/fonts"
           cp assets/fonts/* "$dist/fonts/"
+          cp ../recomplauncher.json "$dist/"
           cat > "$dist/README.txt" <<EOF
           Project Avalanche — native PC port of SSX (2012), test build $GITHUB_SHA
 

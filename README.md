@@ -18,6 +18,10 @@
   <a href="https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml"><img alt="Build" src="https://github.com/MnkyArts/ProjectAvalanche/actions/workflows/build.yml/badge.svg"></a>
 </p>
 
+<p align="center">
+  <a href="https://recomplauncher.com/game/projectavalanche"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+</p>
+
 Project Avalanche is an unofficial, open-source PC port of SSX (2012), EA's snowboarding game for Xbox 360 and
 PlayStation 3. It is a reimplementation, not an emulator, a decompilation or a static recompilation: the game's file
 formats and behaviour were reverse-engineered from the retail Xbox 360 disc and rebuilt as new code in Rust on the

@@ -12,6 +12,8 @@ pub struct Args {
     pub launch: bool,
     pub play: bool,
     pub print: bool,
+    pub prepare: bool,
+    pub game: Option<PathBuf>,
     pub no_update_check: bool,
     pub page: Option<Page>,
     pub tab: Option<String>,
@@ -50,6 +52,8 @@ impl Args {
                 "--launch" => out.launch = true,
                 "--play" => out.play = true,
                 "--print" => out.print = true,
+                "--prepare" => out.prepare = true,
+                "--game" => out.game = Some(PathBuf::from(value()?)),
                 "--no-update-check" => out.no_update_check = true,
                 "--page" => {
                     let v = value()?;
@@ -122,6 +126,7 @@ impl Args {
                     };
                     out.keys = names.split(',').map(one).collect::<Result<_, _>>()?;
                 }
+                other if other.starts_with("--game=") => out.game = Some(PathBuf::from(&other["--game=".len()..])),
                 _ => {}
             }
         }
@@ -170,6 +175,13 @@ mod tests {
         assert_eq!(parse("--scroll 400").unwrap().scroll, 400.0);
         assert_eq!(parse("--dlc-install dump.zip").unwrap().dlc_install, Some(PathBuf::from("dump.zip")));
         assert_eq!(parse("--tuner-install ssxvprofile").unwrap().tuner_install, Some(PathBuf::from("ssxvprofile")));
+        let prepare = parse("--prepare --game ssx.iso").unwrap();
+        assert!(prepare.prepare && !a.prepare);
+        assert_eq!(prepare.game, Some(PathBuf::from("ssx.iso")));
+        assert!(parse("--game").is_err());
+        let joined = Args::parse(&["--prepare".into(), "--game=D:\\My Games\\ssx.iso".into()]).unwrap();
+        assert!(joined.prepare);
+        assert_eq!(joined.game, Some(PathBuf::from("D:\\My Games\\ssx.iso")));
     }
 
     #[test]

@@ -96,7 +96,7 @@ pub struct Launcher {
 }
 
 fn program_missing() -> Vec<&'static str> {
-    if !crate::update::install::release_build() {
+    if !crate::update::install::release_build() || crate::update::from_recomplauncher() {
         return Vec::new();
     }
     crate::update::install::install_dir().map(|dir| crate::update::install::missing(&dir)).unwrap_or_default()
